@@ -1,0 +1,205 @@
+# Engine Design
+
+> **Note:** This document is a rough draft and starting point. All design decisions, interfaces, and data structures are tentative and will change as the engine is built. Do not treat anything here as final.
+
+## Overview
+
+The engine is a fast, deterministic simulator of Polytopia game rules written in C++.
+It has no AI logic — it only knows the rules and how to advance game state.
+The AI (in `ai/`) calls into the engine to simulate moves and read game state.
+
+## Core Principle: Separate State from Logic
+
+```
+GameState   — pure data, no methods. Represents a snapshot of the game.
+GameRules   — stateless free functions that read/write GameState.
+```
+
+Keeping them separate means `GameState` can be copied freely — critical for MCTS,
+which needs to clone and explore thousands of states per second.
+
+---
+
+## GameState
+
+Everything needed to fully describe the game at a single point in time.
+
+```cpp
+struct GameState {
+    Tile  map[121];           // 11x11 flat array of tiles
+    Unit  units[MAX_UNITS];
+    City  cities[MAX_CITIES];
+    int   stars;              // current player's star (currency) count
+    TechTree techs;           // which technologies have been researched
+    int   turn;
+};
+```
+
+### Why a flat array for the map?
+
+The map is 11x11 = 121 tiles. Storing it as `Tile map[121]` instead of a
+2D vector means:
+- All tile data is contiguous in memory — the CPU can prefetch it efficiently
+- No heap allocation — copying `GameState` is just a `memcpy`
+- Simple index math: `map[row * 11 + col]`
+
+### Tile
+
+```cpp
+struct Tile {
+    TerrainType terrain;   // forest, mountain, water, field, etc.
+    ResourceType resource; // fruit, game, fish, metal, etc. (or NONE)
+    int unit_id;           // index into units[], or -1 if empty
+    int city_id;           // index into cities[], or -1 if none
+};
+```
+
+### Unit
+
+Units are split into two things: a **static definition** (stats that never change)
+and a **runtime instance** (state that changes during the game).
+
+The definition lives in a global lookup table — never copied, never heap-allocated:
+
+```cpp
+struct UnitDef {
+    int      hp;
+    int      attack;
+    int      defense;
+    int      movement;
+    int      range;
+    uint32_t abilities;  // bitmask of ability flags
+};
+
+// Ability flags
+constexpr uint32_t ABILITY_FLOAT   = 1 << 0;  // can move on water
+constexpr uint32_t ABILITY_DASH    = 1 << 1;  // can move after attacking
+constexpr uint32_t ABILITY_PERSIST = 1 << 2;  // survives killing a unit
+// ... etc.
+
+static const UnitDef UNIT_DEFS[NUM_UNIT_TYPES] = {
+    // [WARRIOR]  = { .hp=10, .attack=2, .defense=2, .movement=1, .range=1, .abilities=0 },
+    // [ARCHER]   = { .hp=10, .attack=2, .defense=1, .movement=1, .range=2, .abilities=0 },
+    // ...
+};
+```
+
+The runtime instance is a small trivially-copyable struct stored in `GameState`:
+
+```cpp
+struct Unit {
+    UnitType type;
+    int8_t   owner;        // player index
+    int8_t   hp;           // current hp
+    int8_t   move_points;  // remaining movement this turn
+    bool     has_attacked;
+};
+
+// To read a unit's base stats:
+const UnitDef& def = UNIT_DEFS[unit.type];
+if (def.abilities & ABILITY_FLOAT) { /* allow water movement */ }
+```
+
+**Why not virtual methods / inheritance?**
+Virtual dispatch requires vtable pointer lookups on every call and prevents trivial
+copying — both are problems in hot paths. The differences between unit types are
+almost entirely data (different stats, different ability flags), not behavior.
+The rules engine handles all behavior by checking flags on the `UnitDef`.
+
+### City
+
+```cpp
+struct City {
+    int owner;
+    int population;
+    int tile_index;        // which tile this city sits on
+    // upgrades, walls, etc. added later
+};
+```
+
+---
+
+## Hex Coordinates
+
+Polytopia uses a hex grid. We use **axial coordinates** `(q, r)` internally
+because they make neighbor lookups and distance calculations clean.
+
+```
+Neighbors of (q, r):
+  (q+1, r)   (q-1, r)
+  (q, r+1)   (q, r-1)
+  (q+1, r-1) (q-1, r+1)
+
+Distance between (q1,r1) and (q2,r2):
+  max(|dq|, |dr|, |dq+dr|)  where dq = q2-q1, dr = r2-r1
+```
+
+Conversion to flat array index:
+```cpp
+int to_index(int q, int r) { return r * 11 + q; }
+```
+
+---
+
+## GameRules Interface
+
+These are the functions the AI calls. All are stateless — they take a `GameState`
+and return a result without side effects on anything else.
+
+```cpp
+// Returns every legal action the current player can take
+vector<Action> legal_actions(const GameState& s);
+
+// Applies an action and returns the resulting state
+// Takes GameState by value so the original is never modified
+GameState apply_action(GameState s, Action a);
+
+// True if the game is over (win condition met, turn limit reached, etc.)
+bool is_terminal(const GameState& s);
+```
+
+### Why `apply_action` takes `GameState` by value?
+
+It means the caller controls whether to clone:
+```cpp
+GameState next = apply_action(current, move);      // current is untouched
+GameState next = apply_action(std::move(current), move); // current is consumed (faster)
+```
+MCTS uses the first form to branch; the main game loop uses the second.
+
+---
+
+## Actions
+
+An action is anything the current player can do on their turn.
+
+```cpp
+enum class ActionType {
+    Move,
+    Attack,
+    TrainUnit,
+    BuildImprovement,
+    ResearchTech,
+    CaptureCity,
+    EndTurn,
+};
+
+struct Action {
+    ActionType type;
+    int from;    // tile index (where relevant)
+    int to;      // tile index (where relevant)
+    int param;   // unit type, tech id, improvement type, etc.
+};
+```
+
+Encoding actions as small plain structs (no pointers, no heap) means they can
+be stored in arrays and passed to Python as integers for RL training.
+
+---
+
+## Design Rules
+
+- No dynamic allocation (`new`, `vector`, `string`) in hot paths (`apply_action`, `legal_actions`)
+- No virtual dispatch in hot paths
+- `GameState` must be trivially copyable
+- All randomness goes through a seeded RNG passed as a parameter — never global state
