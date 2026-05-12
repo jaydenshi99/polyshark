@@ -1,6 +1,6 @@
 # Polyshark
 
-A game engine and AI bot for [The Battle of Polytopia](https://polytopia.io/), a turn-based hex-grid strategy game.
+A game engine and AI bot for [The Battle of Polytopia](https://polytopia.io/), a turn-based square-grid strategy game.
 
 ## Project Goal
 
@@ -11,9 +11,10 @@ Build a high-performance Polytopia simulator in C++ and use it as the backend fo
 ```
 polyshark/
 ├── engine/        # C++ game simulator
-│   ├── src/       # implementation files
-│   ├── include/   # header files
-│   └── tests/     # C++ unit tests
+│   ├── src/
+│   ├── include/
+│   ├── tests/
+│   └── docs/      # design and rules documentation
 ├── ai/            # Python ML / agent code
 ├── bindings/      # C++↔Python bridge (pybind11 or ctypes)
 └── scripts/       # build and utility scripts
@@ -29,26 +30,38 @@ polyshark/
 
 ## Current Status
 
-Just started. No code exists yet.
+Phase 1 MVP in progress. Implementing a stripped-down version of Polytopia to get core mechanics working before expanding scope.
 
 ## Scope
 
-### Phase 1 (initial)
-- Single tribe (TBD)
-- Fixed map layout (single map, single size — TBD)
-- Full rule coverage for that tribe: map/terrain, units & combat, cities & economy, tech tree
+### Phase 1 MVP
+- 3 unit types: Warrior, Archer, Rider
+- 3 tech unlocks: Mining, Archery, Riding
+- Terrain: Field, Forest, Mountain, Water + Villages
+- Cities (levels 1–3): 1★/turn per level, +1★ capital bonus, siege mechanic
+- Resources: Food (field/forest, no tech) and Metal (mountain, requires Mining)
+- Fog of war
+- Zone of control, healing, veteran promotion
+- Win condition: capture enemy capital (Domination)
+- 1v1 only
 
 ### Later phases
-- Multiple tribes
-- Configurable / random map generation
-- Multi-player (multiple AI agents)
+- More unit types, full tech tree
+- Multiple tribes with starting bonuses
+- Naval units
+- Full building set
+- Multi-player beyond 1v1
+- Configurable map generation
 
-## Game Systems to Implement
+## Game Rules
 
-- **Map / terrain** — hex grid, terrain types (forest, mountain, water, field, etc.), resources
-- **Units & combat** — unit stats, attack/defense resolution, movement, promotions
-- **Cities & economy** — star income, city upgrades, population growth, capturing
-- **Tech tree** — researching technologies, unlocking units and buildings
+Full MVP ruleset is documented in [engine/docs/rules.md](engine/docs/rules.md).
+
+**Fog of war (confirmed):**
+- Standard vision: 1-tile radius (full 3×3 square, all 8 directions) for units and cities
+- Mountain bonus: extended vision (exact radius TBD)
+- Explored tiles are permanently revealed; enemy units hide when out of vision
+- The AI plays with imperfect information — fog of war is in scope from the start
 
 ## AI Design
 
@@ -68,12 +81,10 @@ When the user corrects a mistake, clarifies a game rule, or provides domain know
 
 This keeps CLAUDE.md as the living source of truth for Polyshark.
 
-Where to write corrections:
-
 | Correction type | Where |
 |---|---|
-| Game rule clarification / domain knowledge | CLAUDE.md |
-| Behavioral correction ("stop doing X", "do Y instead") | feedback memory |
+| Game rule clarification / domain knowledge | CLAUDE.md + rules.md |
+| Behavioural correction ("stop doing X", "do Y instead") | feedback memory |
 | Corrections that touch both | Write to both |
 
 ## What Claude Should Not Do
@@ -85,5 +96,4 @@ Where to write corrections:
 ## Conventions
 
 - The C++ engine should be deterministic and serializable (needed for MCTS tree expansion and replay).
-- Keep the engine stateless / functional where possible to make tree search easier.
 - Python is for orchestration and ML only — no game logic in Python.
