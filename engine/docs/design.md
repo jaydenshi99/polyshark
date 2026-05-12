@@ -119,24 +119,25 @@ struct City {
 
 ---
 
-## Hex Coordinates
+## Grid Coordinates
 
-Polytopia uses a hex grid. We use **axial coordinates** `(q, r)` internally
-because they make neighbor lookups and distance calculations clean.
+Polytopia uses a **square grid**. Units move in 4 directions (N, S, E, W).
+Coordinates are `(x, y)` where `x` is column and `y` is row.
 
 ```
-Neighbors of (q, r):
-  (q+1, r)   (q-1, r)
-  (q, r+1)   (q, r-1)
-  (q+1, r-1) (q-1, r+1)
+Neighbors of (x, y):
+  (x, y-1)  — north
+  (x, y+1)  — south
+  (x-1, y)  — west
+  (x+1, y)  — east
 
-Distance between (q1,r1) and (q2,r2):
-  max(|dq|, |dr|, |dq+dr|)  where dq = q2-q1, dr = r2-r1
+Distance between (x1,y1) and (x2,y2) (Manhattan distance):
+  |x2-x1| + |y2-y1|
 ```
 
 Conversion to flat array index:
 ```cpp
-int to_index(int q, int r) { return r * 11 + q; }
+int to_index(int x, int y) { return y * 11 + x; }
 ```
 
 ---
