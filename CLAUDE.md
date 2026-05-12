@@ -1,6 +1,6 @@
 # Polyshark
 
-A game engine and AI bot for [The Battle of Polytopia](https://polytopia.io/), a turn-based hex-grid strategy game.
+A game engine and AI bot for [The Battle of Polytopia](https://polytopia.io/), a turn-based square-grid strategy game.
 
 ## Project Goal
 
@@ -43,11 +43,32 @@ Just started. No code exists yet.
 - Configurable / random map generation
 - Multi-player (multiple AI agents)
 
+## Game Mode
+
+**Domination** — win by capturing all enemy capitals (not all cities, just the capital).
+Each player's capital is their starting city. A rating is awarded based on how few turns it took.
+
+## Game Rules (confirmed)
+
+**Grid:** Square tiles, units move N/S/E/W (4 directions).
+
+**Stars:** The core resource. Each player has their own star count. Cities generate stars each turn. Normal players/bots start with 2 stars/turn.
+
+**Turn structure:** Each turn a player can move/attack with all units, spend stars on tech/buildings/units, and capture villages or cities by moving onto them.
+
+**Combat:** Automatic when a unit moves onto an enemy. In a Warrior vs. Warrior fight (no defence bonus), the attacker's unit dies the following turn and the defender survives with 5 HP — attacking first is a disadvantage in a straight 1v1.
+
+**Cities:** Level up as you collect resources around them. On first level-up, choose Workshop (+1 star/turn) or Explorer (reveals map). Workshop is almost always correct since economy compounds.
+
+**Win condition (Domination):** Capture all enemy capitals. A player is eliminated when their capital is captured.
+
+**Tech tree:** Shared tree across all tribes. Each tribe starts with one unique starting technology.
+
 ## Game Systems to Implement
 
-- **Map / terrain** — hex grid, terrain types (forest, mountain, water, field, etc.), resources
+- **Map / terrain** — square grid, terrain types (forest, mountain, water, field, etc.), resources
 - **Units & combat** — unit stats, attack/defense resolution, movement, promotions
-- **Cities & economy** — star income, city upgrades, population growth, capturing
+- **Cities & economy** — star income per player, city upgrades, population growth, capturing, capital tracking
 - **Tech tree** — researching technologies, unlocking units and buildings
 
 ## AI Design
