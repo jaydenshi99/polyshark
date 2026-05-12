@@ -141,12 +141,18 @@ int to_index(int q, int r) { return r * 11 + q; }
 
 ---
 
-## GameRules Interface
+## Public API
 
-These are the functions the AI calls. All are stateless — they take a `GameState`
-and return a result without side effects on anything else.
+These are the only functions external code (AI, Python bindings, tests) is allowed
+to call. Everything else is internal to the engine.
 
 ```cpp
+// Create a new game from a config (map, tribe, seed, etc.)
+GameState new_game(const GameConfig& config);
+
+// Return the full current game state
+const GameState& get_state(const GameState& s);
+
 // Returns every legal action the current player can take
 vector<Action> legal_actions(const GameState& s);
 
@@ -156,6 +162,16 @@ GameState apply_action(GameState s, Action a);
 
 // True if the game is over (win condition met, turn limit reached, etc.)
 bool is_terminal(const GameState& s);
+
+// Returns the winning player index, or -1 if not yet terminal
+int winner(const GameState& s);
+
+// Returns the index of the player whose turn it is
+int current_player(const GameState& s);
+
+// Serialize state to bytes (for MCTS checkpointing, saving, Python bindings)
+vector<uint8_t> serialize(const GameState& s);
+GameState deserialize(const vector<uint8_t>& bytes);
 ```
 
 ### Why `apply_action` takes `GameState` by value?
