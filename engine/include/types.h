@@ -17,5 +17,6 @@ enum class ResourceType {
 };
 
 enum class UnitType {
+    None,  // unoccupied / sentinel
     // populated as tribes are added
 };

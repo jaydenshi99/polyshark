@@ -105,8 +105,9 @@ The runtime instance is a small trivially-copyable struct stored in `GameState`:
 
 ```cpp
 struct Unit {
-    UnitType type;
+    UnitType type      = UnitType::None;
     int  owner        = -1;
+    int  tile_index   = -1;  // must stay in sync with Tile::unit_id
     int  hp           = 0;
     int  move_points  = 0;
     bool has_attacked = false;
@@ -127,9 +128,10 @@ The rules engine handles all behavior by checking flags on the `UnitDef`.
 
 ```cpp
 struct City {
-    int owner;
-    int population;
-    int tile_index;        // which tile this city sits on
+    int  owner      = -1;
+    int  population = 0;
+    int  tile_index = -1;
+    bool is_capital = false;  // Domination win condition: capture all enemy capitals
     // upgrades, walls, etc. added later
 };
 ```

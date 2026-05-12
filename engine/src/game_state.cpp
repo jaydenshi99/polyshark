@@ -20,15 +20,15 @@ void GameState::print_map() const {
         for (int x = 0; x < MAP_SIZE; x++) {
             const Tile& t = map[to_index(x, y)];
             char c;
-            switch (t.terrain) {
+            switch (t.terrain()) {
                 case TerrainType::Flat:     c = '.'; break;
                 case TerrainType::Forest:   c = 'F'; break;
                 case TerrainType::Mountain: c = 'M'; break;
                 case TerrainType::Water:    c = '~'; break;
                 default:                    c = '?'; break;
             }
-            if (t.city_id != -1) c = 'C';
-            if (t.unit_id != -1) c = 'U';
+            if (t.has_city()) c = 'C';
+            if (t.has_unit()) c = 'U';
             printf("%c ", c);
         }
         printf("\n");

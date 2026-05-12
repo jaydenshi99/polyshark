@@ -8,6 +8,8 @@ include_directories(include)
 
 add_library(engine
     src/grid.cpp
+    src/unit.cpp
+    src/city.cpp
     src/game_state.cpp
 )
 
