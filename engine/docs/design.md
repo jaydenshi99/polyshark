@@ -11,12 +11,15 @@ The AI (in `ai/`) calls into the engine to simulate moves and read game state.
 ## Core Principle: Separate State from Logic
 
 ```
-GameState   — pure data, no methods. Represents a snapshot of the game.
-GameRules   — stateless free functions that read/write GameState.
+GameState   — data + simple query methods. Represents a snapshot of the game.
+GameRules   — stateless free functions that contain actual game logic (legal_actions, apply_action).
 ```
 
-Keeping them separate means `GameState` can be copied freely — critical for MCTS,
-which needs to clone and explore thousands of states per second.
+Simple queries (`is_terminal`, `winner`, `current_player`) live as methods on `GameState`.
+Complex rule logic stays as free functions so it can evolve independently of the state layout.
+
+`GameState` must remain trivially copyable — no heap allocation, no virtual methods, no
+user-defined copy constructor. This lets MCTS clone states with a plain copy.
 
 ---
 
@@ -25,13 +28,27 @@ which needs to clone and explore thousands of states per second.
 Everything needed to fully describe the game at a single point in time.
 
 ```cpp
-struct GameState {
-    Tile  map[121];           // 11x11 flat array of tiles
-    Unit  units[MAX_UNITS];
-    City  cities[MAX_CITIES];
-    int   stars;              // current player's star (currency) count
-    TechTree techs;           // which technologies have been researched
-    int   turn;
+class GameState {
+public:
+    bool is_terminal()    const;
+    int  winner()         const;
+    int  current_player() const;
+    void print_map()      const;  // debug only
+
+    friend void      legal_actions(const GameState&, Action[], int&);
+    friend GameState apply_action(GameState, Action);
+
+private:
+    Tile map[MAP_TILES];          // 11x11 flat array
+    Unit units[MAX_UNITS];
+    City cities[MAX_CITIES];
+
+    int unit_count  = 0;
+    int city_count  = 0;
+    int stars       = 0;
+    int turn        = 0;
+    int cur_player  = 0;
+    // TechTree — not yet implemented
 };
 ```
 
@@ -89,10 +106,10 @@ The runtime instance is a small trivially-copyable struct stored in `GameState`:
 ```cpp
 struct Unit {
     UnitType type;
-    int8_t   owner;        // player index
-    int8_t   hp;           // current hp
-    int8_t   move_points;  // remaining movement this turn
-    bool     has_attacked;
+    int  owner        = -1;
+    int  hp           = 0;
+    int  move_points  = 0;
+    bool has_attacked = false;
 };
 
 // To read a unit's base stats:
@@ -147,40 +164,32 @@ int to_index(int x, int y) { return y * 11 + x; }
 These are the only functions external code (AI, Python bindings, tests) is allowed
 to call. Everything else is internal to the engine.
 
+Methods on `GameState` (simple queries):
 ```cpp
-// Create a new game from a config (map, tribe, seed, etc.)
-GameState new_game(const GameConfig& config);
+s.is_terminal();    // is the game over?
+s.winner();         // winning player index, or -1
+s.current_player(); // whose turn it is
+```
 
-// Return the full current game state
-const GameState& get_state(const GameState& s);
+Free functions (game logic):
+```cpp
+// Actions are written into a caller-provided array — no heap allocation
+void legal_actions(const GameState& s, Action out[], int& out_count);
 
-// Returns every legal action the current player can take
-vector<Action> legal_actions(const GameState& s);
-
-// Applies an action and returns the resulting state
-// Takes GameState by value so the original is never modified
+// Takes GameState by value so the caller controls whether to copy or move
 GameState apply_action(GameState s, Action a);
 
-// True if the game is over (win condition met, turn limit reached, etc.)
-bool is_terminal(const GameState& s);
-
-// Returns the winning player index, or -1 if not yet terminal
-int winner(const GameState& s);
-
-// Returns the index of the player whose turn it is
-int current_player(const GameState& s);
-
-// Serialize state to bytes (for MCTS checkpointing, saving, Python bindings)
-vector<uint8_t> serialize(const GameState& s);
-GameState deserialize(const vector<uint8_t>& bytes);
+// Serialize / deserialize to raw bytes (for MCTS, saving, Python bindings)
+void serialize(const GameState& s, uint8_t* out_buf, int& out_size);
+GameState deserialize(const uint8_t* buf, int size);
 ```
 
 ### Why `apply_action` takes `GameState` by value?
 
 It means the caller controls whether to clone:
 ```cpp
-GameState next = apply_action(current, move);      // current is untouched
-GameState next = apply_action(std::move(current), move); // current is consumed (faster)
+GameState next = apply_action(current, a);              // current is untouched
+GameState next = apply_action(std::move(current), a);   // current is consumed (faster)
 ```
 MCTS uses the first form to branch; the main game loop uses the second.
 
