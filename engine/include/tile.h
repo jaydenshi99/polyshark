@@ -4,11 +4,10 @@
 
 class Tile {
 public:
-    TerrainType  terrain()  const { return _terrain; }
-    ResourceType resource() const { return _resource; }
-    int          unit_id()  const { return _unit_id; }
-    int          city_id()  const { return _city_id; }
-
+    TerrainType  terrain()   const { return _terrain; }
+    ResourceType resource()  const { return _resource; }
+    int          unit_id()   const { return _unit_id; }
+    int          city_id()   const { return _city_id; }
     void set_terrain(TerrainType t)   { _terrain = t; }
     void set_resource(ResourceType r) { _resource = r; }
 
@@ -23,7 +22,7 @@ public:
     bool has_city() const { return _city_id != -1; }
 
 private:
-    TerrainType  _terrain  = TerrainType::Flat;
+    TerrainType  _terrain  = TerrainType::Field;
     ResourceType _resource = ResourceType::None;
     int          _unit_id  = -1;
     int          _city_id  = -1;

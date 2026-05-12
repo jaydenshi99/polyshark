@@ -11,9 +11,10 @@ Build a high-performance Polytopia simulator in C++ and use it as the backend fo
 ```
 polyshark/
 ├── engine/        # C++ game simulator
-│   ├── src/       # implementation files
-│   ├── include/   # header files
-│   └── tests/     # C++ unit tests
+│   ├── src/
+│   ├── include/
+│   ├── tests/
+│   └── docs/      # design and rules documentation
 ├── ai/            # Python ML / agent code
 ├── bindings/      # C++↔Python bridge (pybind11 or ctypes)
 └── scripts/       # build and utility scripts
@@ -29,47 +30,38 @@ polyshark/
 
 ## Current Status
 
-Just started. No code exists yet.
+Phase 1 MVP in progress. Implementing a stripped-down version of Polytopia to get core mechanics working before expanding scope.
 
 ## Scope
 
-### Phase 1 (initial)
-- Single tribe (TBD)
-- Fixed map layout (single map, single size — TBD)
-- Full rule coverage for that tribe: map/terrain, units & combat, cities & economy, tech tree
+### Phase 1 MVP
+- 3 unit types: Warrior, Archer, Rider
+- 3 tech unlocks: Mining, Archery, Riding
+- Terrain: Field, Forest, Mountain, Water + Villages
+- Cities (levels 1–3): 1★/turn per level, +1★ capital bonus, siege mechanic
+- Resources: Food (field/forest, no tech) and Metal (mountain, requires Mining)
+- Fog of war
+- Zone of control, healing, veteran promotion
+- Win condition: capture enemy capital (Domination)
+- 1v1 only
 
 ### Later phases
-- Multiple tribes
-- Configurable / random map generation
-- Multi-player (multiple AI agents)
+- More unit types, full tech tree
+- Multiple tribes with starting bonuses
+- Naval units
+- Full building set
+- Multi-player beyond 1v1
+- Configurable map generation
 
-## Game Mode
+## Game Rules
 
-**Domination** — win by capturing all enemy capitals (not all cities, just the capital).
-Each player's capital is their starting city. A rating is awarded based on how few turns it took.
+Full MVP ruleset is documented in [engine/docs/rules.md](engine/docs/rules.md).
 
-## Game Rules (confirmed)
-
-**Grid:** Square tiles, units move N/S/E/W (4 directions).
-
-**Stars:** The core resource. Each player has their own star count. Cities generate stars each turn. Normal players/bots start with 2 stars/turn.
-
-**Turn structure:** Each turn a player can move/attack with all units, spend stars on tech/buildings/units, and capture villages or cities by moving onto them.
-
-**Combat:** Automatic when a unit moves onto an enemy. In a Warrior vs. Warrior fight (no defence bonus), the attacker's unit dies the following turn and the defender survives with 5 HP — attacking first is a disadvantage in a straight 1v1.
-
-**Cities:** Level up as you collect resources around them. On first level-up, choose Workshop (+1 star/turn) or Explorer (reveals map). Workshop is almost always correct since economy compounds.
-
-**Win condition (Domination):** Capture all enemy capitals. A player is eliminated when their capital is captured.
-
-**Tech tree:** Shared tree across all tribes. Each tribe starts with one unique starting technology.
-
-## Game Systems to Implement
-
-- **Map / terrain** — square grid, terrain types (forest, mountain, water, field, etc.), resources
-- **Units & combat** — unit stats, attack/defense resolution, movement, promotions
-- **Cities & economy** — star income per player, city upgrades, population growth, capturing, capital tracking
-- **Tech tree** — researching technologies, unlocking units and buildings
+**Fog of war (confirmed):**
+- Standard vision: 1-tile radius (full 3×3 square, all 8 directions) for units and cities
+- Mountain bonus: extended vision (exact radius TBD)
+- Explored tiles are permanently revealed; enemy units hide when out of vision
+- The AI plays with imperfect information — fog of war is in scope from the start
 
 ## AI Design
 
@@ -89,12 +81,10 @@ When the user corrects a mistake, clarifies a game rule, or provides domain know
 
 This keeps CLAUDE.md as the living source of truth for Polyshark.
 
-Where to write corrections:
-
 | Correction type | Where |
 |---|---|
-| Game rule clarification / domain knowledge | CLAUDE.md |
-| Behavioral correction ("stop doing X", "do Y instead") | feedback memory |
+| Game rule clarification / domain knowledge | CLAUDE.md + rules.md |
+| Behavioural correction ("stop doing X", "do Y instead") | feedback memory |
 | Corrections that touch both | Write to both |
 
 ## What Claude Should Not Do
@@ -106,5 +96,4 @@ Where to write corrections:
 ## Conventions
 
 - The C++ engine should be deterministic and serializable (needed for MCTS tree expansion and replay).
-- Keep the engine stateless / functional where possible to make tree search easier.
 - Python is for orchestration and ML only — no game logic in Python.

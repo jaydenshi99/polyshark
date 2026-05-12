@@ -21,10 +21,11 @@ void GameState::print_map() const {
             const Tile& t = map[to_index(x, y)];
             char c;
             switch (t.terrain()) {
-                case TerrainType::Flat:     c = '.'; break;
+                case TerrainType::Field:    c = '.'; break;
                 case TerrainType::Forest:   c = 'F'; break;
                 case TerrainType::Mountain: c = 'M'; break;
                 case TerrainType::Water:    c = '~'; break;
+                case TerrainType::Village:  c = 'V'; break;
                 default:                    c = '?'; break;
             }
             if (t.has_city()) c = 'C';
