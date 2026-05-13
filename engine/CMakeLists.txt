@@ -12,7 +12,6 @@ add_library(engine
     src/city.cpp
     src/game_state.cpp
     src/init.cpp
-    src/actions.cpp
 )
 
 add_executable(test_grid

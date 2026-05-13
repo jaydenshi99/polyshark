@@ -13,8 +13,8 @@ enum class TerrainType {
 enum class ResourceType {
     None,
     Fruit,   // field food
-    Game,    // forest food
-    Metal,   // reserved for future use — not harvestable
+    Animal,  // forest food
+    Metal,   // mountain ore — requires Mining tech
 };
 
 enum class UnitType {
@@ -32,10 +32,31 @@ constexpr uint32_t ABILITY_ESCAPE   = 1 << 2;  // can move again after attacking
 constexpr uint32_t ABILITY_RANGED   = 1 << 3;  // attacks at 2-tile range, doesn't advance
 
 
+// City upgrade choices presented to the player on each level-up.
+// Two options per level bracket; L4_PLUS_* are reused for level 5+.
+enum class CityUpgradeType {
+    // Level 1 -> 2
+    L1_WORKSHOP   = 0, L1_EXPLORER,
+
+    // Level 2 -> 3
+    L2_RESOURCES, L2_WALLS,
+
+    // Level 3 -> 4
+    L3_BORDER_GROWTH, L3_POPULATION_GROWTH,
+
+    // Level 4 -> 5  (also used for every level-up beyond 5)
+    L4_PARK,  L4_SUPERUNIT,
+
+    Count,
+};
+
 enum class TechType {
-    Hunting = 0,  // unlocks Game harvesting; prerequisite for Archery
-    Archery,      // requires Hunting
+    Origin = 0,   // root node — always owned; unlocks tier-1 techs
+    Hunting,      // unlocks Animal harvesting; unlocks Archery
+    Organisation,
     Riding,
-    Climbing,     // allows units to enter mountain tiles
+    Climbing,     // allows units to enter mountain tiles; unlocks Mining
+    Archery,      // requires Hunting
+    Mining,       // unlocks Metal harvesting; requires Climbing
     Count,
 };
