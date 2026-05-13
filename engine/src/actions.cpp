@@ -31,14 +31,12 @@ void legal_actions(const GameState& s, Action out[], int& out_count) {
     int p = s.current_player();
 
     // --- Harvest Resource ---
-    for (int i = 0; i < MAP_TILES; i++) {
-        const Tile& ct = s.tile_at(i);
-        if (!ct.has_city()) continue;
-        const City& city = s.get_city(ct.city_id());
+    for (int i = 0; i < s.city_count; i++) {
+        const City& city = s.cities[i];
         if (city.owner() != p) continue;
 
         int ccx, ccy;
-        to_coords(i, ccx, ccy);
+        to_coords(city.tile_index(), ccx, ccy);
         int r = city.border_radius();
 
         for (int dy = -r; dy <= r; dy++) {
