@@ -80,11 +80,13 @@ GameState apply_action(GameState s, Action a) {
             s.cur_player = 1 - s.cur_player;
             int next = s.cur_player;
 
-            // Collect income for the player whose turn is starting
-            for (int i = 0; i < MAP_TILES; i++) {
-                const Tile& t = s.tile_at(i);
-                if (t.has_city() && s.get_city(t.city_id()).owner() == next)
-                    s.stars[next] += s.get_city(t.city_id()).stars_per_turn();
+            // Collect income for the player whose turn is starting (skip turn 0 so P1 doesn't get income before playing)
+            if (s.turn > 0) {
+                for (int i = 0; i < MAP_TILES; i++) {
+                    const Tile& t = s.tile_at(i);
+                    if (t.has_city() && s.get_city(t.city_id()).owner() == next)
+                        s.stars[next] += s.get_city(t.city_id()).stars_per_turn();
+                }
             }
 
             for (int i = 0; i < MAP_TILES; i++) {
