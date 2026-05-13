@@ -78,12 +78,16 @@ GameState make_game() {
     s.spawn_unit(UnitType::Warrior, 0, cap0);
     s.spawn_unit(UnitType::Warrior, 1, cap1);
 
+    // Starting stars
+    s.set_stars(0, 5);
+    s.set_stars(1, 5);
+
     // Initial fog: reveal 3x3 around each capital
     for (int player = 0; player < 2; player++) {
         int cx = (player == 0) ? 1 : 9;
         int cy = (player == 0) ? 1 : 9;
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -2; dy <= 2; dy++) {
+            for (int dx = -2; dx <= 2; dx++) {
                 if (in_bounds(cx + dx, cy + dy))
                     s.set_explored(player, to_index(cx + dx, cy + dy));
             }

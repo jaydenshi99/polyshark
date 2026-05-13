@@ -44,10 +44,18 @@ A stripped-down Polytopia-inspired turn-based strategy game.
 | Income | 1★/turn per level |
 | Capital bonus | +1★/turn |
 | Unit capacity | level + 1 |
-| Upgrade requirement | n population to reach level n |
+| Upgrade requirement | n population to reach level n+1 |
+| Level cap | None |
 
 ### Levelling up
-Gaining enough population levels the city up automatically. Every level-up gives +1★/turn. No choices.
+Gaining enough population levels the city up automatically. Every level-up gives +1★/turn. No choices except at level 3→4.
+
+**Level 3→4: Border Growth** — city border expands from 3×3 to 5×5 (radius 1 → radius 2). No other special upgrades in this simplified version.
+
+### Border
+- Levels 1–3: 3×3 area centred on city tile (radius 1, up to 8 harvestable tiles)
+- Level 4+: 5×5 area centred on city tile (radius 2, up to 24 harvestable tiles)
+- Borders between two cities are clipped at the midpoint — no overlapping
 
 ### Population sources
 Harvesting resources on tiles within the city's border.

@@ -6,12 +6,13 @@
 #include <cstdio>
 
 static constexpr int TILE    = 56;
-static constexpr int PAD     = 12;
+static constexpr int PAD     = 4;
+static constexpr int LABEL   = 20;   // space for row/col index labels
 static constexpr int HUD     = 44;
 static constexpr int SIDEBAR = 230;
-static constexpr int MAP_PX  = MAP_SIZE * TILE + PAD * 2;
+static constexpr int MAP_PX  = MAP_SIZE * TILE + PAD * 2 + LABEL;
 static constexpr int W       = MAP_PX + SIDEBAR;
-static constexpr int H       = MAP_SIZE * TILE + PAD * 2 + HUD;
+static constexpr int H       = MAP_SIZE * TILE + PAD * 2 + LABEL + HUD;
 
 enum class ViewMode { Omni, P0, P1 };
 
@@ -73,6 +74,13 @@ static void action_label(const Action& a, char* buf, int size) {
             to_coords(a.to, tx, ty);
             snprintf(buf, size, "Build at (%d,%d)", tx, ty);
             break;
+        case ActionType::HarvestResource: {
+            to_coords(a.to, tx, ty);
+            const char* rname = (a.param == (int)ResourceType::Fruit) ? "Fruit" :
+                                (a.param == (int)ResourceType::Game)  ? "Game"  : "Metal";
+            snprintf(buf, size, "Harvest %s (%d,%d)", rname, tx, ty);
+            break;
+        }
         default:
             snprintf(buf, size, "Unknown");
             break;
@@ -100,15 +108,40 @@ int main() {
         BeginDrawing();
         ClearBackground({ 30, 30, 30, 255 });
 
+        // Precompute border ownership for every tile (-1 = no city)
+        int border_owner[MAP_TILES];
+        for (int i = 0; i < MAP_TILES; i++) border_owner[i] = -1;
+        for (int i = 0; i < MAP_TILES; i++) {
+            const Tile& ct = s.tile_at(i);
+            if (!ct.has_city()) continue;
+            const City& city = s.get_city(ct.city_id());
+            int ccx, ccy;
+            to_coords(i, ccx, ccy);
+            int r = city.border_radius();
+            for (int dy = -r; dy <= r; dy++)
+                for (int dx = -r; dx <= r; dx++)
+                    if (in_bounds(ccx + dx, ccy + dy))
+                        border_owner[to_index(ccx + dx, ccy + dy)] = city.owner();
+        }
+
+        // --- Row / col indices ---
+        for (int x = 0; x < MAP_SIZE; x++)
+            DrawText(TextFormat("%d", x),
+                     PAD + LABEL + x * TILE + TILE / 2 - 4, PAD + 2, 14, GRAY);
+        for (int y = 0; y < MAP_SIZE; y++)
+            DrawText(TextFormat("%d", y),
+                     PAD + 2, PAD + LABEL + y * TILE + TILE / 2 - 7, 14, GRAY);
+
         // --- Map ---
+        int vp = (view == ViewMode::P1) ? 1 : 0;
+
         for (int y = 0; y < MAP_SIZE; y++) {
             for (int x = 0; x < MAP_SIZE; x++) {
                 const Tile& t = s.tile_at(to_index(x, y));
-                int px  = PAD + x * TILE;
-                int py  = PAD + y * TILE;
+                int px  = PAD + LABEL + x * TILE;
+                int py  = PAD + LABEL + y * TILE;
                 int idx = to_index(x, y);
 
-                int  vp     = (view == ViewMode::P1) ? 1 : 0;
                 bool fogged = (view != ViewMode::Omni) && !s.is_explored(vp, idx);
                 bool dimmed = (view != ViewMode::Omni) && s.is_explored(vp, idx)
                                                        && !s.is_visible(vp, idx);
@@ -154,6 +187,31 @@ int main() {
                     DrawRectangle(px, py, TILE - 1, TILE - 1, { 0, 0, 0, 120 });
 
                 DrawRectangleLines(px, py, TILE, TILE, { 0, 0, 0, 60 });
+            }
+        }
+
+        // Border edge lines — draw on tile edges that are on the territory boundary
+        for (int y = 0; y < MAP_SIZE; y++) {
+            for (int x = 0; x < MAP_SIZE; x++) {
+                int idx   = to_index(x, y);
+                int owner = border_owner[idx];
+                if (owner == -1) continue;
+                if ((view != ViewMode::Omni) && !s.is_explored(vp, idx)) continue;
+
+                int px = PAD + LABEL + x * TILE;
+                int py = PAD + LABEL + y * TILE;
+                Color ec = (owner == 0) ? Color{ 80, 150, 255, 200 }
+                                        : Color{ 255, 80,  80, 200 };
+
+                // Draw a line on each edge where the adjacent tile is outside this border
+                constexpr float BORDER_THICK = 3.0f;
+                auto outside = [&](int nx, int ny) {
+                    return !in_bounds(nx, ny) || border_owner[to_index(nx, ny)] != owner;
+                };
+                if (outside(x, y-1)) DrawLineEx({(float)px,        (float)py        }, {(float)(px+TILE-1), (float)py        }, BORDER_THICK, ec);
+                if (outside(x, y+1)) DrawLineEx({(float)px,        (float)(py+TILE-1)}, {(float)(px+TILE-1),(float)(py+TILE-1)}, BORDER_THICK, ec);
+                if (outside(x-1, y)) DrawLineEx({(float)px,        (float)py        }, {(float)px,          (float)(py+TILE-1)}, BORDER_THICK, ec);
+                if (outside(x+1, y)) DrawLineEx({(float)(px+TILE-1),(float)py        }, {(float)(px+TILE-1),(float)(py+TILE-1)}, BORDER_THICK, ec);
             }
         }
 

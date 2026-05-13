@@ -7,6 +7,7 @@ enum class ActionType {
     BuildImprovement,
     ResearchTech,
     CaptureCity,
+    HarvestResource,  // from=city tile, to=resource tile, param=ResourceType
     EndTurn,
 };
 

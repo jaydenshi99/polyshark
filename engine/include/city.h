@@ -2,8 +2,6 @@
 
 #include <cstdint>
 
-constexpr int MAX_CITY_LEVEL = 3;
-
 class City {
 public:
     int  owner()      const { return _owner; }
@@ -18,6 +16,9 @@ public:
 
     // Unit capacity: level + 1
     int unit_capacity() const { return _level + 1; }
+
+    // Border radius: 1 (3x3) for levels 1-3, 2 (5x5) for level 4+
+    int border_radius() const { return _level >= 4 ? 2 : 1; }
 
     void add_population(int n);
     // Caller must also set tile terrain to Field if it was Village
