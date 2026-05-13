@@ -31,6 +31,21 @@ public:
 
     void print_map() const;
 
+    // Mutable tile access for map setup and apply_action
+    Tile& tile_at(int index) { return map[index]; }
+    const Tile& tile_at(int index) const { return map[index]; }
+
+    // Allocates a unit slot, initialises hp/movement from UnitDef, places on tile.
+    // Returns slot index, or -1 if full.
+    int spawn_unit(UnitType type, int owner, int tile_index);
+
+    // Allocates a city slot, places on tile.
+    // Returns slot index, or -1 if full.
+    int spawn_city(int tile_index, int owner, bool is_capital);
+
+    int  get_stars(int player) const       { return stars[player]; }
+    void set_stars(int player, int amount) { stars[player] = amount; }
+
     friend void      legal_actions(const GameState& s, Action out[], int& out_count);
     friend GameState apply_action(GameState s, Action a);
 

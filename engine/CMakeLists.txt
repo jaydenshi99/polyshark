@@ -11,6 +11,7 @@ add_library(engine
     src/unit.cpp
     src/city.cpp
     src/game_state.cpp
+    src/init.cpp
 )
 
 add_executable(test_grid
@@ -22,3 +23,8 @@ add_executable(test_game_state
     tests/test_game_state.cpp
 )
 target_link_libraries(test_game_state engine)
+
+add_executable(test_init
+    tests/test_init.cpp
+)
+target_link_libraries(test_init engine)

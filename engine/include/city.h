@@ -23,6 +23,7 @@ public:
     // Caller must also set tile terrain to Field if it was Village
     void capture(int new_owner);
 
+    void set_owner(int owner)      { _owner = owner; }
     void set_tile(int tile_index)  { _tile_index = tile_index; }
     void set_capital(bool capital) { _is_capital = capital; }
     void set_sieged(bool sieged)   { _is_sieged = sieged; }
