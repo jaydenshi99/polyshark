@@ -79,7 +79,7 @@ The map is 11x11 = 121 tiles. Storing it as `Tile map[121]` instead of a
 ```cpp
 struct Tile {
     TerrainType terrain;   // forest, mountain, water, field, etc.
-    ResourceType resource; // Fruit, Game, Metal, or None
+    ResourceType resource; // Fruit, Game, or None (Metal reserved, not harvestable)
     int unit_id;           // index into units[], or -1 if empty
     int city_id;           // index into cities[], or -1 if none
 };

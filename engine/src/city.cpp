@@ -8,7 +8,7 @@ int City::stars_per_turn() const {
 void City::add_population(int n) {
     _population += n;
     // level up while enough population, capped at MAX_CITY_LEVEL
-    while (_level < MAX_CITY_LEVEL && _population >= _level + 1) {
+    while (_population >= _level + 1) {
         _population -= _level + 1;
         _level++;
     }

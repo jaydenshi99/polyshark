@@ -18,7 +18,7 @@ A stripped-down Polytopia-inspired turn-based strategy game.
 |---|---|---|
 | Field | Normal | ×1.0 |
 | Forest | Blocks (enter only) | ×1.5 |
-| Mountain | Blocks (enter only) | ×1.5 |
+| Mountain | Impassable without Climbing tech (enter only) | ×1.5 |
 | Water | Impassable | — |
 | Village | Normal | ×1.0 (terrain changes to Field on capture; city placed by engine) |
 
@@ -44,10 +44,18 @@ A stripped-down Polytopia-inspired turn-based strategy game.
 | Income | 1★/turn per level |
 | Capital bonus | +1★/turn |
 | Unit capacity | level + 1 |
-| Upgrade requirement | n population to reach level n |
+| Upgrade requirement | n population to reach level n+1 |
+| Level cap | None |
 
 ### Levelling up
-Gaining enough population levels the city up automatically. Every level-up gives +1★/turn. No choices.
+Gaining enough population levels the city up automatically. Every level-up gives +1★/turn. No choices except at level 3→4.
+
+**Level 3→4: Border Growth** — city border expands from 3×3 to 5×5 (radius 1 → radius 2). No other special upgrades in this simplified version.
+
+### Border
+- Levels 1–3: 3×3 area centred on city tile (radius 1, up to 8 harvestable tiles)
+- Level 4+: 5×5 area centred on city tile (radius 2, up to 24 harvestable tiles)
+- Borders between two cities are clipped at the midpoint — no overlapping
 
 ### Population sources
 Harvesting resources on tiles within the city's border.
@@ -59,18 +67,18 @@ Enemy unit on a city tile → city produces 0★ that turn.
 
 ## Resources & Harvesting
 
-Resource sub-types (used in code): `Fruit` (field), `Game` (forest), `Metal` (mountain).
+Resource sub-types (used in code): `Fruit` (field), `Game` (forest). Metal is reserved for future use and is not harvestable.
 
-### Food (Fields & Forests)
+### Food — Fruit (Fields)
 - No tech required
 - Cost: **2★**
 - Reward: **+1 population** to nearest city
 - One-time — tile cleared after harvest
 
-### Metal (Mountains)
-- Requires **Mining** tech
-- Cost: **3★**
-- Reward: **+2★ immediately**
+### Food — Game (Forests)
+- Requires **Hunting** tech
+- Cost: **2★**
+- Reward: **+1 population** to nearest city
 - One-time — tile cleared after harvest
 
 ### Rules
@@ -83,11 +91,12 @@ Resource sub-types (used in code): `Fruit` (field), `Game` (forest), `Metal` (mo
 
 Cost increases by +1★ per additional city owned.
 
-| Tech | Base Cost | Unlocks |
-|---|---|---|
-| Mining | 2★ | Harvest metal |
-| Archery | 2★ | Train Archer |
-| Riding | 3★ | Train Rider |
+| Tech | Base Cost | Prereq | Unlocks |
+|---|---|---|---|
+| Hunting | 2★ | — | Harvest Game (forest food) |
+| Archery | 2★ | Hunting | Train Archer |
+| Riding | 3★ | — | Train Rider |
+| Climbing | 2★ | — | Units may enter mountain tiles |
 
 Warrior requires no tech — available from turn 0.
 

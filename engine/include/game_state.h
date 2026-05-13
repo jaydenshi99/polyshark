@@ -17,6 +17,7 @@ public:
     bool is_terminal()    const;
     int  winner()         const;
     int  current_player() const;
+    int  get_turn()       const { return turn; }
 
     // Fog of war
     bool is_visible(int player, int tile)  const { return (visible[player][tile / 16]  >> (tile % 16)) & 1; }
@@ -30,6 +31,24 @@ public:
     void research_tech(int player, TechType t)  { techs[player] |= (1 << static_cast<int>(t)); }
 
     void print_map() const;
+
+    // Mutable tile access for map setup and apply_action
+    Tile& tile_at(int index) { return map[index]; }
+    const Tile& tile_at(int index) const { return map[index]; }
+
+    // Allocates a unit slot, initialises hp/movement from UnitDef, places on tile.
+    // Returns slot index, or -1 if full.
+    int spawn_unit(UnitType type, int owner, int tile_index);
+
+    // Allocates a city slot, places on tile.
+    // Returns slot index, or -1 if full.
+    int spawn_city(int tile_index, int owner, bool is_capital);
+
+    int  get_stars(int player) const       { return stars[player]; }
+    void set_stars(int player, int amount) { stars[player] = amount; }
+
+    const Unit& get_unit(int id) const { return units[id]; }
+    const City& get_city(int id) const { return cities[id]; }
 
     friend void      legal_actions(const GameState& s, Action out[], int& out_count);
     friend GameState apply_action(GameState s, Action a);
