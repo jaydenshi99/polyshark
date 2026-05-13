@@ -37,18 +37,16 @@ GameState apply_action(GameState s, Action a) {
     switch (a.type) {
 
         case ActionType::EndTurn: {
-            int p = s.cur_player;
+            // Switch to next player
+            s.cur_player = 1 - s.cur_player;
+            int next = s.cur_player;
 
-            // Collect income for the player ending their turn
+            // Collect income for the player whose turn is starting
             for (int i = 0; i < MAP_TILES; i++) {
                 const Tile& t = s.tile_at(i);
-                if (t.has_city() && s.get_city(t.city_id()).owner() == p)
-                    s.stars[p] += s.get_city(t.city_id()).stars_per_turn();
+                if (t.has_city() && s.get_city(t.city_id()).owner() == next)
+                    s.stars[next] += s.get_city(t.city_id()).stars_per_turn();
             }
-
-            // Switch to next player and reset their units
-            s.cur_player = 1 - p;
-            int next = s.cur_player;
 
             for (int i = 0; i < MAP_TILES; i++) {
                 const Tile& t = s.tile_at(i);
