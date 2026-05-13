@@ -46,6 +46,9 @@ public:
     int  get_stars(int player) const       { return stars[player]; }
     void set_stars(int player, int amount) { stars[player] = amount; }
 
+    const Unit& get_unit(int id) const { return units[id]; }
+    const City& get_city(int id) const { return cities[id]; }
+
     friend void      legal_actions(const GameState& s, Action out[], int& out_count);
     friend GameState apply_action(GameState s, Action a);
 

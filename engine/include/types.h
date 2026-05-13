@@ -34,7 +34,8 @@ constexpr uint32_t ABILITY_RANGED   = 1 << 3;  // attacks at 2-tile range, doesn
 
 enum class TechType {
     Mining = 0,
-    Archery,
+    Hunting,   // prerequisite for Archery; unlocks Game harvesting
+    Archery,   // requires Hunting
     Riding,
     Count,
 };
