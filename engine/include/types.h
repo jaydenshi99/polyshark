@@ -14,7 +14,7 @@ enum class ResourceType {
     None,
     Fruit,   // field food
     Game,    // forest food
-    Metal,   // mountain, requires Mining
+    Metal,   // reserved for future use — not harvestable
 };
 
 enum class UnitType {
@@ -33,9 +33,8 @@ constexpr uint32_t ABILITY_RANGED   = 1 << 3;  // attacks at 2-tile range, doesn
 
 
 enum class TechType {
-    Mining = 0,
-    Hunting,   // prerequisite for Archery; unlocks Game harvesting
-    Archery,   // requires Hunting
+    Hunting = 0,  // unlocks Game harvesting; prerequisite for Archery
+    Archery,      // requires Hunting
     Riding,
     Count,
 };

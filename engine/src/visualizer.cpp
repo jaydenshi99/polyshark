@@ -76,8 +76,7 @@ static void action_label(const Action& a, char* buf, int size) {
             break;
         case ActionType::HarvestResource: {
             to_coords(a.to, tx, ty);
-            const char* rname = (a.param == (int)ResourceType::Fruit) ? "Fruit" :
-                                (a.param == (int)ResourceType::Game)  ? "Game"  : "Metal";
+            const char* rname = (a.param == (int)ResourceType::Fruit) ? "Fruit" : "Game";
             snprintf(buf, size, "Harvest %s (%d,%d)", rname, tx, ty);
             break;
         }

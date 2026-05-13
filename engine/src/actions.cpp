@@ -50,13 +50,14 @@ void legal_actions(const GameState& s, Action out[], int& out_count) {
                 ResourceType res = bt.resource();
                 if (res == ResourceType::None) continue;
 
-                // Tech requirements
-                if (res == ResourceType::Metal && !s.has_tech(p, TechType::Mining))  continue;
-                if (res == ResourceType::Game  && !s.has_tech(p, TechType::Hunting)) continue;
+                // Metal is not harvestable
+                if (res == ResourceType::Metal) continue;
 
-                // Star cost
-                int cost = (res == ResourceType::Metal) ? 3 : 2;
-                if (s.get_stars(p) < cost) continue;
+                // Tech requirements
+                if (res == ResourceType::Game && !s.has_tech(p, TechType::Hunting)) continue;
+
+                // Star cost: 2★ for all harvestable resources
+                if (s.get_stars(p) < 2) continue;
 
                 // Not blocked by enemy unit
                 if (bt.has_unit() && s.get_unit(bt.unit_id()).owner() != p) continue;
@@ -102,19 +103,10 @@ GameState apply_action(GameState s, Action a) {
 
         case ActionType::HarvestResource: {
             int p = s.cur_player;
-            auto res = (ResourceType)a.param;
-            int cost = (res == ResourceType::Metal) ? 3 : 2;
-
-            s.stars[p] -= cost;
-
-            if (res == ResourceType::Metal) {
-                s.stars[p] += 2;                      // +2★ immediately
-            } else {
-                int cid = s.tile_at(a.from).city_id();
-                s.cities[cid].add_population(1);      // +1 pop to city
-            }
-
-            s.tile_at(a.to).set_resource(ResourceType::None);  // one-time, tile cleared
+            s.stars[p] -= 2;
+            int cid = s.tile_at(a.from).city_id();
+            s.cities[cid].add_population(1);
+            s.tile_at(a.to).set_resource(ResourceType::None);
             return s;
         }
 

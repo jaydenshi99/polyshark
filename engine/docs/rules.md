@@ -67,7 +67,7 @@ Enemy unit on a city tile → city produces 0★ that turn.
 
 ## Resources & Harvesting
 
-Resource sub-types (used in code): `Fruit` (field), `Game` (forest), `Metal` (mountain).
+Resource sub-types (used in code): `Fruit` (field), `Game` (forest). Metal is reserved for future use and is not harvestable.
 
 ### Food — Fruit (Fields)
 - No tech required
@@ -79,12 +79,6 @@ Resource sub-types (used in code): `Fruit` (field), `Game` (forest), `Metal` (mo
 - Requires **Hunting** tech
 - Cost: **2★**
 - Reward: **+1 population** to nearest city
-- One-time — tile cleared after harvest
-
-### Metal (Mountains)
-- Requires **Mining** tech
-- Cost: **3★**
-- Reward: **+2★ immediately**
 - One-time — tile cleared after harvest
 
 ### Rules
@@ -99,7 +93,6 @@ Cost increases by +1★ per additional city owned.
 
 | Tech | Base Cost | Prereq | Unlocks |
 |---|---|---|---|
-| Mining | 2★ | — | Harvest Metal |
 | Hunting | 2★ | — | Harvest Game (forest food) |
 | Archery | 2★ | Hunting | Train Archer |
 | Riding | 3★ | — | Train Rider |

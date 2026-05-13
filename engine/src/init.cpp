@@ -35,15 +35,6 @@ static const struct { int x, y; ResourceType r; } RESOURCES[] = {
     {2,8,R::Game},  {7,8,R::Game},
     {0,9,R::Game},  {3,9,R::Game},
     {2,10,R::Game}, {9,10,R::Game},
-    // Mountains -> Metal
-    {4,0,R::Metal},
-    {2,2,R::Metal},
-    {6,3,R::Metal},
-    {0,4,R::Metal}, {10,4,R::Metal},
-    {0,6,R::Metal}, {10,6,R::Metal},
-    {4,7,R::Metal},
-    {8,8,R::Metal},
-    {6,10,R::Metal},
     // Fields -> Fruit
     {2,1,R::Fruit}, {9,1,R::Fruit},
     {4,2,R::Fruit},
