@@ -43,6 +43,8 @@ void legal_actions(const GameState& s, Action out[], int& out_count) {
             for (int dx = -r; dx <= r; dx++) {
                 int bx = ccx + dx, by = ccy + dy;
                 if (!in_bounds(bx, by)) continue;
+                // TODO: midpoint clipping — if another city is closer to (bx,by) than this one, skip it.
+                // Without this, two nearby same-player cities can both generate the same HarvestResource action.
                 int bidx = to_index(bx, by);
                 const Tile& bt = s.tile_at(bidx);
                 ResourceType res = bt.resource();
