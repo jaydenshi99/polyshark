@@ -18,7 +18,7 @@ A stripped-down Polytopia-inspired turn-based strategy game.
 |---|---|---|
 | Field | Normal | ×1.0 |
 | Forest | Blocks (enter only) | ×1.5 |
-| Mountain | Blocks (enter only) | ×1.5 |
+| Mountain | Impassable without Climbing tech (enter only) | ×1.5 |
 | Water | Impassable | — |
 | Village | Normal | ×1.0 (terrain changes to Field on capture; city placed by engine) |
 
@@ -96,6 +96,7 @@ Cost increases by +1★ per additional city owned.
 | Hunting | 2★ | — | Harvest Game (forest food) |
 | Archery | 2★ | Hunting | Train Archer |
 | Riding | 3★ | — | Train Rider |
+| Climbing | 2★ | — | Units may enter mountain tiles |
 
 Warrior requires no tech — available from turn 0.
 

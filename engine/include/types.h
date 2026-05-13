@@ -36,5 +36,6 @@ enum class TechType {
     Hunting = 0,  // unlocks Game harvesting; prerequisite for Archery
     Archery,      // requires Hunting
     Riding,
+    Climbing,     // allows units to enter mountain tiles
     Count,
 };
