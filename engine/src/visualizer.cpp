@@ -1,11 +1,19 @@
 #include "raylib.h"
 #include "init.h"
 #include "unit_def.h"
+#include "action.h"
+#include <utility>
+#include <cstdio>
 
-static constexpr int TILE  = 56;
-static constexpr int PAD   = 12;
-static constexpr int W     = MAP_SIZE * TILE + PAD * 2;
-static constexpr int H     = MAP_SIZE * TILE + PAD * 2;
+static constexpr int TILE    = 56;
+static constexpr int PAD     = 12;
+static constexpr int HUD     = 44;
+static constexpr int SIDEBAR = 230;
+static constexpr int MAP_PX  = MAP_SIZE * TILE + PAD * 2;
+static constexpr int W       = MAP_PX + SIDEBAR;
+static constexpr int H       = MAP_SIZE * TILE + PAD * 2 + HUD;
+
+enum class ViewMode { Omni, P0, P1 };
 
 static Color terrain_color(TerrainType t) {
     switch (t) {
@@ -36,52 +44,159 @@ static const char* resource_label(ResourceType r) {
     }
 }
 
+static void action_label(const Action& a, char* buf, int size) {
+    int fx, fy, tx, ty;
+    switch (a.type) {
+        case ActionType::EndTurn:
+            snprintf(buf, size, "End Turn");
+            break;
+        case ActionType::Move:
+            to_coords(a.from, fx, fy); to_coords(a.to, tx, ty);
+            snprintf(buf, size, "Move (%d,%d) -> (%d,%d)", fx, fy, tx, ty);
+            break;
+        case ActionType::Attack:
+            to_coords(a.from, fx, fy); to_coords(a.to, tx, ty);
+            snprintf(buf, size, "Attack (%d,%d) -> (%d,%d)", fx, fy, tx, ty);
+            break;
+        case ActionType::TrainUnit:
+            to_coords(a.from, fx, fy);
+            snprintf(buf, size, "Train unit at (%d,%d)", fx, fy);
+            break;
+        case ActionType::ResearchTech:
+            snprintf(buf, size, "Research tech %d", a.param);
+            break;
+        case ActionType::CaptureCity:
+            to_coords(a.to, tx, ty);
+            snprintf(buf, size, "Capture city at (%d,%d)", tx, ty);
+            break;
+        case ActionType::BuildImprovement:
+            to_coords(a.to, tx, ty);
+            snprintf(buf, size, "Build at (%d,%d)", tx, ty);
+            break;
+        default:
+            snprintf(buf, size, "Unknown");
+            break;
+    }
+}
+
 int main() {
     GameState s = make_game();
+    ViewMode  view = ViewMode::Omni;
+
+    Action actions[256];
+    int    action_count = 0;
+    legal_actions(s, actions, action_count);
 
     InitWindow(W, H, "Polyshark");
     SetTargetFPS(60);
 
     while (!WindowShouldClose()) {
+
+        if (IsKeyPressed(KEY_TAB)) {
+            view = (view == ViewMode::Omni) ? ViewMode::P0  :
+                   (view == ViewMode::P0)   ? ViewMode::P1  : ViewMode::Omni;
+        }
+
         BeginDrawing();
         ClearBackground({ 30, 30, 30, 255 });
 
+        // --- Map ---
         for (int y = 0; y < MAP_SIZE; y++) {
             for (int x = 0; x < MAP_SIZE; x++) {
                 const Tile& t = s.tile_at(to_index(x, y));
-                int px = PAD + x * TILE;
-                int py = PAD + y * TILE;
+                int px  = PAD + x * TILE;
+                int py  = PAD + y * TILE;
+                int idx = to_index(x, y);
 
-                // Terrain base
-                DrawRectangle(px, py, TILE - 1, TILE - 1, terrain_color(t.terrain()));
+                int  vp     = (view == ViewMode::P1) ? 1 : 0;
+                bool fogged = (view != ViewMode::Omni) && !s.is_explored(vp, idx);
+                bool dimmed = (view != ViewMode::Omni) && s.is_explored(vp, idx)
+                                                       && !s.is_visible(vp, idx);
 
-                // Resource dot + label (bottom-left corner)
-                if (t.resource() != ResourceType::None) {
+                // Fogged tiles: solid black, no info
+                if (fogged) {
+                    DrawRectangle(px, py, TILE - 1, TILE - 1, { 18, 18, 18, 255 });
+                } else {
+                    DrawRectangle(px, py, TILE - 1, TILE - 1, terrain_color(t.terrain()));
+                }
+
+                // Resources only when fully visible
+                if (!fogged && !dimmed && t.resource() != ResourceType::None) {
                     DrawRectangle(px + 2, py + TILE - 12, 10, 10,
                                   resource_color(t.resource()));
                     DrawText(resource_label(t.resource()), px + 3, py + TILE - 12, 8, WHITE);
                 }
 
-                // City ring
-                if (t.has_city()) {
-                    DrawRectangleLinesEx({ (float)px + 2, (float)py + 2,
-                                          (float)TILE - 5, (float)TILE - 5 }, 3, WHITE);
+                // City ring when explored
+                if (!fogged && t.has_city()) {
+                    DrawRectangleLinesEx(
+                        { (float)px + 2, (float)py + 2, (float)TILE - 5, (float)TILE - 5 },
+                        3, WHITE);
                 }
 
-                // Unit circle — blue=P0, red=P1
+                // Units — visible tiles or own units
                 if (t.has_unit()) {
                     const Unit& u = s.get_unit(t.unit_id());
-                    int cx = px + TILE / 2;
-                    int cy = py + TILE / 2;
-                    Color uc = (u.owner() == 0) ? BLUE : RED;
-                    DrawCircle(cx, cy, TILE / 4, uc);
-                    DrawText("W", cx - 4, cy - 5, 10, WHITE);
+                    bool show = (view == ViewMode::Omni)
+                             || s.is_visible(vp, idx)
+                             || u.owner() == vp;
+                    if (show) {
+                        int cx = px + TILE / 2;
+                        int cy = py + TILE / 2;
+                        Color uc = (u.owner() == 0) ? BLUE : RED;
+                        DrawCircle(cx, cy, TILE / 4, uc);
+                        DrawText("W", cx - 4, cy - 5, 10, WHITE);
+                    }
                 }
 
-                // Grid line
+                // Explored-but-not-visible dimming
+                if (dimmed)
+                    DrawRectangle(px, py, TILE - 1, TILE - 1, { 0, 0, 0, 120 });
+
                 DrawRectangleLines(px, py, TILE, TILE, { 0, 0, 0, 60 });
             }
         }
+
+        // --- Sidebar ---
+        DrawRectangle(MAP_PX, 0, SIDEBAR, H, { 38, 38, 38, 255 });
+        DrawLine(MAP_PX, 0, MAP_PX, H, { 65, 65, 65, 255 });
+        DrawText("LEGAL ACTIONS", MAP_PX + 8, 10, 14, GRAY);
+        DrawLine(MAP_PX + 4, 28, MAP_PX + SIDEBAR - 4, 28, { 60, 60, 60, 255 });
+
+        Vector2 mouse   = GetMousePosition();
+        bool    clicked = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+        int     applied = -1;
+
+        for (int i = 0; i < action_count; i++) {
+            int iy       = 36 + i * 28;
+            Rectangle row = { (float)MAP_PX + 4, (float)iy, (float)SIDEBAR - 8, 24 };
+            bool hovered  = CheckCollisionPointRec(mouse, row);
+
+            DrawRectangleRec(row, hovered ? Color{ 65, 90, 140, 255 }
+                                          : Color{ 50, 50, 50,  255 });
+
+            char label[64];
+            action_label(actions[i], label, sizeof(label));
+            DrawText(label, MAP_PX + 10, iy + 5, 13, WHITE);
+
+            if (hovered && clicked)
+                applied = i;
+        }
+
+        // Apply after the loop so we don't mutate actions[] mid-render
+        if (applied >= 0) {
+            s = apply_action(std::move(s), actions[applied]);
+            legal_actions(s, actions, action_count);
+        }
+
+        // --- HUD ---
+        int hy = H - HUD + 8;
+        const char* vname = (view == ViewMode::Omni) ? "Omniscient" :
+                            (view == ViewMode::P0)   ? "Player 0"   : "Player 1";
+        DrawText(TextFormat("View: %-12s [Tab]", vname), PAD, hy, 17, LIGHTGRAY);
+        DrawText(TextFormat("Turn %d  |  P%d to move  |  Stars:  P0=%d  P1=%d",
+                 s.get_turn(), s.current_player(), s.get_stars(0), s.get_stars(1)),
+                 PAD, hy + 20, 16, LIGHTGRAY);
 
         EndDrawing();
     }

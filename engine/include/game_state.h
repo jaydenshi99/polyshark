@@ -17,6 +17,7 @@ public:
     bool is_terminal()    const;
     int  winner()         const;
     int  current_player() const;
+    int  get_turn()       const { return turn; }
 
     // Fog of war
     bool is_visible(int player, int tile)  const { return (visible[player][tile / 16]  >> (tile % 16)) & 1; }

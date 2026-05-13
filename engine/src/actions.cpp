@@ -60,6 +60,7 @@ GameState apply_action(GameState s, Action a) {
             }
 
             rebuild_visibility(s, next);
+            s.turn++;
             return s;
         }
 
