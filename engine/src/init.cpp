@@ -1,5 +1,6 @@
 #include "init.h"
 #include "grid.h"
+#include "tech_def.h"
 
 using T = TerrainType;
 using R = ResourceType;
@@ -8,33 +9,34 @@ using R = ResourceType;
 // clang-format off
 static const TerrainType TERRAIN[MAP_TILES] = {
 //       x=0          x=1          x=2          x=3          x=4          x=5          x=6          x=7          x=8          x=9          x=10
-/*y=0*/  T::Field,    T::Forest,   T::Field,    T::Field,    T::Mountain, T::Field,    T::Village,  T::Field,    T::Forest,   T::Field,    T::Field,
+/*y=0*/  T::Field,    T::Forest,   T::Field,    T::Field,    T::Mountain, T::Field,    T::Field,  T::Field,    T::Forest,   T::Field,    T::Field,
 /*y=1*/  T::Forest,   T::Field,    T::Field,    T::Field,    T::Field,    T::Field,    T::Field,    T::Forest,   T::Field,    T::Field,    T::Forest,
-/*y=2*/  T::Field,    T::Field,    T::Mountain, T::Forest,   T::Field,    T::Field,    T::Field,    T::Field,    T::Forest,   T::Field,    T::Field,
-/*y=3*/  T::Field,    T::Village,  T::Field,    T::Field,    T::Forest,   T::Field,    T::Mountain, T::Field,    T::Field,    T::Forest,   T::Field,
-/*y=4*/  T::Mountain, T::Field,    T::Forest,   T::Field,    T::Field,    T::Field,    T::Field,    T::Forest,   T::Field,    T::Field,    T::Mountain,
-/*y=5*/  T::Field,    T::Field,    T::Field,    T::Field,    T::Field,    T::Water,    T::Water,    T::Field,    T::Field,    T::Field,    T::Field,
+/*y=2*/  T::Field,    T::Field,    T::Mountain, T::Forest,   T::Field,    T::Field,    T::Village,    T::Field,    T::Forest,   T::Field,    T::Field,
+/*y=3*/  T::Field,    T::Field,  T::Field,    T::Field,    T::Forest,   T::Field,    T::Mountain, T::Field,    T::Field,    T::Forest,   T::Field,
+/*y=4*/  T::Mountain, T::Village,    T::Forest,   T::Field,    T::Field,    T::Field,    T::Field,    T::Forest,   T::Field,    T::Field,    T::Mountain,
+/*y=5*/  T::Field,    T::Field,    T::Field,    T::Field,    T::Field,    T::Water,    T::Water,    T::Field,    T::Field,    T::Village,    T::Field,
 /*y=6*/  T::Mountain, T::Field,    T::Forest,   T::Field,    T::Field,    T::Water,    T::Water,    T::Field,    T::Field,    T::Forest,   T::Mountain,
-/*y=7*/  T::Field,    T::Forest,   T::Field,    T::Field,    T::Mountain, T::Field,    T::Forest,   T::Field,    T::Field,    T::Village,  T::Field,
-/*y=8*/  T::Field,    T::Field,    T::Forest,   T::Field,    T::Field,    T::Field,    T::Field,    T::Forest,   T::Mountain, T::Field,    T::Field,
-/*y=9*/  T::Forest,   T::Field,    T::Field,    T::Forest,   T::Field,    T::Field,    T::Field,    T::Field,    T::Field,    T::Field,    T::Forest,
-/*y=10*/ T::Field,    T::Field,    T::Forest,   T::Field,    T::Village,  T::Field,    T::Mountain, T::Field,    T::Field,    T::Forest,   T::Field,
+/*y=7*/  T::Field,    T::Forest,   T::Field,    T::Field,    T::Mountain, T::Field,    T::Forest,   T::Field,    T::Field,    T::Field,  T::Field,
+/*y=8*/  T::Field,    T::Field,    T::Forest,   T::Field,    T::Field,    T::Village,    T::Field,    T::Forest,   T::Mountain, T::Field,    T::Field,
+/*y=9*/  T::Forest,   T::Field,    T::Village,    T::Forest,   T::Field,    T::Field,    T::Field,    T::Field,    T::Field,    T::Field,    T::Forest,
+/*y=10*/ T::Field,    T::Field,    T::Forest,   T::Field,    T::Field,  T::Field,    T::Mountain, T::Field,    T::Field,    T::Forest,   T::Field,
 };
 // clang-format on
 
 // Sparse resource placements — terrain type already verified by design
 static const struct { int x, y; ResourceType r; } RESOURCES[] = {
-    // Forests -> Game
-    {1,0,R::Game},  {8,0,R::Game},
-    {0,1,R::Game},  {7,1,R::Game},
-    {3,2,R::Game},  {8,2,R::Game},
-    {4,3,R::Game},  {9,3,R::Game},
-    {2,4,R::Game},  {7,4,R::Game},
-    {2,6,R::Game},  {9,6,R::Game},
-    {1,7,R::Game},  {6,7,R::Game},
-    {2,8,R::Game},  {7,8,R::Game},
-    {0,9,R::Game},  {3,9,R::Game},
-    {2,10,R::Game}, {9,10,R::Game},
+    // Forests -> Animal
+    {1,0,R::Animal},  {8,0,R::Animal},
+      {7,1,R::Animal},
+    {3,2,R::Animal},  {8,2,R::Animal},
+    {4,3,R::Animal},  {9,3,R::Animal},
+    {2,4,R::Animal}, 
+    {2,6,R::Animal},  {9,6,R::Animal},
+    {1,7,R::Animal},
+    {0,9,R::Animal},  {3,9,R::Animal},
+     {9,10,R::Animal},
+    // Mountains -> Metal (half)
+    {4,0,R::Metal}, {2,2,R::Metal}, {10,4,R::Metal}, {0,6,R::Metal}, {6,10,R::Metal},
     // Fields -> Fruit
     {2,1,R::Fruit}, {9,1,R::Fruit},
     {4,2,R::Fruit},
@@ -72,6 +74,10 @@ GameState make_game() {
     // Starting stars
     s.set_stars(0, 5);
     s.set_stars(1, 5);
+
+    // Origin tech pre-researched for both players (unlocks tier-1 techs)
+    s.research_tech(0, TechType::Origin);
+    s.research_tech(1, TechType::Origin);
 
     // Initial fog: reveal 3x3 around each capital
     for (int player = 0; player < 2; player++) {
