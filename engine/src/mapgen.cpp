@@ -12,13 +12,23 @@ MapGenParams MapGenParams::for_biome(BiomeType b, int sz) {
     switch (b) {
         case BiomeType::Drylands:
         default:
-            p.forest_percent       = 0.15f;
-            p.mountain_percent     = 0.08f;
             p.village_edge_exclusion = 0b00001011;
-            p.village_min_spacing  = 3;
-            p.fruit_rate           = 0.40f;
-            p.animal_rate          = 0.50f;
-            p.metal_rate           = 0.40f;
+            p.village_min_spacing    = 3;
+
+            // hardcoded for imperius tribe
+            for (int i = 0; i < 2; i++) {
+                p.tribe_rates[i].outer.mountain = 0.14f;
+                p.tribe_rates[i].outer.forest   = 0.38f;
+                p.tribe_rates[i].outer.fruit     = 0.40f;
+                p.tribe_rates[i].outer.metal     = 0.20f;
+                p.tribe_rates[i].outer.animal    = 0.125f;
+
+                p.tribe_rates[i].inner.mountain  = 0.14f;
+                p.tribe_rates[i].inner.forest    = 0.38f;
+                p.tribe_rates[i].inner.fruit     = 0.75f;
+                p.tribe_rates[i].inner.metal     = 0.80f;
+                p.tribe_rates[i].inner.animal    = 0.25f;
+            }
             break;
     }
     return p;
@@ -72,13 +82,12 @@ MapGenResult MapGen::generate() {
     int cap0 = to_index(qcx[quads[0]], qcy[quads[0]], sz);
     int cap1 = to_index(qcx[quads[1]], qcy[quads[1]], sz);
 
-    place_terrain(s, cap0, cap1);
-
     MapGenResult result;
     fill_climate(result.climate, cap0, cap1);
 
+    place_terrain(s, result.climate, cap0, cap1);
     place_villages(s, cap0, cap1);
-    place_resources(s, result.climate, cap0, cap1);
+    reroll_inner(s, result.climate, cap0, cap1);
 
     // TODO: ruins
 
@@ -87,30 +96,29 @@ MapGenResult MapGen::generate() {
     return result;
 }
 
-void MapGen::place_terrain(GameState& s, int cap0, int cap1) {
-    const int sz   = _p.map_size;
-    const int mtsz = sz * sz;
+void MapGen::apply_tile_rates(GameState& s, int idx, const TileRates& r) {
+    float tr = randf();
+    TerrainType ter;
+    if      (tr < r.mountain)              ter = TerrainType::Mountain;
+    else if (tr < r.mountain + r.forest)   ter = TerrainType::Forest;
+    else                                   ter = TerrainType::Field;
+    s.tile_at(idx).set_terrain(ter);
+    s.tile_at(idx).set_resource(ResourceType::None);
+    float rr = randf();
+    switch (ter) {
+        case TerrainType::Field:    if (rr < r.fruit)  s.tile_at(idx).set_resource(ResourceType::Fruit);  break;
+        case TerrainType::Mountain: if (rr < r.metal)  s.tile_at(idx).set_resource(ResourceType::Metal);  break;
+        case TerrainType::Forest:   if (rr < r.animal) s.tile_at(idx).set_resource(ResourceType::Animal); break;
+        default: break;
+    }
+}
 
-    int forest_count   = (int)(_p.forest_percent   * mtsz);
-    int mountain_count = (int)(_p.mountain_percent * mtsz);
-
-    std::vector<int> tiles(mtsz);
-    std::iota(tiles.begin(), tiles.end(), 0);
-    for (int i = mtsz - 1; i > 0; i--)
-        std::swap(tiles[i], tiles[randi(0, i)]);
-
-    int forests = 0, mountains = 0;
-    for (int idx : tiles) {
-        if (idx == cap0 || idx == cap1) continue;
-        if (forests < forest_count) {
-            s.tile_at(idx).set_terrain(TerrainType::Forest);
-            ++forests;
-        } else if (mountains < mountain_count) {
-            s.tile_at(idx).set_terrain(TerrainType::Mountain);
-            ++mountains;
-        } else {
-            break;
-        }
+void MapGen::place_terrain(GameState& s, const int climate[], int cap0, int cap1) {
+    const int mtsz = _p.map_size * _p.map_size;
+    for (int i = 0; i < mtsz; i++) {
+        if (i == cap0 || i == cap1) continue;
+        int tribe = (climate[i] >= 0 && climate[i] < 2) ? climate[i] : 0;
+        apply_tile_rates(s, i, _p.tribe_rates[tribe].outer);
     }
 }
 
@@ -199,23 +207,26 @@ void MapGen::place_villages(GameState& s, int cap0, int cap1) {
     }
 }
 
-void MapGen::place_resources(GameState& s, const int climate[], int cap0, int cap1) {
-    const int mtsz = _p.map_size * _p.map_size;
+void MapGen::reroll_inner(GameState& s, const int climate[], int cap0, int cap1) {
+    const int sz   = _p.map_size;
+    const int mtsz = sz * sz;
+
     for (int i = 0; i < mtsz; i++) {
         if (i == cap0 || i == cap1) continue;
-        float roll = randf();
-        switch (s.tile_at(i).terrain()) {
-            case TerrainType::Field:
-                if (roll < _p.fruit_rate)  s.tile_at(i).set_resource(ResourceType::Fruit);
-                break;
-            case TerrainType::Forest:
-                if (roll < _p.animal_rate) s.tile_at(i).set_resource(ResourceType::Animal);
-                break;
-            case TerrainType::Mountain:
-                if (roll < _p.metal_rate)  s.tile_at(i).set_resource(ResourceType::Metal);
-                break;
-            default: break;
-        }
+        if (s.tile_at(i).terrain() != TerrainType::Village) continue;
+        int vx, vy;
+        to_coords(i, vx, vy, sz);
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                if (dx == 0 && dy == 0) continue;
+                int nx = vx + dx, ny = vy + dy;
+                if (!in_bounds(nx, ny, sz)) continue;
+                int ni = to_index(nx, ny, sz);
+                if (ni == cap0 || ni == cap1) continue;
+                if (s.tile_at(ni).terrain() == TerrainType::Village) continue;
+                int tribe = (climate[ni] >= 0 && climate[ni] < 2) ? climate[ni] : 0;
+                apply_tile_rates(s, ni, _p.tribe_rates[tribe].inner);
+            }
     }
 }
 
