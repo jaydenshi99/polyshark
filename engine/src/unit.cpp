@@ -5,6 +5,11 @@ void Unit::take_damage(int amount) {
     if (_hp < 0) _hp = 0;
 }
 
+void Unit::heal(int amount) {
+    _hp += amount;
+    if (_hp > _max_hp) _hp = _max_hp;
+}
+
 void Unit::spend_movement(int amount) {
     _move_points -= amount;
     if (_move_points < 0) _move_points = 0;

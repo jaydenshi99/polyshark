@@ -128,7 +128,10 @@ Warrior requires no tech — available from turn 0.
 - **Ranged** (Archer) — attacks up to 2 tiles away; does not move after kill; cannot retaliate against melee
 
 ### Healing
-A unit that neither moves nor attacks recovers HP at end of turn (exact amount TBD).
+A unit that neither moves nor attacks recovers HP at the start of its next turn:
+- **4 HP** if the tile is within a friendly city's border
+- **2 HP** anywhere else
+- Capped at max HP. Applies to all standard units.
 
 ### Veteran promotion
 Kill 3 enemies → unit becomes promotion-ready. Player can accept at any time: +5 max HP, full heal.

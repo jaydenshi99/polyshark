@@ -428,6 +428,33 @@ GameState GameState::apply_action(Action a) const {
                 }
             }
 
+            // Heal units that neither moved nor attacked last turn.
+            // 4 HP in friendly city territory, 2 HP everywhere else. Capped at max HP.
+            for (int i = 0; i < MAP_TILES; i++) {
+                const Tile& t = s.tile_at(i);
+                if (!t.has_unit()) continue;
+                Unit& u = s.units[t.unit_id()];
+                if (u.owner() != next) continue;
+                const UnitDef& udef = unit_def(u.type());
+                bool skipped = (u.move_points() == udef.movement) && !u.has_attacked();
+                if (!skipped || u.hp() >= u.max_hp()) continue;
+
+                // Check if the tile is within a friendly city's border
+                int ux, uy;
+                to_coords(i, ux, uy);
+                bool friendly_territory = false;
+                for (int c = 0; c < s.city_count && !friendly_territory; c++) {
+                    const City& city = s.cities[c];
+                    if (city.owner() != next) continue;
+                    int cx, cy;
+                    to_coords(city.tile_index(), cx, cy);
+                    int r = city.border_radius();
+                    if (ux >= cx - r && ux <= cx + r && uy >= cy - r && uy <= cy + r)
+                        friendly_territory = true;
+                }
+                u.heal(friendly_territory ? 4 : 2);
+            }
+
             for (int i = 0; i < MAP_TILES; i++) {
                 const Tile& t = s.tile_at(i);
                 if (t.has_unit()) {
