@@ -1,1 +1,0 @@
-/usr/bin/c++  -arch arm64 -Xlinker -undefined -Xlinker dynamic_lookup -flto -bundle -Wl,-headerpad_max_install_names -o polyshark.cpython-313-darwin.so CMakeFiles/polyshark.dir/bindings.cpp.o  ../engine/libengine.a

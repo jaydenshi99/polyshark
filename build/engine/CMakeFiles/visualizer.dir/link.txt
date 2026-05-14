@@ -1,1 +1,0 @@
-/usr/bin/c++  -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/visualizer.dir/src/visualizer.cpp.o -o visualizer  libengine.a /opt/homebrew/Cellar/raylib/5.5/lib/libraylib.dylib -L/opt/homebrew/Cellar/raylib/5.5/lib -lraylib
