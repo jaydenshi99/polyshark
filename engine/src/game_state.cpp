@@ -174,8 +174,16 @@ static void rebuild_visibility(GameState& s, int player) {
 
 // --------------------------------------------------------- public interface --
 
-bool GameState::is_terminal() const { return false; }
-int  GameState::winner()      const { return NO_WINNER; }
+int GameState::winner() const {
+    for (int p = 0; p < MAX_PLAYERS; p++) {
+        int cap_id = capital_city[p];
+        if (cap_id == -1) continue;
+        int captor = cities[cap_id].owner();
+        if (captor != p) return captor;
+    }
+    return NO_WINNER;
+}
+bool GameState::is_terminal() const { return winner() != NO_WINNER; }
 int  GameState::current_player() const { return cur_player; }
 
 int GameState::spawn_unit(UnitType type, int owner, int tile_index) {
@@ -200,6 +208,7 @@ int GameState::spawn_city(int tile_index, int owner, bool is_capital) {
     c.set_tile(tile_index);
     c.set_owner(owner);
     c.set_capital(is_capital);
+    if (is_capital) capital_city[owner] = id;
     map[tile_index].place_city(id);
     claim_border_for_city(id);
     return id;
