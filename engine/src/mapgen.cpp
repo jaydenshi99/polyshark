@@ -19,15 +19,17 @@ MapGenParams MapGenParams::for_biome(BiomeType b, int sz) {
             for (int i = 0; i < 2; i++) {
                 p.tribe_rates[i].outer.mountain = 0.14f;
                 p.tribe_rates[i].outer.forest   = 0.38f;
-                p.tribe_rates[i].outer.fruit     = 0.24f;
-                p.tribe_rates[i].outer.metal     = 0.21f;
-                p.tribe_rates[i].outer.animal    = 0.08f;
+                p.tribe_rates[i].outer.fruit    = 0.24f;
+                p.tribe_rates[i].outer.crop     = 0.12f;
+                p.tribe_rates[i].outer.metal    = 0.21f;
+                p.tribe_rates[i].outer.animal   = 0.08f;
 
-                p.tribe_rates[i].inner.mountain  = 0.14f;
-                p.tribe_rates[i].inner.forest    = 0.38f;
-                p.tribe_rates[i].inner.fruit     = 0.75f;
-                p.tribe_rates[i].inner.metal     = 0.80f;
-                p.tribe_rates[i].inner.animal    = 0.25f;
+                p.tribe_rates[i].inner.mountain = 0.14f;
+                p.tribe_rates[i].inner.forest   = 0.38f;
+                p.tribe_rates[i].inner.fruit    = 0.75f;
+                p.tribe_rates[i].inner.crop     = 0.25f;
+                p.tribe_rates[i].inner.metal    = 0.80f;
+                p.tribe_rates[i].inner.animal   = 0.25f;
             }
             break;
     }
@@ -106,7 +108,10 @@ void MapGen::apply_tile_rates(GameState& s, int idx, const TileRates& r) {
     s.tile_at(idx).set_resource(ResourceType::None);
     float rr = randf();
     switch (ter) {
-        case TerrainType::Field:    if (rr < r.fruit)  s.tile_at(idx).set_resource(ResourceType::Fruit);  break;
+        case TerrainType::Field:
+            if      (rr < r.fruit)          s.tile_at(idx).set_resource(ResourceType::Fruit);
+            else if (rr < r.fruit + r.crop) s.tile_at(idx).set_resource(ResourceType::Crop);
+            break;
         case TerrainType::Mountain: if (rr < r.metal)  s.tile_at(idx).set_resource(ResourceType::Metal);  break;
         case TerrainType::Forest:   if (rr < r.animal) s.tile_at(idx).set_resource(ResourceType::Animal); break;
         default: break;

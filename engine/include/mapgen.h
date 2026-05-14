@@ -10,7 +10,8 @@ struct TileRates {
     float mountain = 0.08f;  // P(Mountain)
     float forest   = 0.15f;  // P(Forest)
     // field = remainder
-    float fruit    = 0.40f;  // P(Fruit  | Field)
+    float fruit    = 0.20f;  // P(Fruit  | Field)  — mutually exclusive with crop
+    float crop     = 0.20f;  // P(Crop   | Field, not Fruit)
     float metal    = 0.40f;  // P(Metal  | Mountain)
     float animal   = 0.50f;  // P(Animal | Forest)
 };

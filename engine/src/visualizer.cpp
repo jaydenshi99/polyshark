@@ -321,6 +321,46 @@ static void draw_fruit_icon(int px, int py) {
     }
 }
 
+static void draw_crop_icon(int px, int py) {
+    Color g = { 80, 190, 60, 255 };
+    int left = px + 4, top = py + 4;
+    int cols = 3, rows = 3;
+    int cw = (TILE - 8) / cols, rh = (TILE - 8) / rows;
+    int hw = 2, h = 9;  // half-width and height of each blade
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < cols; c++) {
+            int bx = left + c * cw + cw / 2;
+            int by = top  + r * rh + rh;
+            Vector2 br = { (float)(bx + hw), (float)by       };
+            Vector2 tip = { (float)bx,       (float)(by - h) };
+            Vector2 bl = { (float)(bx - hw), (float)by       };
+            DrawTriangle(br, tip, bl, g);
+            DrawTriangleLines(br, tip, bl, BLACK);
+        }
+}
+
+static void draw_farm_icon(int px, int py) {
+    // Wheat field rows
+    Color soil  = { 160, 110,  50, 255 };
+    Color wheat = { 220, 185,  50, 255 };
+    Color head  = { 240, 210,  80, 255 };
+    int left = px + 4, top = py + 6, w = TILE - 9;
+    DrawRectangle(left, top, w, TILE - 12, soil);
+    DrawRectangleLines(left, top, w, TILE - 12, BLACK);
+    int rows = 3;
+    int row_h = (TILE - 12) / rows;
+    for (int r = 0; r < rows; r++) {
+        int ry = top + r * row_h + 2;
+        int cols = 5;
+        int col_w = w / cols;
+        for (int c = 0; c < cols; c++) {
+            int sx = left + c * col_w + col_w/2;
+            DrawRectangle(sx - 1, ry + 2, 2, row_h - 4, wheat);
+            DrawRectangle(sx - 2, ry,     4, 3,          head);
+        }
+    }
+}
+
 static void draw_animal_icon(int px, int py) {
     Color ac = { 140, 80, 30, 255 };
     int ax = px + TILE/2 - 11, ay = py + TILE/2 - 5;
@@ -494,9 +534,10 @@ static const TechNode NODES[] = {
     { TechType::Riding,       1,  2.0f,   0 },  // 3
     { TechType::Climbing,     1,  3.0f,   0 },  // 4
     { TechType::Archery,      2,  0.5f,   1 },  // 5  child of Hunting
-    { TechType::Mining,       2,  2.5f,   4 },  // 6  child of Climbing
+    { TechType::Farming,      2,  1.5f,   2 },  // 6  child of Organisation
+    { TechType::Mining,       2,  3.5f,   4 },  // 7  child of Climbing
 };
-static constexpr int NODE_COUNT = 7;
+static constexpr int NODE_COUNT = 8;
 
 // hover_tech: -1 = none, else TechType int being hovered for research
 // scale: zoom factor (1.0 = default); >1 = zoomed in, nodes closer together
@@ -791,6 +832,7 @@ int main() {
                 if (!fogged && !dimmed && t.resource() != ResourceType::None) {
                     switch (t.resource()) {
                         case ResourceType::Fruit:  draw_fruit_icon(px, py);  break;
+                        case ResourceType::Crop:   draw_crop_icon(px, py);   break;
                         case ResourceType::Animal: draw_animal_icon(px, py); break;
                         case ResourceType::Metal:  draw_metal_icon(px, py);  break;
                         default: break;
@@ -799,8 +841,8 @@ int main() {
 
                 // Buildings
                 if (!fogged && t.has_building()) {
-                    if (t.building() == BuildingType::Mine)
-                        draw_mine_icon(px, py);
+                    if      (t.building() == BuildingType::Mine) draw_mine_icon(px, py);
+                    else if (t.building() == BuildingType::Farm) draw_farm_icon(px, py);
                 }
 
                 // City ring + population bar when explored

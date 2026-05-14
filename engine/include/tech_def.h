@@ -25,7 +25,8 @@ static const TechDef TECH_DEFS[] = {
                                tech_bit(TechType::Riding)       |
                                tech_bit(TechType::Climbing)     },
     { "Hunting",       5,     tech_bit(TechType::Archery)      },
-    { "Organisation",  5,     0                                },
+    { "Organisation",  5,     tech_bit(TechType::Farming)      },
+    { "Farming",       5,     0                                },
     { "Riding",        5,     0                                },
     { "Climbing",      5,     tech_bit(TechType::Mining)       },
     { "Archery",       6,     0                                },
