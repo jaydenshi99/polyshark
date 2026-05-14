@@ -22,6 +22,9 @@ public:
     void place_city(int id) { _city_id = id; }
     void remove_city()      { _city_id = -1; }
 
+    int  border_city_id()        const { return _border_city_id; }
+    void set_border_city(int id)       { _border_city_id = id; }
+
     bool has_unit() const { return _unit_id != -1; }
     bool has_city() const { return _city_id != -1; }
 
@@ -34,7 +37,8 @@ private:
     TerrainType  _terrain   = TerrainType::Field;
     ResourceType _resource  = ResourceType::None;
     BuildingType _building  = BuildingType::None;
-    int          _unit_id      = -1;
-    int          _city_id      = -1;
-    bool         _capture_ready = false;
+    int          _unit_id        = -1;
+    int          _city_id        = -1;
+    int          _border_city_id = -1;
+    bool         _capture_ready  = false;
 };

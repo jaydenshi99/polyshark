@@ -86,6 +86,10 @@ public:
     void      legal_actions(Action out[], int& out_count) const;
     GameState apply_action(Action a) const;
 
+    // Claims all unclaimed tiles within city_id's border radius.
+    // Already-claimed tiles are never stolen — first-claimer always wins.
+    void claim_border_for_city(int city_id);
+
 private:
     Tile map[MAP_TILES];
     Unit units[MAX_UNITS];

@@ -17,6 +17,7 @@ public:
     bool is_alive() const { return _hp > 0; }
 
     void take_damage(int amount);
+    void heal(int amount);         // recovers HP, capped at max_hp
     void spend_movement(int amount);
     void mark_attacked();
     void add_kill();          // increments kill count, sets promotion_ready at 3
