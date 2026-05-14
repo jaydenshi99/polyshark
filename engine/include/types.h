@@ -13,6 +13,7 @@ enum class TerrainType {
 enum class ResourceType {
     None,
     Fruit,   // field food
+    Crop,    // field food (requires Farming)
     Animal,  // forest food
     Metal,   // mountain ore — requires Mining tech
 };
@@ -54,6 +55,7 @@ enum class TechType {
     Origin = 0,   // root node — always owned; unlocks tier-1 techs
     Hunting,      // unlocks Animal harvesting; unlocks Archery
     Organisation,
+    Farming,      // unlocks Crop harvesting
     Riding,
     Climbing,     // allows units to enter mountain tiles; unlocks Mining
     Archery,      // requires Hunting

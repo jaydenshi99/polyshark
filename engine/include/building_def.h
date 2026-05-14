@@ -5,6 +5,7 @@
 enum class BuildingType {
     None = 0,
     Mine,       // built on mountains after harvesting Metal
+    Farm,       // built on fields after harvesting Crop
     Road,       // reduces tile entry cost to 0 for connected movement
     Count,
 };
@@ -17,6 +18,7 @@ struct BuildingDef {
 static const BuildingDef BUILDING_DEFS[] = {
     { "None", TerrainType::Field    },
     { "Mine", TerrainType::Mountain },
+    { "Farm", TerrainType::Field    },
     { "Road", TerrainType::Field    },  // placeholder; any terrain in practice
 };
 

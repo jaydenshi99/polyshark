@@ -16,6 +16,8 @@ static const ResourceDef RESOURCE_DEFS[] = {
     { "None",   TechType::Count,        0, 0, BuildingType::None },
     // Fruit
     { "Fruit",  TechType::Organisation, 2, 1, BuildingType::None },
+    // Crop
+    { "Crop",   TechType::Farming,      5, 2, BuildingType::Farm },
     // Animal
     { "Animal", TechType::Hunting,      2, 1, BuildingType::None },
     // Metal

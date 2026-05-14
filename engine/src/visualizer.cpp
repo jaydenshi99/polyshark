@@ -1,5 +1,6 @@
 #include "raylib.h"
 #include "init.h"
+#include "mapgen.h"
 #include "unit_def.h"
 #include "resource_def.h"
 #include "building_def.h"
@@ -9,17 +10,19 @@
 #include <utility>
 #include <cstdio>
 
-static constexpr int TILE     = 56;
+static int            TILE     = 56;   // recomputed on each map gen; do not make constexpr
 static constexpr int PAD      = 4;
 static constexpr int LABEL    = 20;   // space for row/col index labels
 static constexpr int TOP_HUD  = 64;   // info bar across the top
 static constexpr int SIDEBAR  = 230;
 static constexpr int LOG_W    = 280;  // debug log panel width
 static constexpr int TECH_W   = 210;  // tech tree panel on the left
-static constexpr int MAP_PX   = MAP_SIZE * TILE + PAD * 2 + LABEL;
 static constexpr int MAP_OFF  = TECH_W;  // map x-offset (tech panel sits left of it)
-static constexpr int W        = TECH_W + MAP_PX + SIDEBAR + LOG_W;
-static constexpr int H        = TOP_HUD + MAP_SIZE * TILE + PAD * 2 + LABEL;
+// Fixed canvas: constant pixel budget. TILE scales to fill this regardless of actual map_size.
+static constexpr int MAP_CANVAS = 616;
+static constexpr int MAP_PX     = MAP_CANVAS + PAD * 2 + LABEL;
+static constexpr int W          = TECH_W + MAP_PX + SIDEBAR + LOG_W;
+static constexpr int H          = TOP_HUD + MAP_CANVAS + PAD * 2 + LABEL;
 
 enum class ViewMode { Omni, P0, P1, Current };
 
@@ -41,14 +44,14 @@ static inline int tile_py(int y) { return TOP_HUD + PAD + LABEL + y * TILE; }
 struct Colourer {
     static constexpr int PALETTE_SIZE = 8;
 
-    Color palette[PALETTE_SIZE]             = {};
-    int   next_idx                          = 0;
-    int   city_palette_idx[MAX_CITIES]      = {};  // palette slot per city
-    int   city_border_size[MAX_CITIES]      = {};
+    Color palette[PALETTE_SIZE]                 = {};
+    int   next_idx                              = 0;
+    int   city_palette_idx[MAX_MAP_TILES]       = {};
+    int   city_border_size[MAX_MAP_TILES]       = {};
 
     void init(Color base) {
         next_idx = 0;
-        for (int i = 0; i < MAX_CITIES; i++) { city_palette_idx[i] = -1; city_border_size[i] = -1; }
+        for (int i = 0; i < MAX_MAP_TILES; i++) { city_palette_idx[i] = -1; city_border_size[i] = -1; }
         // Build palette: variations around base colour
         auto clamp = [](int v) -> uint8_t { return v < 0 ? 0 : v > 255 ? 255 : (uint8_t)v; };
         for (int i = 0; i < PALETTE_SIZE; i++) {
@@ -318,6 +321,46 @@ static void draw_fruit_icon(int px, int py) {
     }
 }
 
+static void draw_crop_icon(int px, int py) {
+    Color g = { 80, 190, 60, 255 };
+    int left = px + 4, top = py + 4;
+    int cols = 3, rows = 3;
+    int cw = (TILE - 8) / cols, rh = (TILE - 8) / rows;
+    int hw = 2, h = 9;  // half-width and height of each blade
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < cols; c++) {
+            int bx = left + c * cw + cw / 2;
+            int by = top  + r * rh + rh;
+            Vector2 br = { (float)(bx + hw), (float)by       };
+            Vector2 tip = { (float)bx,       (float)(by - h) };
+            Vector2 bl = { (float)(bx - hw), (float)by       };
+            DrawTriangle(br, tip, bl, g);
+            DrawTriangleLines(br, tip, bl, BLACK);
+        }
+}
+
+static void draw_farm_icon(int px, int py) {
+    // Wheat field rows
+    Color soil  = { 160, 110,  50, 255 };
+    Color wheat = { 220, 185,  50, 255 };
+    Color head  = { 240, 210,  80, 255 };
+    int left = px + 4, top = py + 6, w = TILE - 9;
+    DrawRectangle(left, top, w, TILE - 12, soil);
+    DrawRectangleLines(left, top, w, TILE - 12, BLACK);
+    int rows = 3;
+    int row_h = (TILE - 12) / rows;
+    for (int r = 0; r < rows; r++) {
+        int ry = top + r * row_h + 2;
+        int cols = 5;
+        int col_w = w / cols;
+        for (int c = 0; c < cols; c++) {
+            int sx = left + c * col_w + col_w/2;
+            DrawRectangle(sx - 1, ry + 2, 2, row_h - 4, wheat);
+            DrawRectangle(sx - 2, ry,     4, 3,          head);
+        }
+    }
+}
+
 static void draw_animal_icon(int px, int py) {
     Color ac = { 140, 80, 30, 255 };
     int ax = px + TILE/2 - 11, ay = py + TILE/2 - 5;
@@ -491,9 +534,10 @@ static const TechNode NODES[] = {
     { TechType::Riding,       1,  2.0f,   0 },  // 3
     { TechType::Climbing,     1,  3.0f,   0 },  // 4
     { TechType::Archery,      2,  0.5f,   1 },  // 5  child of Hunting
-    { TechType::Mining,       2,  2.5f,   4 },  // 6  child of Climbing
+    { TechType::Farming,      2,  1.5f,   2 },  // 6  child of Organisation
+    { TechType::Mining,       2,  3.5f,   4 },  // 7  child of Climbing
 };
-static constexpr int NODE_COUNT = 7;
+static constexpr int NODE_COUNT = 8;
 
 // hover_tech: -1 = none, else TechType int being hovered for research
 // scale: zoom factor (1.0 = default); >1 = zoomed in, nodes closer together
@@ -581,8 +625,20 @@ static void draw_tech_tree(uint32_t owned_techs, int player_idx,
 }
 
 int main() {
-    const GameState initial = make_game();
+    uint64_t gen_seed = 1;
+    int climate[MAX_MAP_TILES] = {};
+    auto new_map = [&]() {
+        MapGenParams p = MapGen::drylands_defaults();
+        p.seed = gen_seed++;
+        MapGenResult r = MapGen(p).generate();
+        int mtsz = r.state.map_tiles();
+        for (int i = 0; i < mtsz; i++) climate[i] = r.climate[i];
+        return r.state;
+    };
+    GameState initial = new_map();
+    TILE = MAP_CANVAS / initial.map_size();
     GameState s = initial;
+
     ViewMode  view = ViewMode::Omni;
 
     Colourer colourers[2];
@@ -642,7 +698,7 @@ int main() {
 
         // Scroll wheel scrolls the sidebar actions list
         int SB_CONTENT_TOP = SIDEBAR_TOP;
-        int SB_CONTENT_BOT = H - 36;  // above the reset button
+        int SB_CONTENT_BOT = H - 72;  // above regen + reset buttons
         {
             int SB = MAP_OFF + MAP_PX;
             if (mouse.x >= SB && mouse.x < SB + SIDEBAR &&
@@ -694,12 +750,14 @@ int main() {
                 default: break;
             }
         }
+        const int cur_msz = s.map_size();
+
         // Map tile selection — click toggles; clicking same tile deselects
         {
             int tx = ((int)mouse.x - (MAP_OFF + PAD + LABEL)) / TILE;
             int ty = ((int)mouse.y - (TOP_HUD + PAD + LABEL)) / TILE;
-            if (clicked && tx >= 0 && tx < MAP_SIZE && ty >= 0 && ty < MAP_SIZE) {
-                int tidx = to_index(tx, ty);
+            if (clicked && tx >= 0 && tx < cur_msz && ty >= 0 && ty < cur_msz) {
+                int tidx = to_index(tx, ty, cur_msz);
                 selected_tile = (selected_tile == tidx) ? -1 : tidx;
             }
         }
@@ -714,24 +772,24 @@ int main() {
 
         // Border owner per tile: read directly from stored border_city_id.
         // -1 = unclaimed; otherwise look up city owner for player colour.
-        int border_owner[MAP_TILES];
-        for (int i = 0; i < MAP_TILES; i++) {
+        int border_owner[MAX_MAP_TILES];
+        for (int i = 0; i < s.map_tiles(); i++) {
             int cid = s.tile_at(i).border_city_id();
             border_owner[i] = (cid >= 0) ? s.get_city(cid).owner() : -1;
         }
 
         // --- Row / col indices ---
-        for (int x = 0; x < MAP_SIZE; x++)
+        for (int x = 0; x < cur_msz; x++)
             DrawText(TextFormat("%d", x), tile_px(x) + TILE/2 - 4, TOP_HUD + PAD + 2, 14, GRAY);
-        for (int y = 0; y < MAP_SIZE; y++)
+        for (int y = 0; y < cur_msz; y++)
             DrawText(TextFormat("%d", y), MAP_OFF + PAD + 2, tile_py(y) + TILE/2 - 7, 14, GRAY);
 
         // --- Map ---
         int vp = (view == ViewMode::P1)      ? 1 :
                  (view == ViewMode::Current) ? s.current_player() : 0;
 
-        for (int y = 0; y < MAP_SIZE; y++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
+        for (int y = 0; y < cur_msz; y++) {
+            for (int x = 0; x < cur_msz; x++) {
                 const Tile& t = s.tile_at(to_index(x, y));
                 int px  = tile_px(x);
                 int py  = tile_py(y);
@@ -756,6 +814,12 @@ int main() {
                     else if (ter == TerrainType::Mountain) draw_mountain_icon(px, py);
                     else if (ter == TerrainType::Forest)   draw_forest_icon(px, py);
 
+                    // Climate tint
+                    Color ctint = (climate[idx] == 0)
+                        ? Color{ 255, 170, 50,  28 }   // warm amber — P0 tribe
+                        : Color{  50, 180, 200, 28 };  // cool teal  — P1 tribe
+                    DrawRectangle(px, py, TILE - 1, TILE - 1, ctint);
+
                     // Territory colour overlay
                     Color tc = BLANK;
                     for (int p = 0; p < 2 && tc.a == 0; p++)
@@ -768,6 +832,7 @@ int main() {
                 if (!fogged && !dimmed && t.resource() != ResourceType::None) {
                     switch (t.resource()) {
                         case ResourceType::Fruit:  draw_fruit_icon(px, py);  break;
+                        case ResourceType::Crop:   draw_crop_icon(px, py);   break;
                         case ResourceType::Animal: draw_animal_icon(px, py); break;
                         case ResourceType::Metal:  draw_metal_icon(px, py);  break;
                         default: break;
@@ -776,8 +841,8 @@ int main() {
 
                 // Buildings
                 if (!fogged && t.has_building()) {
-                    if (t.building() == BuildingType::Mine)
-                        draw_mine_icon(px, py);
+                    if      (t.building() == BuildingType::Mine) draw_mine_icon(px, py);
+                    else if (t.building() == BuildingType::Farm) draw_farm_icon(px, py);
                 }
 
                 // City ring + population bar when explored
@@ -845,9 +910,9 @@ int main() {
         }
 
         // Border edge lines — draw on tile edges that are on the territory boundary
-        for (int y = 0; y < MAP_SIZE; y++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                int idx   = to_index(x, y);
+        for (int y = 0; y < cur_msz; y++) {
+            for (int x = 0; x < cur_msz; x++) {
+                int idx   = to_index(x, y, cur_msz);
                 int owner = border_owner[idx];
                 if (owner == -1) continue;
                 if ((view != ViewMode::Omni) && !s.is_explored(vp, idx)) continue;  // vp already tracks current player in Current mode
@@ -925,8 +990,9 @@ int main() {
         DrawText("LEGAL ACTIONS", SB + 8, TOP_HUD + 10, 16, GRAY);
         DrawLine(SB + 4, TOP_HUD + 30, SB + SIDEBAR - 4, TOP_HUD + 30, { 60, 60, 60, 255 });
 
-        int  applied = -1;
-        bool reset   = false;
+        int  applied    = -1;
+        bool reset      = false;
+        bool regenerate = false;
 
         BeginScissorMode(SB, SB_CONTENT_TOP, SIDEBAR, SB_CONTENT_BOT - SB_CONTENT_TOP);
         for (int i = 0; i < layout_count; i++) {
@@ -972,6 +1038,17 @@ int main() {
         }
         EndScissorMode();
 
+        // --- Regenerate button ---
+        {
+            Rectangle regen_btn = { (float)SB + 4, (float)H - 72, (float)SIDEBAR - 8, 28 };
+            bool hovered = CheckCollisionPointRec(mouse, regen_btn);
+            DrawRectangleRec(regen_btn, hovered ? Color{ 30, 130, 80, 255 } : Color{ 20, 80, 50, 255 });
+            int tw = MeasureText("REGEN MAP", 14);
+            DrawText("REGEN MAP", SB + SIDEBAR / 2 - tw / 2, H - 64, 14, WHITE);
+            if (hovered && clicked)
+                regenerate = true;
+        }
+
         // --- Reset button (bottom of sidebar) ---
         {
             Rectangle reset_btn = { (float)SB + 4, (float)H - 36, (float)SIDEBAR - 8, 28 };
@@ -983,7 +1060,15 @@ int main() {
         }
 
         // Apply after the loop so we don't mutate actions[] mid-render
-        if (reset) {
+        if (regenerate) {
+            initial = new_map();
+            TILE = MAP_CANVAS / initial.map_size();
+            s = initial;
+            init_colourers();
+            s.legal_actions(actions, action_count);
+            sidebar_scroll = 0;
+            selected_tile  = -1;
+        } else if (reset) {
             s = initial;
             init_colourers();
             s.legal_actions(actions, action_count);
