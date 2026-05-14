@@ -139,25 +139,60 @@ void MapGen::fill_climate(int climate[], int cap0, int cap1) {
     climate[cap0] = 0;
     climate[cap1] = 1;
 
-    auto expand = [&](int owner) {
-        if (frontier[owner].empty()) return;
-        int fi   = randi(0, (int)frontier[owner].size() - 1);
-        int tile = frontier[owner][fi];
-        frontier[owner][fi] = frontier[owner].back();
-        frontier[owner].pop_back();
+    int caps[2] = { cap0, cap1 };
 
-        int x, y;
-        to_coords(tile, x, y, sz);
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                if (dx == 0 && dy == 0) continue;
-                int nx = x + dx, ny = y + dy;
-                if (!in_bounds(nx, ny, sz)) continue;
-                int ni = to_index(nx, ny, sz);
-                if (climate[ni] != -1) continue;
-                climate[ni] = owner;
-                frontier[owner].push_back(ni);
+    // Pick a frontier tile weighted by inverse Chebyshev distance to capital.
+    auto weighted_pick = [&](int owner) -> int {
+        int cx, cy;
+        to_coords(caps[owner], cx, cy, sz);
+        float total = 0.0f;
+        for (int tile : frontier[owner]) {
+            int tx, ty;
+            to_coords(tile, tx, ty, sz);
+            int d = std::max(std::abs(tx - cx), std::abs(ty - cy));
+            total += 1.0f / (d + 1.0f);
+        }
+        float r = randf() * total;
+        float acc = 0.0f;
+        for (int i = 0; i < (int)frontier[owner].size(); i++) {
+            int tx, ty;
+            to_coords(frontier[owner][i], tx, ty, sz);
+            int d = std::max(std::abs(tx - cx), std::abs(ty - cy));
+            acc += 1.0f / (d + 1.0f);
+            if (acc >= r) return i;
+        }
+        return (int)frontier[owner].size() - 1;
+    };
+
+    // Claim exactly one unclaimed neighbor of the chosen frontier tile.
+    // If the tile has no unclaimed neighbors, evict it from the frontier.
+    auto expand = [&](int owner) {
+        while (!frontier[owner].empty()) {
+            int fi   = weighted_pick(owner);
+            int tile = frontier[owner][fi];
+            int x, y;
+            to_coords(tile, x, y, sz);
+
+            int cands[8]; int nc = 0;
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++) {
+                    if (!dx && !dy) continue;
+                    int nx = x + dx, ny = y + dy;
+                    if (!in_bounds(nx, ny, sz)) continue;
+                    int ni = to_index(nx, ny, sz);
+                    if (climate[ni] == -1) cands[nc++] = ni;
+                }
+
+            if (nc == 0) {
+                frontier[owner][fi] = frontier[owner].back();
+                frontier[owner].pop_back();
+                continue;
             }
+
+            int ni = cands[randi(0, nc - 1)];
+            climate[ni] = owner;
+            frontier[owner].push_back(ni);
+            return;
         }
     };
 
