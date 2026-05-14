@@ -183,10 +183,10 @@ Moving adjacent to an enemy unit costs all remaining movement.
 ## Implementation Notes
 
 ### Fog of War
-Two bitfields per player: `explored` (permanent) and `visible` (rebuilt each turn). A tile is hidden if not explored; an enemy unit on a visible tile is hidden if that tile is not currently visible. See design.md → Fog of War.
+Two bitfields per player: `explored` (permanent) and `visible` (rebuilt each turn). A tile is hidden if not explored; an enemy unit on a visible tile is hidden if that tile is not currently visible.
 
 ### Tech Unlocks
-Each player's researched techs are stored as a `uint32_t` bitmask, one bit per tech. Checking a tech: `has_tech(player, TechType::Mining)`. See design.md → Tech Bitmask.
+Each player's researched techs are stored as a `uint32_t` bitmask, one bit per tech. Checking a tech: `has_tech(player, TechType::Mining)`.
 
 ### Unit Stats Lookup
 Static stats (HP, ATK, DEF, etc.) live in a global `UNIT_DEFS[]` table indexed by `UnitType`. Use `unit_def(type)` to look up a unit's base stats at runtime. Per-unit mutable state (current HP, kills, etc.) lives on the `Unit` instance in `GameState`.
