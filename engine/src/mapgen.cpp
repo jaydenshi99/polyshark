@@ -202,6 +202,7 @@ void MapGen::place_villages(GameState& s, int cap0, int cap1) {
         }
         if (ok) {
             s.tile_at(idx).set_terrain(TerrainType::Village);
+            s.tile_at(idx).set_resource(ResourceType::None);
             placed.push_back(idx);
         }
     }
@@ -212,8 +213,9 @@ void MapGen::reroll_inner(GameState& s, const int climate[], int cap0, int cap1)
     const int mtsz = sz * sz;
 
     for (int i = 0; i < mtsz; i++) {
-        if (i == cap0 || i == cap1) continue;
-        if (s.tile_at(i).terrain() != TerrainType::Village) continue;
+        bool is_capital = (i == cap0 || i == cap1);
+        bool is_village = s.tile_at(i).terrain() == TerrainType::Village;
+        if (!is_capital && !is_village) continue;
         int vx, vy;
         to_coords(i, vx, vy, sz);
         for (int dy = -1; dy <= 1; dy++)
