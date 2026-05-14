@@ -286,6 +286,9 @@ void GameState::legal_actions(Action out[], int& out_count) const {
 
     if (can_harvest) {
         // --- Train Unit ---
+        // TODO: unit cap via population doesn't match real Polytopia — in the actual game each
+        // city has explicit unit slots (one per level) tracked separately from population.
+        // Population here conflates training budget with level-up resource, which is incorrect.
         for (int i = 0; i < s.city_count; i++) {
             const City& city = s.cities[i];
             if (city.owner() != p) continue;
