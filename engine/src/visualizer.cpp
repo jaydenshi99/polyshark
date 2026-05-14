@@ -583,10 +583,13 @@ static void draw_tech_tree(uint32_t owned_techs, int player_idx,
 
 int main() {
     uint64_t gen_seed = 1;
+    int climate[MAP_TILES] = {};
     auto new_map = [&]() {
         MapGenParams p = MapGen::drylands_defaults();
         p.seed = gen_seed++;
-        return MapGen(p).generate();
+        MapGenResult r = MapGen(p).generate();
+        for (int i = 0; i < MAP_TILES; i++) climate[i] = r.climate[i];
+        return r.state;
     };
     GameState initial = new_map();
     GameState s = initial;
@@ -762,6 +765,12 @@ int main() {
                     if      (ter == TerrainType::Village)  draw_village_icon(px, py);
                     else if (ter == TerrainType::Mountain) draw_mountain_icon(px, py);
                     else if (ter == TerrainType::Forest)   draw_forest_icon(px, py);
+
+                    // Climate tint
+                    Color ctint = (climate[idx] == 0)
+                        ? Color{ 255, 170, 50,  28 }   // warm amber — P0 tribe
+                        : Color{  50, 180, 200, 28 };  // cool teal  — P1 tribe
+                    DrawRectangle(px, py, TILE - 1, TILE - 1, ctint);
 
                     // Territory colour overlay
                     Color tc = BLANK;

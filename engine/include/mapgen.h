@@ -16,10 +16,15 @@ struct MapGenParams {
     float    metal_rate       = 0.40f;
 };
 
+struct MapGenResult {
+    GameState state;
+    int       climate[MAP_TILES]; // 0 = P0 tribe zone, 1 = P1 tribe zone
+};
+
 class MapGen {
 public:
     explicit MapGen(MapGenParams p = {});
-    GameState generate();
+    MapGenResult generate();
 
     static MapGenParams drylands_defaults();
 

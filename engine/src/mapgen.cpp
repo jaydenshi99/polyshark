@@ -30,7 +30,7 @@ float MapGen::randf() {
     return (float)(rand64() >> 11) * (1.0f / (float)(1ULL << 53));
 }
 
-GameState MapGen::generate() {
+MapGenResult MapGen::generate() {
     GameState s;
 
     // Pick 2 distinct quadrants for capitals
@@ -42,16 +42,17 @@ GameState MapGen::generate() {
 
     place_terrain(s, cap0, cap1);
 
-    int climate[MAP_TILES];
-    fill_climate(climate, cap0, cap1);
+    MapGenResult result;
+    fill_climate(result.climate, cap0, cap1);
 
     place_villages(s, cap0, cap1);
-    place_resources(s, climate, cap0, cap1);
+    place_resources(s, result.climate, cap0, cap1);
 
     // TODO: ruins
 
     init_players(s, cap0, cap1);
-    return s;
+    result.state = s;
+    return result;
 }
 
 void MapGen::place_terrain(GameState& s, int cap0, int cap1) {
