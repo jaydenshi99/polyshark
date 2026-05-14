@@ -98,11 +98,12 @@ private:
 
     Player players[MAX_PLAYERS];
 
-    int unit_count  = 0;
-    int city_count  = 0;
-    int turn        = 0;
-    int cur_player  = 0;
-    int _map_size   = MAP_SIZE;
+    int unit_count       = 0;
+    int city_count       = 0;
+    int turn             = 0;
+    int cur_player       = 0;
+    int _map_size        = MAP_SIZE;
+    int capital_city[MAX_PLAYERS] = {-1, -1};
 };
 
 
