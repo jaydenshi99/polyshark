@@ -12,6 +12,7 @@ add_library(engine
     src/city.cpp
     src/game_state.cpp
     src/init.cpp
+    src/mapgen.cpp
 )
 
 add_executable(test_grid

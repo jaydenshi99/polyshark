@@ -1,5 +1,6 @@
 #include "raylib.h"
 #include "init.h"
+#include "mapgen.h"
 #include "unit_def.h"
 #include "resource_def.h"
 #include "building_def.h"
@@ -581,7 +582,13 @@ static void draw_tech_tree(uint32_t owned_techs, int player_idx,
 }
 
 int main() {
-    const GameState initial = make_game();
+    uint64_t gen_seed = 1;
+    auto new_map = [&]() {
+        MapGenParams p = MapGen::drylands_defaults();
+        p.seed = gen_seed++;
+        return MapGen(p).generate();
+    };
+    GameState initial = new_map();
     GameState s = initial;
     ViewMode  view = ViewMode::Omni;
 
@@ -642,7 +649,7 @@ int main() {
 
         // Scroll wheel scrolls the sidebar actions list
         int SB_CONTENT_TOP = SIDEBAR_TOP;
-        int SB_CONTENT_BOT = H - 36;  // above the reset button
+        int SB_CONTENT_BOT = H - 72;  // above regen + reset buttons
         {
             int SB = MAP_OFF + MAP_PX;
             if (mouse.x >= SB && mouse.x < SB + SIDEBAR &&
@@ -925,8 +932,9 @@ int main() {
         DrawText("LEGAL ACTIONS", SB + 8, TOP_HUD + 10, 16, GRAY);
         DrawLine(SB + 4, TOP_HUD + 30, SB + SIDEBAR - 4, TOP_HUD + 30, { 60, 60, 60, 255 });
 
-        int  applied = -1;
-        bool reset   = false;
+        int  applied    = -1;
+        bool reset      = false;
+        bool regenerate = false;
 
         BeginScissorMode(SB, SB_CONTENT_TOP, SIDEBAR, SB_CONTENT_BOT - SB_CONTENT_TOP);
         for (int i = 0; i < layout_count; i++) {
@@ -972,6 +980,17 @@ int main() {
         }
         EndScissorMode();
 
+        // --- Regenerate button ---
+        {
+            Rectangle regen_btn = { (float)SB + 4, (float)H - 72, (float)SIDEBAR - 8, 28 };
+            bool hovered = CheckCollisionPointRec(mouse, regen_btn);
+            DrawRectangleRec(regen_btn, hovered ? Color{ 30, 130, 80, 255 } : Color{ 20, 80, 50, 255 });
+            int tw = MeasureText("REGEN MAP", 14);
+            DrawText("REGEN MAP", SB + SIDEBAR / 2 - tw / 2, H - 64, 14, WHITE);
+            if (hovered && clicked)
+                regenerate = true;
+        }
+
         // --- Reset button (bottom of sidebar) ---
         {
             Rectangle reset_btn = { (float)SB + 4, (float)H - 36, (float)SIDEBAR - 8, 28 };
@@ -983,7 +1002,14 @@ int main() {
         }
 
         // Apply after the loop so we don't mutate actions[] mid-render
-        if (reset) {
+        if (regenerate) {
+            initial = new_map();
+            s = initial;
+            init_colourers();
+            s.legal_actions(actions, action_count);
+            sidebar_scroll = 0;
+            selected_tile  = -1;
+        } else if (reset) {
             s = initial;
             init_colourers();
             s.legal_actions(actions, action_count);
