@@ -38,8 +38,11 @@ Phase 1 MVP in progress. Implementing a stripped-down version of Polytopia to ge
 - 3 unit types: Warrior, Archer, Rider
 - 3 tech unlocks: Mining, Archery, Riding
 - Terrain: Field, Forest, Mountain, Water + Villages
-- Cities (levels 1–3): 1★/turn per level, +1★ capital bonus, siege mechanic
-- Resources: Food (field/forest, no tech) and Metal (mountain, requires Mining)
+- Cities (no level cap): 1★/turn per level, +1★ capital bonus, siege mechanic
+- City borders: 3×3 (levels 1–3), auto-expands to 5×5 at level 4 (Border Growth, no choice)
+- Border clipping: borders between two cities don't overlap, clipped at midpoint
+- Resources: Fruit/field food (no tech), Game/forest food (requires Hunting), Metal (requires Mining)
+- Tech prereqs: Hunting required before Archery can be researched
 - Fog of war
 - Zone of control, healing, veteran promotion
 - Win condition: capture enemy capital (Domination)
