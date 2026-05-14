@@ -30,8 +30,3 @@ add_executable(test_init
 )
 target_link_libraries(test_init engine)
 
-# --- Visualizer (raylib) ---
-find_package(raylib REQUIRED)
-
-add_executable(visualizer src/visualizer.cpp)
-target_link_libraries(visualizer engine raylib)
