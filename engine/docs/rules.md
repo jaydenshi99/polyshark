@@ -48,9 +48,14 @@ A stripped-down Polytopia-inspired turn-based strategy game.
 | Level cap | None |
 
 ### Levelling up
-Gaining enough population levels the city up automatically. Every level-up gives +1★/turn. No choices except at level 3→4.
+Gaining enough population levels the city up automatically. Every level-up gives +1★/turn and presents the player with **two upgrade choices** (must be resolved before any other actions that turn).
 
-**Level 3→4: Border Growth** — city border expands from 3×3 to 5×5 (radius 1 → radius 2). No other special upgrades in this simplified version.
+| Level transition | Option A | Option B |
+|---|---|---|
+| 1 → 2 | Workshop | Explorer |
+| 2 → 3 | Resources (+5★) | Walls |
+| 3 → 4 | Border Growth (3×3 → 5×5) | Population Growth (+3 pop) |
+| 4+ | Park | Superunit |
 
 ### Border
 - Levels 1–3: 3×3 area centred on city tile (radius 1, up to 8 harvestable tiles)
@@ -67,19 +72,25 @@ Enemy unit on a city tile → city produces 0★ that turn.
 
 ## Resources & Harvesting
 
-Resource sub-types (used in code): `Fruit` (field), `Game` (forest). Metal is reserved for future use and is not harvestable.
+Resource sub-types (used in code): `Fruit` (field), `Animal` (forest), `Metal` (mountain).
 
 ### Food — Fruit (Fields)
-- No tech required
+- Requires **Organisation** tech
 - Cost: **2★**
 - Reward: **+1 population** to nearest city
 - One-time — tile cleared after harvest
 
-### Food — Game (Forests)
+### Food — Animal (Forests)
 - Requires **Hunting** tech
 - Cost: **2★**
 - Reward: **+1 population** to nearest city
 - One-time — tile cleared after harvest
+
+### Metal (Mountains)
+- Requires **Mining** tech
+- Cost: **5★**
+- Reward: **+2 population** to nearest city
+- Places a **Mine** building on the tile after harvest
 
 ### Rules
 - Resource must be within the city's border
@@ -89,14 +100,14 @@ Resource sub-types (used in code): `Fruit` (field), `Game` (forest). Metal is re
 
 ## Tech Tree
 
-Cost increases by +1★ per additional city owned.
-
-| Tech | Base Cost | Prereq | Unlocks |
+| Tech | Cost | Prereq | Unlocks |
 |---|---|---|---|
-| Hunting | 2★ | — | Harvest Game (forest food) |
-| Archery | 2★ | Hunting | Train Archer |
-| Riding | 3★ | — | Train Rider |
-| Climbing | 2★ | — | Units may enter mountain tiles |
+| Hunting | 5★ | — | Harvest Animal (forest food); unlocks Archery |
+| Organisation | 5★ | — | Harvest Fruit (field food) |
+| Riding | 5★ | — | Train Rider |
+| Climbing | 5★ | — | Units may enter mountain tiles; unlocks Mining |
+| Archery | 6★ | Hunting | Train Archer |
+| Mining | 6★ | Climbing | Harvest Metal (mountain ore) |
 
 Warrior requires no tech — available from turn 0.
 
