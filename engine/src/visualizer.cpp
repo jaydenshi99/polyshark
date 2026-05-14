@@ -913,12 +913,23 @@ int main() {
         DrawText(TextFormat("P0  %d *", s.get_stars(0)), W / 2 - 110, 10, 28, { 100, 160, 255, 255 });
         DrawText(TextFormat("P1  %d *", s.get_stars(1)), W / 2 + 10,  10, 28, { 255, 100, 100, 255 });
 
-        // View mode (right side)
-        const char* vname = (view == ViewMode::Omni)    ? "Omniscient"     :
-                            (view == ViewMode::P0)      ? "Player 0"       :
-                            (view == ViewMode::P1)      ? "Player 1"       : "Current Player";
-        DrawText(TextFormat("View: %s", vname),  W - 200, 8,  18, LIGHTGRAY);
-        DrawText("[Tab] cycle",                  W - 200, 34, 15, GRAY);
+        // View mode badge (right side)
+        {
+            const char* vname = (view == ViewMode::Omni)    ? "OMNISCIENT" :
+                                (view == ViewMode::P0)      ? "FOG: P0"    :
+                                (view == ViewMode::P1)      ? "FOG: P1"    : "FOG: CURRENT";
+            Color badge_col = (view == ViewMode::P0)      ? COL_P0 :
+                              (view == ViewMode::P1)      ? COL_P1 :
+                              (view == ViewMode::Current) ? ((s.current_player() == 0) ? COL_P0 : COL_P1)
+                                                          : Color{ 90, 90, 90, 255 };
+            int font_sz = 18;
+            int tw = MeasureText(vname, font_sz);
+            int right_edge = MAP_OFF + MAP_PX + SIDEBAR;  // left edge of log panel
+            int bx = right_edge - tw - 24, by = 10, bw = tw + 16, bh = 28;
+            DrawRectangleRounded({ (float)bx, (float)by, (float)bw, (float)bh }, 0.4f, 6, badge_col);
+            DrawText(vname, bx + 8, by + 5, font_sz, WHITE);
+            DrawText("[Tab]", right_edge - MeasureText("[Tab]", 13) - 8, by + bh + 4, 13, GRAY);
+        }
 
         // --- Sidebar ---
         int SB = MAP_OFF + MAP_PX;  // sidebar left edge
