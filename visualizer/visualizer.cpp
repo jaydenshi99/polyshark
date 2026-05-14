@@ -720,7 +720,7 @@ int main(int argc, char** argv) {
 
         // Scroll wheel scrolls the sidebar actions list
         int SB_CONTENT_TOP = SIDEBAR_TOP;
-        int SB_CONTENT_BOT = H - 72;  // above regen + reset buttons
+        int SB_CONTENT_BOT = H - 44;  // above reset button
         {
             int SB = MAP_OFF + MAP_PX;
             if (mouse.x >= SB && mouse.x < SB + SIDEBAR &&
@@ -774,11 +774,32 @@ int main(int argc, char** argv) {
         }
         const int cur_msz = s.map_size();
 
+        // Scrubber — click or drag to jump to any replay step
+        static bool scrubbing = false;
+        constexpr int SCRUB_H = 18;
+        const int scrub_y = H - SCRUB_H;
+        if (replay_mode) {
+            bool over_scrub = mouse.y >= scrub_y;
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && over_scrub) scrubbing = true;
+            if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON))              scrubbing = false;
+            if (scrubbing) {
+                float t = (mouse.x) / (float)W;
+                t = t < 0 ? 0 : t > 1 ? 1 : t;
+                int new_step = (int)(t * ((int)replay_states.size() - 1));
+                if (new_step != replay_step) {
+                    replay_step = new_step;
+                    s = replay_states[replay_step];
+                    refresh_borders();
+                    s.legal_actions(actions, action_count);
+                }
+            }
+        }
+
         // Map tile selection — click toggles; clicking same tile deselects
         {
             int tx = ((int)mouse.x - (MAP_OFF + PAD + LABEL)) / TILE;
             int ty = ((int)mouse.y - (TOP_HUD + PAD + LABEL)) / TILE;
-            if (clicked && tx >= 0 && tx < cur_msz && ty >= 0 && ty < cur_msz) {
+            if (clicked && !scrubbing && tx >= 0 && tx < cur_msz && ty >= 0 && ty < cur_msz) {
                 int tidx = to_index(tx, ty, cur_msz);
                 selected_tile = (selected_tile == tidx) ? -1 : tidx;
             }
@@ -1022,21 +1043,20 @@ int main(int argc, char** argv) {
 
         int  applied    = -1;
         bool reset      = false;
-        bool regenerate = false;
-
-        // Replay step controls (overrides interactive actions)
+        // Replay step controls
         if (replay_mode) {
-            if ((IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_SPACE)) &&
-                    replay_step < (int)replay_states.size() - 1) {
-                s = replay_states[++replay_step];
-                refresh_borders();
-                s.legal_actions(actions, action_count);
-            }
-            if (IsKeyPressed(KEY_LEFT) && replay_step > 0) {
-                s = replay_states[--replay_step];
-                refresh_borders();
-                s.legal_actions(actions, action_count);
-            }
+            auto jump_to = [&](int step) {
+                step = step < 0 ? 0 : step > (int)replay_states.size() - 1 ? (int)replay_states.size() - 1 : step;
+                if (step != replay_step) {
+                    replay_step = step;
+                    s = replay_states[replay_step];
+                    refresh_borders();
+                    s.legal_actions(actions, action_count);
+                }
+            };
+
+            if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_SPACE)) jump_to(replay_step + 1);
+            if (IsKeyPressed(KEY_LEFT))                              jump_to(replay_step - 1);
         }
 
         BeginScissorMode(SB, SB_CONTENT_TOP, SIDEBAR, SB_CONTENT_BOT - SB_CONTENT_TOP);
@@ -1083,17 +1103,6 @@ int main(int argc, char** argv) {
         }
         EndScissorMode();
 
-        // --- Regenerate button ---
-        {
-            Rectangle regen_btn = { (float)SB + 4, (float)H - 72, (float)SIDEBAR - 8, 28 };
-            bool hovered = CheckCollisionPointRec(mouse, regen_btn);
-            DrawRectangleRec(regen_btn, hovered ? Color{ 30, 130, 80, 255 } : Color{ 20, 80, 50, 255 });
-            int tw = MeasureText("REGEN MAP", 14);
-            DrawText("REGEN MAP", SB + SIDEBAR / 2 - tw / 2, H - 64, 14, WHITE);
-            if (hovered && clicked)
-                regenerate = true;
-        }
-
         // --- Reset button (bottom of sidebar) ---
         {
             Rectangle reset_btn = { (float)SB + 4, (float)H - 36, (float)SIDEBAR - 8, 28 };
@@ -1105,15 +1114,7 @@ int main(int argc, char** argv) {
         }
 
         // Apply after the loop so we don't mutate actions[] mid-render
-        if (regenerate && !replay_mode) {
-            initial = new_map();
-            TILE = MAP_CANVAS / initial.map_size();
-            s = initial;
-            init_colourers();
-            s.legal_actions(actions, action_count);
-            sidebar_scroll = 0;
-            selected_tile  = -1;
-        } else if (reset) {
+        if (reset) {
             if (replay_mode) {
                 replay_step = 0;
                 s = replay_states[0];
@@ -1225,6 +1226,21 @@ int main(int argc, char** argv) {
             DrawRectangleLinesEx(
                 { (float)tile_px(sx), (float)tile_py(sy), (float)TILE - 1, (float)TILE - 1 },
                 2, WHITE);
+        }
+
+        // Scrubber bar (drawn on top of everything, replay mode only)
+        if (replay_mode && !replay_states.empty()) {
+            int total = (int)replay_states.size() - 1;
+            int fill_w = total > 0 ? (int)((float)replay_step / total * W) : 0;
+            int handle_x = fill_w;
+
+            DrawRectangle(0, scrub_y, W, SCRUB_H, { 20, 20, 20, 230 });
+            DrawRectangle(0, scrub_y, fill_w, SCRUB_H, { 40, 130, 85, 255 });
+            DrawRectangle(handle_x - 2, scrub_y, 4, SCRUB_H, WHITE);
+
+            const char* label = TextFormat("%d / %d", replay_step, total);
+            int lw = MeasureText(label, 12);
+            DrawText(label, W / 2 - lw / 2, scrub_y + 3, 12, { 200, 200, 200, 255 });
         }
 
         EndDrawing();
