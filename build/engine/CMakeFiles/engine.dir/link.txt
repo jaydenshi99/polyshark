@@ -1,0 +1,2 @@
+/usr/bin/ar qc libengine.a CMakeFiles/engine.dir/src/grid.cpp.o CMakeFiles/engine.dir/src/unit.cpp.o CMakeFiles/engine.dir/src/city.cpp.o CMakeFiles/engine.dir/src/game_state.cpp.o CMakeFiles/engine.dir/src/init.cpp.o CMakeFiles/engine.dir/src/mapgen.cpp.o
+/usr/bin/ranlib libengine.a

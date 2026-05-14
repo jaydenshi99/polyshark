@@ -1,0 +1,10 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/jaydenshi/Documents/Code/Projects/polyshark/build/cmake_install.cmake",
+		"/Users/jaydenshi/Documents/Code/Projects/polyshark/build/engine/cmake_install.cmake",
+		"/Users/jaydenshi/Documents/Code/Projects/polyshark/build/bindings/cmake_install.cmake",
+		"/Users/jaydenshi/Documents/Code/Projects/polyshark/build/_deps/pybind11-build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

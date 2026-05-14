@@ -1,0 +1,68 @@
+[
+{
+  "directory": "/Users/jaydenshi/Documents/Code/Projects/polyshark/build/engine",
+  "command": "/usr/bin/c++  -I/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/include -std=gnu++17 -arch arm64 -o CMakeFiles/engine.dir/src/grid.cpp.o -c /Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/grid.cpp",
+  "file": "/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/grid.cpp",
+  "output": "engine/CMakeFiles/engine.dir/src/grid.cpp.o"
+},
+{
+  "directory": "/Users/jaydenshi/Documents/Code/Projects/polyshark/build/engine",
+  "command": "/usr/bin/c++  -I/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/include -std=gnu++17 -arch arm64 -o CMakeFiles/engine.dir/src/unit.cpp.o -c /Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/unit.cpp",
+  "file": "/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/unit.cpp",
+  "output": "engine/CMakeFiles/engine.dir/src/unit.cpp.o"
+},
+{
+  "directory": "/Users/jaydenshi/Documents/Code/Projects/polyshark/build/engine",
+  "command": "/usr/bin/c++  -I/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/include -std=gnu++17 -arch arm64 -o CMakeFiles/engine.dir/src/city.cpp.o -c /Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/city.cpp",
+  "file": "/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/city.cpp",
+  "output": "engine/CMakeFiles/engine.dir/src/city.cpp.o"
+},
+{
+  "directory": "/Users/jaydenshi/Documents/Code/Projects/polyshark/build/engine",
+  "command": "/usr/bin/c++  -I/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/include -std=gnu++17 -arch arm64 -o CMakeFiles/engine.dir/src/game_state.cpp.o -c /Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/game_state.cpp",
+  "file": "/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/game_state.cpp",
+  "output": "engine/CMakeFiles/engine.dir/src/game_state.cpp.o"
+},
+{
+  "directory": "/Users/jaydenshi/Documents/Code/Projects/polyshark/build/engine",
+  "command": "/usr/bin/c++  -I/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/include -std=gnu++17 -arch arm64 -o CMakeFiles/engine.dir/src/init.cpp.o -c /Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/init.cpp",
+  "file": "/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/init.cpp",
+  "output": "engine/CMakeFiles/engine.dir/src/init.cpp.o"
+},
+{
+  "directory": "/Users/jaydenshi/Documents/Code/Projects/polyshark/build/engine",
+  "command": "/usr/bin/c++  -I/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/include -std=gnu++17 -arch arm64 -o CMakeFiles/engine.dir/src/mapgen.cpp.o -c /Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/mapgen.cpp",
+  "file": "/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/mapgen.cpp",
+  "output": "engine/CMakeFiles/engine.dir/src/mapgen.cpp.o"
+},
+{
+  "directory": "/Users/jaydenshi/Documents/Code/Projects/polyshark/build/engine",
+  "command": "/usr/bin/c++  -I/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/include -std=gnu++17 -arch arm64 -o CMakeFiles/test_grid.dir/tests/test_grid.cpp.o -c /Users/jaydenshi/Documents/Code/Projects/polyshark/engine/tests/test_grid.cpp",
+  "file": "/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/tests/test_grid.cpp",
+  "output": "engine/CMakeFiles/test_grid.dir/tests/test_grid.cpp.o"
+},
+{
+  "directory": "/Users/jaydenshi/Documents/Code/Projects/polyshark/build/engine",
+  "command": "/usr/bin/c++  -I/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/include -std=gnu++17 -arch arm64 -o CMakeFiles/test_game_state.dir/tests/test_game_state.cpp.o -c /Users/jaydenshi/Documents/Code/Projects/polyshark/engine/tests/test_game_state.cpp",
+  "file": "/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/tests/test_game_state.cpp",
+  "output": "engine/CMakeFiles/test_game_state.dir/tests/test_game_state.cpp.o"
+},
+{
+  "directory": "/Users/jaydenshi/Documents/Code/Projects/polyshark/build/engine",
+  "command": "/usr/bin/c++  -I/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/include -std=gnu++17 -arch arm64 -o CMakeFiles/test_init.dir/tests/test_init.cpp.o -c /Users/jaydenshi/Documents/Code/Projects/polyshark/engine/tests/test_init.cpp",
+  "file": "/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/tests/test_init.cpp",
+  "output": "engine/CMakeFiles/test_init.dir/tests/test_init.cpp.o"
+},
+{
+  "directory": "/Users/jaydenshi/Documents/Code/Projects/polyshark/build/engine",
+  "command": "/usr/bin/c++  -I/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/include -isystem /opt/homebrew/Cellar/raylib/5.5/include -std=gnu++17 -arch arm64 -I/opt/homebrew/Cellar/raylib/5.5/include -o CMakeFiles/visualizer.dir/src/visualizer.cpp.o -c /Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/visualizer.cpp",
+  "file": "/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/src/visualizer.cpp",
+  "output": "engine/CMakeFiles/visualizer.dir/src/visualizer.cpp.o"
+},
+{
+  "directory": "/Users/jaydenshi/Documents/Code/Projects/polyshark/build/bindings",
+  "command": "/usr/bin/c++ -Dpolyshark_EXPORTS -I/Users/jaydenshi/Documents/Code/Projects/polyshark/engine/include -isystem /Users/jaydenshi/Documents/Code/Projects/polyshark/build/_deps/pybind11-src/include -isystem /opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/include/python3.13 -std=gnu++17 -arch arm64 -fPIC -fvisibility=hidden -flto -o CMakeFiles/polyshark.dir/bindings.cpp.o -c /Users/jaydenshi/Documents/Code/Projects/polyshark/bindings/bindings.cpp",
+  "file": "/Users/jaydenshi/Documents/Code/Projects/polyshark/bindings/bindings.cpp",
+  "output": "bindings/CMakeFiles/polyshark.dir/bindings.cpp.o"
+}
+]
