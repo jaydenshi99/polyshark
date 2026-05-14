@@ -44,13 +44,11 @@ struct Colourer {
     Color palette[PALETTE_SIZE]             = {};
     int   next_idx                          = 0;
     int   city_palette_idx[MAX_CITIES]      = {};  // palette slot per city
-    int   city_border_size[MAX_CITIES]      = {};  // claimed radius per city
-    int   tile_owner[MAP_TILES]             = {};  // city_id per tile, -1 if unclaimed
+    int   city_border_size[MAX_CITIES]      = {};
 
     void init(Color base) {
         next_idx = 0;
         for (int i = 0; i < MAX_CITIES; i++) { city_palette_idx[i] = -1; city_border_size[i] = -1; }
-        for (int i = 0; i < MAP_TILES;  i++) tile_owner[i] = -1;
         // Build palette: variations around base colour
         auto clamp = [](int v) -> uint8_t { return v < 0 ? 0 : v > 255 ? 255 : (uint8_t)v; };
         for (int i = 0; i < PALETTE_SIZE; i++) {
@@ -74,25 +72,9 @@ struct Colourer {
         next_idx = (next_idx + 1) % PALETTE_SIZE;
     }
 
-    // Expand territory for city_id to new_size radius.
-    // Only claims currently unclaimed tiles; never shrinks.
-    void update_borders(int city_id, int new_size, const GameState& s) {
-        if (new_size <= city_border_size[city_id]) return;
-        city_border_size[city_id] = new_size;
-        int cx, cy;
-        to_coords(s.get_city(city_id).tile_index(), cx, cy);
-        for (int dy = -new_size; dy <= new_size; dy++)
-            for (int dx = -new_size; dx <= new_size; dx++) {
-                if (!in_bounds(cx + dx, cy + dy)) continue;
-                int idx = to_index(cx + dx, cy + dy);
-                if (tile_owner[idx] == -1)
-                    tile_owner[idx] = city_id;
-            }
-    }
-
     // Returns the territory colour for this tile, or BLANK if unclaimed.
-    Color tile_colour(int tile_idx) const {
-        int cid = tile_owner[tile_idx];
+    Color tile_colour(int tile_idx, const GameState& s) const {
+        int cid = s.tile_at(tile_idx).border_city_id();
         if (cid < 0 || city_palette_idx[cid] < 0) return BLANK;
         return palette[city_palette_idx[cid]];
     }
@@ -614,12 +596,13 @@ int main() {
             int cid   = t.city_id();
             int owner = s.get_city(cid).owner();
             colourers[owner].assign_city(cid);
-            colourers[owner].update_borders(cid, s.get_city(cid).border_radius(), s);
         }
     };
     init_colourers();
 
     auto refresh_borders = [&]() { init_colourers(); };
+
+    int selected_tile = -1;
 
     Action actions[256];
     int    action_count   = 0;
@@ -711,6 +694,16 @@ int main() {
                 default: break;
             }
         }
+        // Map tile selection — click toggles; clicking same tile deselects
+        {
+            int tx = ((int)mouse.x - (MAP_OFF + PAD + LABEL)) / TILE;
+            int ty = ((int)mouse.y - (TOP_HUD + PAD + LABEL)) / TILE;
+            if (clicked && tx >= 0 && tx < MAP_SIZE && ty >= 0 && ty < MAP_SIZE) {
+                int tidx = to_index(tx, ty);
+                selected_tile = (selected_tile == tidx) ? -1 : tidx;
+            }
+        }
+
         auto is_highlighted = [&](int idx) {
             for (int h : highlight_tiles) if (h == idx) return true;
             return false;
@@ -719,20 +712,12 @@ int main() {
         BeginDrawing();
         ClearBackground({ 30, 30, 30, 255 });
 
-        // Precompute border ownership for every tile (-1 = no city)
+        // Border owner per tile: read directly from stored border_city_id.
+        // -1 = unclaimed; otherwise look up city owner for player colour.
         int border_owner[MAP_TILES];
-        for (int i = 0; i < MAP_TILES; i++) border_owner[i] = -1;
         for (int i = 0; i < MAP_TILES; i++) {
-            const Tile& ct = s.tile_at(i);
-            if (!ct.has_city()) continue;
-            const City& city = s.get_city(ct.city_id());
-            int ccx, ccy;
-            to_coords(i, ccx, ccy);
-            int r = city.border_radius();
-            for (int dy = -r; dy <= r; dy++)
-                for (int dx = -r; dx <= r; dx++)
-                    if (in_bounds(ccx + dx, ccy + dy))
-                        border_owner[to_index(ccx + dx, ccy + dy)] = city.owner();
+            int cid = s.tile_at(i).border_city_id();
+            border_owner[i] = (cid >= 0) ? s.get_city(cid).owner() : -1;
         }
 
         // --- Row / col indices ---
@@ -774,7 +759,7 @@ int main() {
                     // Territory colour overlay
                     Color tc = BLANK;
                     for (int p = 0; p < 2 && tc.a == 0; p++)
-                        tc = colourers[p].tile_colour(idx);
+                        tc = colourers[p].tile_colour(idx, s);
                     if (tc.a > 0)
                         DrawRectangle(px, py, TILE - 1, TILE - 1, tc);
                 }
@@ -1001,6 +986,7 @@ int main() {
             init_colourers();
             s.legal_actions(actions, action_count);
             sidebar_scroll = 0;
+            selected_tile  = -1;
         } else if (applied >= 0) {
             s = s.apply_action(actions[applied]);
             refresh_borders();
@@ -1053,6 +1039,55 @@ int main() {
                 float bar_y    = 44 + (float)(H - 44) * log_scroll / Logger::size();
                 DrawRectangle(lx + LOG_W - 4, (int)bar_y, 3, (int)bar_h, { 90, 90, 90, 255 });
             }
+        }
+
+        // --- Selected tile info box ---
+        if (selected_tile >= 0) {
+            const Tile& ht = s.tile_at(selected_tile);
+            int cid = ht.border_city_id();
+
+            char line1[48], line2[48];
+            if (cid >= 0) {
+                const City& bc = s.get_city(cid);
+                snprintf(line1, sizeof(line1), "City %d  P%d  L%d", cid, bc.owner(), bc.level());
+            } else {
+                snprintf(line1, sizeof(line1), "Unclaimed");
+            }
+            if (ht.has_unit()) {
+                const Unit& u = s.get_unit(ht.unit_id());
+                static const char* unames[] = { "?", "Warrior", "Archer", "Rider" };
+                snprintf(line2, sizeof(line2), "%s (P%d %dHP)",
+                    unames[(int)u.type()], u.owner(), u.hp());
+            } else {
+                line2[0] = '\0';
+            }
+
+            int tw1 = MeasureText(line1, 13);
+            int tw2 = line2[0] ? MeasureText(line2, 12) : 0;
+            int bw  = (tw1 > tw2 ? tw1 : tw2) + 12;
+            int bh  = line2[0] ? 36 : 20;
+
+            // Anchor just below-right of the selected tile, clamped to window
+            int sx, sy;
+            to_coords(selected_tile, sx, sy);
+            int bx = tile_px(sx) + TILE + 2;
+            int by = tile_py(sy);
+            if (bx + bw > W) bx = tile_px(sx) - bw - 2;
+            if (by + bh > H) by = H - bh - 2;
+
+            DrawRectangle(bx, by, bw, bh, { 20, 20, 20, 220 });
+            DrawRectangleLines(bx, by, bw, bh, { 80, 80, 80, 200 });
+            Color c1 = (cid >= 0)
+                ? (s.get_city(cid).owner() == 0 ? COL_P0 : COL_P1)
+                : Color{ 160, 160, 160, 255 };
+            DrawText(line1, bx + 6, by + 4, 13, c1);
+            if (line2[0])
+                DrawText(line2, bx + 6, by + 20, 12, LIGHTGRAY);
+
+            // Highlight the selected tile with a distinct outline
+            DrawRectangleLinesEx(
+                { (float)tile_px(sx), (float)tile_py(sy), (float)TILE - 1, (float)TILE - 1 },
+                2, WHITE);
         }
 
         EndDrawing();

@@ -220,7 +220,25 @@ int GameState::spawn_city(int tile_index, int owner, bool is_capital) {
     c.set_owner(owner);
     c.set_capital(is_capital);
     map[tile_index].place_city(id);
+    claim_border_for_city(id);
     return id;
+}
+
+void GameState::claim_border_for_city(int city_id) {
+    const City& city = cities[city_id];
+    int cx, cy;
+    to_coords(city.tile_index(), cx, cy);
+    int r = city.border_radius();
+
+    for (int dy = -r; dy <= r; dy++) {
+        for (int dx = -r; dx <= r; dx++) {
+            int bx = cx + dx, by = cy + dy;
+            if (!in_bounds(bx, by)) continue;
+            int bidx = to_index(bx, by);
+            if (map[bidx].border_city_id() == -1)
+                map[bidx].set_border_city(city_id);
+        }
+    }
 }
 
 void GameState::print_map() const {
@@ -301,31 +319,19 @@ void GameState::legal_actions(Action out[], int& out_count) const {
         }
 
         // --- Harvest Resource ---
-        for (int i = 0; i < s.city_count; i++) {
-            const City& city = s.cities[i];
-            if (city.owner() != p) continue;
-
-            int ccx, ccy;
-            to_coords(city.tile_index(), ccx, ccy);
-            int r = city.border_radius();
-
-            for (int dy = -r; dy <= r; dy++) {
-                for (int dx = -r; dx <= r; dx++) {
-                    int bx = ccx + dx, by = ccy + dy;
-                    if (!in_bounds(bx, by)) continue;
-                    // TODO: midpoint clipping — if another city is closer to (bx,by) than this one, skip it.
-                    int bidx = to_index(bx, by);
-                    const Tile& bt = s.tile_at(bidx);
-                    ResourceType res = bt.resource();
-                    if (res == ResourceType::None) continue;
-                    if (bt.has_building()) continue;  // already developed
-                    const ResourceDef& rdef = resource_def(res);
-                    if (rdef.required_tech != TechType::Count && !s.has_tech(p, rdef.required_tech)) continue;
-                    if (bt.has_unit() && s.get_unit(bt.unit_id()).owner() != p) continue;
-                    bool can_afford = s.players[p].stars >= rdef.star_cost;
-                    out[out_count++] = { ActionType::HarvestResource, i, bidx, (int)res, can_afford };
-                }
-            }
+        // border_city_id on each tile stores the owning city (first-claimer, Chebyshev midpoint rule).
+        for (int bidx = 0; bidx < MAP_TILES; bidx++) {
+            int cid = s.tile_at(bidx).border_city_id();
+            if (cid < 0 || s.cities[cid].owner() != p) continue;
+            const Tile& bt = s.tile_at(bidx);
+            ResourceType res = bt.resource();
+            if (res == ResourceType::None) continue;
+            if (bt.has_building()) continue;
+            const ResourceDef& rdef = resource_def(res);
+            if (rdef.required_tech != TechType::Count && !s.has_tech(p, rdef.required_tech)) continue;
+            if (bt.has_unit() && s.get_unit(bt.unit_id()).owner() != p) continue;
+            bool can_afford = s.players[p].stars >= rdef.star_cost;
+            out[out_count++] = { ActionType::HarvestResource, cid, bidx, (int)res, can_afford };
         }
 
         // --- ResearchTech ---
@@ -439,19 +445,8 @@ GameState GameState::apply_action(Action a) const {
                 bool skipped = (u.move_points() == udef.movement) && !u.has_attacked();
                 if (!skipped || u.hp() >= u.max_hp()) continue;
 
-                // Check if the tile is within a friendly city's border
-                int ux, uy;
-                to_coords(i, ux, uy);
-                bool friendly_territory = false;
-                for (int c = 0; c < s.city_count && !friendly_territory; c++) {
-                    const City& city = s.cities[c];
-                    if (city.owner() != next) continue;
-                    int cx, cy;
-                    to_coords(city.tile_index(), cx, cy);
-                    int r = city.border_radius();
-                    if (ux >= cx - r && ux <= cx + r && uy >= cy - r && uy <= cy + r)
-                        friendly_territory = true;
-                }
+                int bcid = s.map[i].border_city_id();
+                bool friendly_territory = (bcid >= 0 && s.cities[bcid].owner() == next);
                 u.heal(friendly_territory ? 4 : 2);
             }
 
@@ -551,6 +546,7 @@ GameState GameState::apply_action(Action a) const {
                 case CityUpgradeType::L3_BORDER_GROWTH:
                     c.update_border(2);
                     reveal_around(s, p, c.tile_index(), 2);
+                    s.claim_border_for_city(a.from);
                     break;
                 case CityUpgradeType::L3_POPULATION_GROWTH:
                     c.add_population(3);
