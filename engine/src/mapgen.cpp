@@ -82,22 +82,19 @@ void MapGen::place_terrain(GameState& s, int cap0, int cap1) {
 void MapGen::fill_climate(int climate[MAP_TILES], int cap0, int cap1) {
     std::fill(climate, climate + MAP_TILES, -1);
 
-    struct Entry {
-        float priority;
-        int   tile;
-        int   owner;
-        bool operator>(const Entry& o) const { return priority > o.priority; }
-    };
+    std::vector<int> frontier[2];
+    frontier[0].push_back(cap0);
+    frontier[1].push_back(cap1);
+    climate[cap0] = 0;
+    climate[cap1] = 1;
 
-    std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> pq;
-    pq.push({0.0f, cap0, 0});
-    pq.push({0.0f, cap1, 1});
-
-    while (!pq.empty()) {
-        auto [pri, tile, owner] = pq.top();
-        pq.pop();
-        if (climate[tile] != -1) continue;
-        climate[tile] = owner;
+    auto expand = [&](int owner) {
+        if (frontier[owner].empty()) return;
+        // Pick a random tile from this frontier and swap-erase it
+        int fi = randi(0, (int)frontier[owner].size() - 1);
+        int tile = frontier[owner][fi];
+        frontier[owner][fi] = frontier[owner].back();
+        frontier[owner].pop_back();
 
         int x, y;
         to_coords(tile, x, y);
@@ -108,9 +105,15 @@ void MapGen::fill_climate(int climate[MAP_TILES], int cap0, int cap1) {
                 if (!in_bounds(nx, ny)) continue;
                 int ni = to_index(nx, ny);
                 if (climate[ni] != -1) continue;
-                pq.push({pri + 1.0f + randf() * _p.climate_jitter, ni, owner});
+                climate[ni] = owner;
+                frontier[owner].push_back(ni);
             }
         }
+    };
+
+    while (!frontier[0].empty() || !frontier[1].empty()) {
+        expand(0);
+        expand(1);
     }
 }
 

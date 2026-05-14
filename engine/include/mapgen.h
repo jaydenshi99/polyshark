@@ -7,9 +7,9 @@ struct MapGenParams {
     float    forest_percent   = 0.15f;
     float    mountain_percent = 0.08f;
     // Bit i set → villages cannot be placed at edge-distance i.
-    // Drylands: exclude 0,1,2,4 → only distance 3 and 5 are valid.
-    uint8_t  village_edge_exclusion = 0b00010111; // bits 0,1,2,4
-    int      village_min_spacing    = 2;           // Chebyshev distance
+    // Drylands: exclude 0,1,3 → distances 2,4,5 are valid (rows 2,4,5,6,8).
+    uint8_t  village_edge_exclusion = 0b00001011; // bits 0,1,3
+    int      village_min_spacing    = 3;           // 2 tiles between = Chebyshev 3
     float    climate_jitter   = 1.5f;
     float    fruit_rate       = 0.40f;
     float    animal_rate      = 0.50f;
