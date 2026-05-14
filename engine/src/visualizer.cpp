@@ -825,7 +825,9 @@ int main() {
                         int cy = py + TILE / 2;
                         Color uc = (u.owner() == 0) ? BLUE : RED;
                         DrawCircle(cx, cy, TILE / 5, uc);
-                        DrawText("W", cx - 4, cy - 5, 10, WHITE);
+                        static const char* unit_icon[] = { "?", "W", "A", "R" };
+                        const char* icon = unit_icon[(int)u.type()];
+                        DrawText(icon, cx - MeasureText(icon, 10) / 2, cy - 5, 10, WHITE);
                         DrawText(TextFormat("%d", u.hp()), px + 4, py + 4, 11, WHITE);
                     }
                 }
