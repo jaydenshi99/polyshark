@@ -15,13 +15,13 @@ MapGenParams MapGenParams::for_biome(BiomeType b, int sz) {
             p.village_edge_exclusion = 0b00001011;
             p.village_min_spacing    = 3;
 
-            // hardcoded for imperius tribe
+            // hardcoded for imperius tribe.
             for (int i = 0; i < 2; i++) {
                 p.tribe_rates[i].outer.mountain = 0.14f;
                 p.tribe_rates[i].outer.forest   = 0.38f;
-                p.tribe_rates[i].outer.fruit     = 0.40f;
-                p.tribe_rates[i].outer.metal     = 0.20f;
-                p.tribe_rates[i].outer.animal    = 0.125f;
+                p.tribe_rates[i].outer.fruit     = 0.24f;
+                p.tribe_rates[i].outer.metal     = 0.21f;
+                p.tribe_rates[i].outer.animal    = 0.08f;
 
                 p.tribe_rates[i].inner.mountain  = 0.14f;
                 p.tribe_rates[i].inner.forest    = 0.38f;
