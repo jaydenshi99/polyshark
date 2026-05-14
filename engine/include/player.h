@@ -4,7 +4,7 @@
 #include "grid.h"
 #include <cstdint>
 
-constexpr int FOG_WORDS = (MAP_TILES + 15) / 16;
+constexpr int FOG_WORDS = (MAX_MAP_TILES + 15) / 16;
 
 struct Player {
     uint16_t explored[FOG_WORDS] = {};

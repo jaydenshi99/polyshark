@@ -2,23 +2,30 @@
 #include "game_state.h"
 #include <cstdint>
 
+enum class BiomeType {
+    Drylands,
+};
+
 struct MapGenParams {
-    uint64_t seed             = 0;
-    float    forest_percent   = 0.15f;
-    float    mountain_percent = 0.08f;
+    BiomeType biome            = BiomeType::Drylands;
+    int      map_size          = MAP_SIZE;  // must be <= MAX_MAP_SIZE
+    uint64_t seed              = 0;
+    float    forest_percent    = 0.15f;
+    float    mountain_percent  = 0.08f;
     // Bit i set → villages cannot be placed at edge-distance i.
-    // Drylands: exclude 0,1,3 → distances 2,4,5 are valid (rows 2,4,5,6,8).
+    // Drylands: exclude 0,1,3 → distances 2,4,5 are valid (rows 2,4,5,6,8 on 11x11).
     uint8_t  village_edge_exclusion = 0b00001011; // bits 0,1,3
     int      village_min_spacing    = 3;           // 2 tiles between = Chebyshev 3
-    float    climate_jitter   = 1.5f;
-    float    fruit_rate       = 0.40f;
-    float    animal_rate      = 0.50f;
-    float    metal_rate       = 0.40f;
+    float    fruit_rate        = 0.40f;
+    float    animal_rate       = 0.50f;
+    float    metal_rate        = 0.40f;
+
+    static MapGenParams for_biome(BiomeType b, int sz = MAP_SIZE);
 };
 
 struct MapGenResult {
     GameState state;
-    int       climate[MAP_TILES]; // 0 = P0 tribe zone, 1 = P1 tribe zone
+    int       climate[MAX_MAP_TILES]; // 0 = P0 tribe zone, 1 = P1 tribe zone
 };
 
 class MapGen {
@@ -26,6 +33,7 @@ public:
     explicit MapGen(MapGenParams p = {});
     MapGenResult generate();
 
+    // Convenience: same as MapGenParams::for_biome(BiomeType::Drylands)
     static MapGenParams drylands_defaults();
 
 private:
@@ -37,8 +45,8 @@ private:
     float    randf();
 
     void place_terrain (GameState& s, int cap0, int cap1);
-    void fill_climate  (int climate[MAP_TILES], int cap0, int cap1);
+    void fill_climate  (int climate[], int cap0, int cap1);
     void place_villages(GameState& s, int cap0, int cap1);
-    void place_resources(GameState& s, const int climate[MAP_TILES], int cap0, int cap1);
+    void place_resources(GameState& s, const int climate[], int cap0, int cap1);
     void init_players  (GameState& s, int cap0, int cap1);
 };

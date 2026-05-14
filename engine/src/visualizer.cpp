@@ -10,17 +10,19 @@
 #include <utility>
 #include <cstdio>
 
-static constexpr int TILE     = 56;
+static int            TILE     = 56;   // recomputed on each map gen; do not make constexpr
 static constexpr int PAD      = 4;
 static constexpr int LABEL    = 20;   // space for row/col index labels
 static constexpr int TOP_HUD  = 64;   // info bar across the top
 static constexpr int SIDEBAR  = 230;
 static constexpr int LOG_W    = 280;  // debug log panel width
 static constexpr int TECH_W   = 210;  // tech tree panel on the left
-static constexpr int MAP_PX   = MAP_SIZE * TILE + PAD * 2 + LABEL;
 static constexpr int MAP_OFF  = TECH_W;  // map x-offset (tech panel sits left of it)
-static constexpr int W        = TECH_W + MAP_PX + SIDEBAR + LOG_W;
-static constexpr int H        = TOP_HUD + MAP_SIZE * TILE + PAD * 2 + LABEL;
+// Fixed canvas: constant pixel budget. TILE scales to fill this regardless of actual map_size.
+static constexpr int MAP_CANVAS = 616;
+static constexpr int MAP_PX     = MAP_CANVAS + PAD * 2 + LABEL;
+static constexpr int W          = TECH_W + MAP_PX + SIDEBAR + LOG_W;
+static constexpr int H          = TOP_HUD + MAP_CANVAS + PAD * 2 + LABEL;
 
 enum class ViewMode { Omni, P0, P1, Current };
 
@@ -42,14 +44,14 @@ static inline int tile_py(int y) { return TOP_HUD + PAD + LABEL + y * TILE; }
 struct Colourer {
     static constexpr int PALETTE_SIZE = 8;
 
-    Color palette[PALETTE_SIZE]             = {};
-    int   next_idx                          = 0;
-    int   city_palette_idx[MAX_CITIES]      = {};  // palette slot per city
-    int   city_border_size[MAX_CITIES]      = {};
+    Color palette[PALETTE_SIZE]                 = {};
+    int   next_idx                              = 0;
+    int   city_palette_idx[MAX_MAP_TILES]       = {};
+    int   city_border_size[MAX_MAP_TILES]       = {};
 
     void init(Color base) {
         next_idx = 0;
-        for (int i = 0; i < MAX_CITIES; i++) { city_palette_idx[i] = -1; city_border_size[i] = -1; }
+        for (int i = 0; i < MAX_MAP_TILES; i++) { city_palette_idx[i] = -1; city_border_size[i] = -1; }
         // Build palette: variations around base colour
         auto clamp = [](int v) -> uint8_t { return v < 0 ? 0 : v > 255 ? 255 : (uint8_t)v; };
         for (int i = 0; i < PALETTE_SIZE; i++) {
@@ -583,16 +585,19 @@ static void draw_tech_tree(uint32_t owned_techs, int player_idx,
 
 int main() {
     uint64_t gen_seed = 1;
-    int climate[MAP_TILES] = {};
+    int climate[MAX_MAP_TILES] = {};
     auto new_map = [&]() {
         MapGenParams p = MapGen::drylands_defaults();
         p.seed = gen_seed++;
         MapGenResult r = MapGen(p).generate();
-        for (int i = 0; i < MAP_TILES; i++) climate[i] = r.climate[i];
+        int mtsz = r.state.map_tiles();
+        for (int i = 0; i < mtsz; i++) climate[i] = r.climate[i];
         return r.state;
     };
     GameState initial = new_map();
+    TILE = MAP_CANVAS / initial.map_size();
     GameState s = initial;
+
     ViewMode  view = ViewMode::Omni;
 
     Colourer colourers[2];
@@ -704,12 +709,14 @@ int main() {
                 default: break;
             }
         }
+        const int cur_msz = s.map_size();
+
         // Map tile selection — click toggles; clicking same tile deselects
         {
             int tx = ((int)mouse.x - (MAP_OFF + PAD + LABEL)) / TILE;
             int ty = ((int)mouse.y - (TOP_HUD + PAD + LABEL)) / TILE;
-            if (clicked && tx >= 0 && tx < MAP_SIZE && ty >= 0 && ty < MAP_SIZE) {
-                int tidx = to_index(tx, ty);
+            if (clicked && tx >= 0 && tx < cur_msz && ty >= 0 && ty < cur_msz) {
+                int tidx = to_index(tx, ty, cur_msz);
                 selected_tile = (selected_tile == tidx) ? -1 : tidx;
             }
         }
@@ -724,24 +731,24 @@ int main() {
 
         // Border owner per tile: read directly from stored border_city_id.
         // -1 = unclaimed; otherwise look up city owner for player colour.
-        int border_owner[MAP_TILES];
-        for (int i = 0; i < MAP_TILES; i++) {
+        int border_owner[MAX_MAP_TILES];
+        for (int i = 0; i < s.map_tiles(); i++) {
             int cid = s.tile_at(i).border_city_id();
             border_owner[i] = (cid >= 0) ? s.get_city(cid).owner() : -1;
         }
 
         // --- Row / col indices ---
-        for (int x = 0; x < MAP_SIZE; x++)
+        for (int x = 0; x < cur_msz; x++)
             DrawText(TextFormat("%d", x), tile_px(x) + TILE/2 - 4, TOP_HUD + PAD + 2, 14, GRAY);
-        for (int y = 0; y < MAP_SIZE; y++)
+        for (int y = 0; y < cur_msz; y++)
             DrawText(TextFormat("%d", y), MAP_OFF + PAD + 2, tile_py(y) + TILE/2 - 7, 14, GRAY);
 
         // --- Map ---
         int vp = (view == ViewMode::P1)      ? 1 :
                  (view == ViewMode::Current) ? s.current_player() : 0;
 
-        for (int y = 0; y < MAP_SIZE; y++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
+        for (int y = 0; y < cur_msz; y++) {
+            for (int x = 0; x < cur_msz; x++) {
                 const Tile& t = s.tile_at(to_index(x, y));
                 int px  = tile_px(x);
                 int py  = tile_py(y);
@@ -861,9 +868,9 @@ int main() {
         }
 
         // Border edge lines — draw on tile edges that are on the territory boundary
-        for (int y = 0; y < MAP_SIZE; y++) {
-            for (int x = 0; x < MAP_SIZE; x++) {
-                int idx   = to_index(x, y);
+        for (int y = 0; y < cur_msz; y++) {
+            for (int x = 0; x < cur_msz; x++) {
+                int idx   = to_index(x, y, cur_msz);
                 int owner = border_owner[idx];
                 if (owner == -1) continue;
                 if ((view != ViewMode::Omni) && !s.is_explored(vp, idx)) continue;  // vp already tracks current player in Current mode
@@ -1013,6 +1020,7 @@ int main() {
         // Apply after the loop so we don't mutate actions[] mid-render
         if (regenerate) {
             initial = new_map();
+            TILE = MAP_CANVAS / initial.map_size();
             s = initial;
             init_colourers();
             s.legal_actions(actions, action_count);

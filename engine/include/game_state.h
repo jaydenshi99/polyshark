@@ -7,8 +7,6 @@
 #include "types.h"
 #include "player.h"
 
-constexpr int MAX_UNITS   = 121;
-constexpr int MAX_CITIES  = 121;
 constexpr int MAX_PLAYERS = 2;
 
 enum class ActionType {
@@ -43,6 +41,9 @@ public:
     int  winner()         const;
     int  current_player() const;
     int  get_turn()       const { return turn; }
+    int  map_size()       const { return _map_size; }
+    int  map_tiles()      const { return _map_size * _map_size; }
+    void set_map_size(int sz)   { _map_size = sz; }
 
     // Derives the current turn phase from city state — never stored redundantly.
     GameStateType phase() const;
@@ -91,9 +92,9 @@ public:
     void claim_border_for_city(int city_id);
 
 private:
-    Tile map[MAP_TILES];
-    Unit units[MAX_UNITS];
-    City cities[MAX_CITIES];
+    Tile map[MAX_MAP_TILES];
+    Unit units[MAX_MAP_TILES];
+    City cities[MAX_MAP_TILES];
 
     Player players[MAX_PLAYERS];
 
@@ -101,6 +102,7 @@ private:
     int city_count  = 0;
     int turn        = 0;
     int cur_player  = 0;
+    int _map_size   = MAP_SIZE;
 };
 
 

@@ -1,6 +1,6 @@
 #include "grid.h"
 
-void neighbors(int x, int y, int out_indices[4], int& out_count) {
+void neighbors(int x, int y, int out_indices[4], int& out_count, int sz) {
     out_count = 0;
 
     constexpr int dx[4] = { 0,  0, -1, 1 };
@@ -9,7 +9,7 @@ void neighbors(int x, int y, int out_indices[4], int& out_count) {
     for (int i = 0; i < 4; i++) {
         int nx = x + dx[i];
         int ny = y + dy[i];
-        if (in_bounds(nx, ny))
-            out_indices[out_count++] = to_index(nx, ny);
+        if (in_bounds(nx, ny, sz))
+            out_indices[out_count++] = to_index(nx, ny, sz);
     }
 }
