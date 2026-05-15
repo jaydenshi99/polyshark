@@ -8,7 +8,7 @@ from action_codec import legal_action_indices, index_to_action
 
 END_TURN_ACTION = ACTION_SIZE - 1  # 7994
 
-C_PUCT = 1.5
+C_PUCT = 0.5
 DIRICHLET_ALPHA = 0.3
 DIRICHLET_EPSILON = 0.25
 VIRTUAL_LOSS = 1.0

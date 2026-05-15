@@ -24,8 +24,8 @@ TRAIN_STEPS        = 500
 BUFFER_SIZE        = 50_000
 BATCH_SIZE         = 256
 LR                 = 1e-3
-N_SIMULATIONS      = 400
-TEMPERATURE_CUTOFF = 6    # use temp=1.0 for first 6 turns, then greedy
+N_SIMULATIONS      = 200
+TEMPERATURE_CUTOFF = 0    # use temp=1.0 for first 6 turns, then greedy
 HEURISTIC_DECAY_GENS = 50   # heuristic weight decays from 1.0 → 0.0 over this many gens
 
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "../../checkpoints")
