@@ -251,7 +251,7 @@ def load_latest_checkpoint(model):
 
 # --- Main loop ---
 
-def train(n_generations=1000):
+def train(n_generations=200):
     device    = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Device: {device}")
 

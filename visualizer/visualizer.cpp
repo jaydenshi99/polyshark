@@ -6,7 +6,6 @@
 #include "building_def.h"
 #include "tech_def.h"
 #include "game_state.h"
-#include "logger.h"
 #include <utility>
 #include <cstdio>
 #include <fstream>
@@ -683,7 +682,6 @@ int main(int argc, char** argv) {
 
     Action actions[256];
     int    action_count   = 0;
-    int    log_scroll     = 0;
     int    sidebar_scroll = 0;
     float  tech_zoom      = 1.0f;
     s.legal_actions(actions, action_count);
@@ -1152,52 +1150,6 @@ int main(int argc, char** argv) {
             sidebar_scroll = 0;
         }
 
-        // --- Debug log panel ---
-        if (Logger::debugEnabled) {
-            int lx = MAP_OFF + MAP_PX + SIDEBAR;
-
-            DrawRectangle(lx, 0, LOG_W, H, { 18, 18, 18, 255 });
-            DrawLine(lx, 0, lx, H, PANEL_LINE);
-
-            // Header
-            DrawText("DEBUG LOG", lx + 8, 8, 15, GRAY);
-            DrawText(TextFormat("%d entries", Logger::size()), lx + 8, 26, 12, { 80, 80, 80, 255 });
-            DrawLine(lx + 4, 44, lx + LOG_W - 4, 44, { 50, 50, 50, 255 });
-
-            // Scroll via mouse wheel when cursor is over the panel
-            Rectangle panel_rect = { (float)lx, 44, (float)LOG_W, (float)(H - 44) };
-            if (CheckCollisionPointRec(mouse, panel_rect)) {
-                float wheel = GetMouseWheelMove();
-                log_scroll -= (int)wheel;
-                if (log_scroll < 0) log_scroll = 0;
-            }
-
-            // Clamp scroll so we never scroll past available entries
-            constexpr int ROW_H   = 18;
-            constexpr int LOG_PAD = 6;
-            int visible_rows = (H - 44 - LOG_PAD) / ROW_H;
-            int max_scroll   = Logger::size() - visible_rows;
-            if (max_scroll < 0) max_scroll = 0;
-            if (log_scroll > max_scroll) log_scroll = max_scroll;
-
-            // Draw entries newest-first, offset by scroll
-            for (int i = 0; i < visible_rows; i++) {
-                const char* entry = Logger::get(i + log_scroll);
-                if (!entry) break;
-                int ey = 44 + LOG_PAD + i * ROW_H;
-                // Alternate row shading
-                if (i % 2 == 0)
-                    DrawRectangle(lx + 2, ey, LOG_W - 4, ROW_H - 1, { 25, 25, 25, 255 });
-                DrawText(entry, lx + 6, ey + 2, 12, { 200, 200, 200, 255 });
-            }
-
-            // Scroll indicator
-            if (Logger::size() > visible_rows) {
-                float bar_h    = (float)H * visible_rows / Logger::size();
-                float bar_y    = 44 + (float)(H - 44) * log_scroll / Logger::size();
-                DrawRectangle(lx + LOG_W - 4, (int)bar_y, 3, (int)bar_h, { 90, 90, 90, 255 });
-            }
-        }
 
         // --- Selected tile info box ---
         if (selected_tile >= 0) {
