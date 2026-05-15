@@ -102,9 +102,11 @@ def index_to_action(idx: int, state):
 
 
 def legal_action_indices(state) -> list[int]:
-    """Return the list of integer indices for every legal action in state."""
+    """Return the list of integer indices for every affordable legal action in state."""
     indices = []
     for action in state.legal_actions():
+        if not action.affordable:
+            continue
         try:
             indices.append(action_to_index(action, state))
         except ValueError:

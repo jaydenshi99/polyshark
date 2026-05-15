@@ -11,19 +11,21 @@ END_TURN_ACTION = ACTION_SIZE - 1  # 7994
 C_PUCT = 1.5
 DIRICHLET_ALPHA = 0.3
 DIRICHLET_EPSILON = 0.25
+VIRTUAL_LOSS = 1.0
+BATCH_SIZE = 8  # leaves evaluated per wave
 
 
 class Node:
     __slots__ = ('p', 'w', 'n', 'children', 'is_expanded', 'is_terminal', 'cached_value')
 
     def __init__(self, terminal: bool = False):
-        self.p: dict[int, float] = {}         # prior probability per action
-        self.w: dict[int, float] = {}         # total value per action
-        self.n: dict[int, int] = {}           # visit count per action
+        self.p: dict[int, float] = {}
+        self.w: dict[int, float] = {}
+        self.n: dict[int, int] = {}
         self.children: dict[int, 'Node'] = {}
         self.is_expanded = False
         self.is_terminal = terminal
-        self.cached_value: float | None = None  # cached for EndTurn leaves
+        self.cached_value: float | None = None
 
     def init_priors(self, policy: np.ndarray, legal: list[int]):
         for a in legal:
@@ -34,7 +36,6 @@ class Node:
         self.is_expanded = True
 
     def select_action(self) -> int:
-        """PUCT selection over legal actions."""
         sqrt_N = math.sqrt(max(sum(self.n.values()), 1))
         best_score = -float('inf')
         best_action = -1
@@ -55,54 +56,41 @@ class MCTS:
 
     def search(self, root_state, n_simulations: int = 800, add_noise: bool = False) -> Node:
         """
-        Run MCTS from root_state and return the root Node.
-
-        Requires root_state to expose:
-          .legal_actions()   — list[Action]
-          .apply_action(a)   — returns a new GameState (does not mutate)
-          .is_terminal()     — bool
-          .terminal_value()  — float in {-1, 0, 1} from current player's view
+        Run MCTS in waves of BATCH_SIZE simulations. Within each wave all leaves
+        are evaluated in a single NN forward pass, then the tree is updated before
+        the next wave begins — so the tree grows progressively as in sequential MCTS.
         """
         root = Node()
-        self._expand_node(root_state, root)
+        self._expand_nodes([root_state], [root])
 
         if add_noise and root.p:
             self._add_dirichlet_noise(root)
 
-        for _ in range(n_simulations):
-            node = root
-            state = root_state   # apply_action returns new states; root_state is never mutated
-            path: list[tuple[Node, int]] = []
+        done = 0
+        while done < n_simulations:
+            wave = min(BATCH_SIZE, n_simulations - done)
 
-            # Selection — walk down using PUCT
-            while node.is_expanded and not node.is_terminal:
-                a = node.select_action()
-                path.append((node, a))
-                node = node.children[a]
-                state = state.apply_action(index_to_action(a, state))
+            paths, leaf_nodes, leaf_states = [], [], []
+            for _ in range(wave):
+                path, node, state = self._select(root, root_state)
+                paths.append(path)
+                leaf_nodes.append(node)
+                leaf_states.append(state)
 
-            # Expansion — new node (or terminal evaluation)
-            if state.is_terminal():
-                v = float(state.terminal_value())
-            elif node.is_terminal:
-                # EndTurn leaf: state is after applying EndTurn (opponent's view)
-                if node.cached_value is None:
-                    node.cached_value = self._evaluate(state)
-                v = node.cached_value
-            else:
-                v = self._expand_node(state, node)
+            values = self._evaluate_leaves(leaf_states, leaf_nodes)
 
-            # Backprop — only negate at the turn boundary (EndTurn action)
-            for parent, a in reversed(path):
-                if a == END_TURN_ACTION:
-                    v = -v
-                parent.w[a] += v
-                parent.n[a] += 1
+            for path, v in zip(paths, values):
+                for parent, a in reversed(path):
+                    if a == END_TURN_ACTION:
+                        v = -v
+                    parent.w[a] += VIRTUAL_LOSS + v
+                    # n[a] already incremented during _select via virtual loss
+
+            done += wave
 
         return root
 
     def get_policy(self, root: Node, temperature: float = 1.0) -> np.ndarray:
-        """Visit-count distribution over all actions."""
         visits = np.zeros(ACTION_SIZE, dtype=np.float32)
         for a, count in root.n.items():
             visits[a] = count
@@ -118,30 +106,102 @@ class MCTS:
 
     # ------------------------------------------------------------------
 
-    def _expand_node(self, state, node: Node) -> float:
-        """Call NN, populate node with priors, return value estimate."""
-        spatial, global_vec = encode(state)
-        spatial_t = torch.tensor(spatial).unsqueeze(0).to(self.device)
-        global_t  = torch.tensor(global_vec).unsqueeze(0).to(self.device)
+    def _select(self, root: Node, root_state) -> tuple:
+        """Walk tree to a leaf using PUCT, applying virtual loss on each edge."""
+        node = root
+        state = root_state
+        path: list[tuple[Node, int]] = []
 
-        legal = legal_action_indices(state)
-        mask = torch.zeros(1, ACTION_SIZE, dtype=torch.bool, device=self.device)
-        mask[0, legal] = True
+        while node.is_expanded and not node.is_terminal:
+            a = node.select_action()
+            node.w[a] -= VIRTUAL_LOSS
+            node.n[a] += 1
+            path.append((node, a))
+            node = node.children[a]
+            state = state.apply_action(index_to_action(a, state))
 
+        return path, node, state
+
+    def _evaluate_leaves(self, states: list, nodes: list[Node]) -> list[float]:
+        """
+        Batch-evaluate a list of leaves. Handles four cases:
+          - terminal state       → exact outcome
+          - EndTurn cached       → reuse cached value
+          - EndTurn uncached     → value-only NN, cache result
+          - unexpanded normal    → full NN (policy + value), expand node
+          - already expanded     → value-only NN (another sim in wave expanded it first)
+        """
+        values = [None] * len(states)
+        expand_idx: list[int] = []
+        value_only_idx: list[int] = []
+
+        for i, (state, node) in enumerate(zip(states, nodes)):
+            if state.is_terminal():
+                values[i] = float(state.terminal_value())
+            elif node.is_terminal:
+                if node.cached_value is not None:
+                    values[i] = node.cached_value
+                else:
+                    value_only_idx.append(i)
+            elif not node.is_expanded:
+                expand_idx.append(i)
+            else:
+                value_only_idx.append(i)
+
+        if expand_idx:
+            vs = self._expand_nodes(
+                [states[i] for i in expand_idx],
+                [nodes[i]  for i in expand_idx],
+            )
+            for j, i in enumerate(expand_idx):
+                values[i] = vs[j]
+
+        if value_only_idx:
+            vs = self._value_only([states[i] for i in value_only_idx])
+            for j, i in enumerate(value_only_idx):
+                node = nodes[i]
+                if node.is_terminal and node.cached_value is None:
+                    node.cached_value = vs[j]
+                values[i] = vs[j]
+
+        return values
+
+    def _expand_nodes(self, states: list, nodes: list[Node]) -> list[float]:
+        """Batch NN call: populate priors, return value estimates."""
+        spatial_t, global_t, legals, mask = self._encode_batch(states)
         with torch.no_grad():
-            policy, value = self.model(spatial_t, global_t, mask)
+            policies, vals = self.model(spatial_t, global_t, mask)
+        policies_np = policies.cpu().numpy()
+        vals_np = vals.squeeze(-1).cpu().numpy()
+        for i, node in enumerate(nodes):
+            if not node.is_expanded:
+                node.init_priors(policies_np[i], legals[i])
+        return [float(v) for v in vals_np]
 
-        node.init_priors(policy.squeeze(0).cpu().numpy(), legal)
-        return float(value.item())
-
-    def _evaluate(self, state) -> float:
-        """Value-only NN call — no expansion."""
-        spatial, global_vec = encode(state)
-        spatial_t = torch.tensor(spatial).unsqueeze(0).to(self.device)
-        global_t  = torch.tensor(global_vec).unsqueeze(0).to(self.device)
+    def _value_only(self, states: list) -> list[float]:
+        """Batch NN call: value head only, no expansion."""
+        spatial_t, global_t, _, _ = self._encode_batch(states)
         with torch.no_grad():
-            _, value = self.model(spatial_t, global_t)
-        return float(value.item())
+            _, vals = self.model(spatial_t, global_t)
+        return [float(v) for v in vals.squeeze(-1).cpu().numpy()]
+
+    def _encode_batch(self, states: list):
+        spatials, globals_, legals = [], [], []
+        for state in states:
+            spatial, global_vec = encode(state)
+            spatials.append(spatial)
+            globals_.append(global_vec)
+            legals.append(legal_action_indices(state))
+
+        spatial_t = torch.tensor(np.stack(spatials)).to(self.device)
+        global_t  = torch.tensor(np.stack(globals_)).to(self.device)
+
+        B = len(states)
+        mask = torch.zeros(B, ACTION_SIZE, dtype=torch.bool, device=self.device)
+        for i, legal in enumerate(legals):
+            mask[i, legal] = True
+
+        return spatial_t, global_t, legals, mask
 
     def _add_dirichlet_noise(self, root: Node):
         actions = list(root.p.keys())
