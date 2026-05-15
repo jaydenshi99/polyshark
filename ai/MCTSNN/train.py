@@ -15,6 +15,7 @@ from model import PolysharkNet, ACTION_SIZE
 from mcts import MCTS
 from encoder import encode
 from action_codec import index_to_action
+from log_utils import format_action, log_state
 
 # --- Hyperparameters ---
 TURN_LIMIT         = 10
@@ -118,12 +119,20 @@ def run_game(mcts, gen=0, game_idx=0) -> tuple[list, bool]:
     trajectory = []  # (spatial, global_vec, policy, current_player)
     history    = []  # raw actions for replay file
 
+    print(f"\n--- Gen {gen} Game {game_idx} ---")
+    last_logged_turn = -1
+
     while not state.is_terminal():
         if state.get_turn() >= TURN_LIMIT:
             break
 
         player = state.current_player()
         turn   = state.get_turn()
+
+        if turn != last_logged_turn:
+            print(f"  Turn {turn}")
+            log_state(state)
+            last_logged_turn = turn
 
         root   = mcts.search(state, n_simulations=N_SIMULATIONS, add_noise=True)
         temp   = 1.0 if turn < TEMPERATURE_CUTOFF else 0.0
@@ -134,6 +143,7 @@ def run_game(mcts, gen=0, game_idx=0) -> tuple[list, bool]:
 
         action_idx = int(np.random.choice(ACTION_SIZE, p=policy))
         action     = index_to_action(action_idx, state)
+        print(f"    P{player}: {format_action(action)}")
         history.append(action)
         state      = state.apply_action(action)
 
