@@ -18,13 +18,12 @@ static constexpr int PAD      = 4;
 static constexpr int LABEL    = 20;   // space for row/col index labels
 static constexpr int TOP_HUD  = 64;   // info bar across the top
 static constexpr int SIDEBAR  = 230;
-static constexpr int LOG_W    = 280;  // debug log panel width
 static constexpr int TECH_W   = 210;  // tech tree panel on the left
 static constexpr int MAP_OFF  = TECH_W;  // map x-offset (tech panel sits left of it)
 // Fixed canvas: constant pixel budget. TILE scales to fill this regardless of actual map_size.
 static constexpr int MAP_CANVAS = 616;
 static constexpr int MAP_PX     = MAP_CANVAS + PAD * 2 + LABEL;
-static constexpr int W          = TECH_W + MAP_PX + SIDEBAR + LOG_W;
+static constexpr int W          = TECH_W + MAP_PX + SIDEBAR;
 static constexpr int H          = TOP_HUD + MAP_CANVAS + PAD * 2 + LABEL;
 
 enum class ViewMode { Omni, P0, P1, Current };
@@ -720,7 +719,7 @@ int main(int argc, char** argv) {
 
         // Scroll wheel scrolls the sidebar actions list
         int SB_CONTENT_TOP = SIDEBAR_TOP;
-        int SB_CONTENT_BOT = H - 44;  // above reset button
+        int SB_CONTENT_BOT = H - 80;  // above regen + reset buttons
         {
             int SB = MAP_OFF + MAP_PX;
             if (mouse.x >= SB && mouse.x < SB + SIDEBAR &&
@@ -1043,6 +1042,7 @@ int main(int argc, char** argv) {
 
         int  applied    = -1;
         bool reset      = false;
+        bool regenerate = false;
         // Replay step controls
         if (replay_mode) {
             auto jump_to = [&](int step) {
@@ -1103,6 +1103,17 @@ int main(int argc, char** argv) {
         }
         EndScissorMode();
 
+        // --- Regenerate button ---
+        if (!replay_mode) {
+            Rectangle regen_btn = { (float)SB + 4, (float)H - 72, (float)SIDEBAR - 8, 28 };
+            bool hovered = CheckCollisionPointRec(mouse, regen_btn);
+            DrawRectangleRec(regen_btn, hovered ? Color{ 30, 130, 80, 255 } : Color{ 20, 80, 50, 255 });
+            int tw = MeasureText("REGEN MAP", 14);
+            DrawText("REGEN MAP", SB + SIDEBAR / 2 - tw / 2, H - 64, 14, WHITE);
+            if (hovered && clicked)
+                regenerate = true;
+        }
+
         // --- Reset button (bottom of sidebar) ---
         {
             Rectangle reset_btn = { (float)SB + 4, (float)H - 36, (float)SIDEBAR - 8, 28 };
@@ -1114,7 +1125,15 @@ int main(int argc, char** argv) {
         }
 
         // Apply after the loop so we don't mutate actions[] mid-render
-        if (reset) {
+        if (regenerate) {
+            initial = new_map();
+            TILE = MAP_CANVAS / initial.map_size();
+            s = initial;
+            init_colourers();
+            s.legal_actions(actions, action_count);
+            sidebar_scroll = 0;
+            selected_tile  = -1;
+        } else if (reset) {
             if (replay_mode) {
                 replay_step = 0;
                 s = replay_states[0];
@@ -1125,7 +1144,8 @@ int main(int argc, char** argv) {
             s.legal_actions(actions, action_count);
             sidebar_scroll = 0;
             selected_tile  = -1;
-        } else if (applied >= 0 && !replay_mode) {
+        }
+        if (applied >= 0 && !replay_mode) {
             s = s.apply_action(actions[applied]);
             refresh_borders();
             s.legal_actions(actions, action_count);

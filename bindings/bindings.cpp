@@ -4,6 +4,7 @@
 #include "game_state.h"
 #include "unit_def.h"
 #include "init.h"
+#include "mapgen.h"
 
 namespace py = pybind11;
 
@@ -149,4 +150,9 @@ PYBIND11_MODULE(polyshark, m) {
     });
 
     m.def("make_game", &make_game);
+    m.def("make_random_game", [](uint64_t seed) {
+        MapGenParams p = MapGen::drylands_defaults();
+        p.seed = seed;
+        return MapGen(p).generate().state;
+    }, py::arg("seed") = 0);
 }

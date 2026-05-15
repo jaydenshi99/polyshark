@@ -115,7 +115,8 @@ def run_game(mcts, gen=0, game_idx=0) -> tuple[list, bool]:
       examples  — list of (spatial, global_vec, policy, outcome)
       terminal  — True if game ended by capture, False if turn limit hit
     """
-    state      = polyshark.make_game()
+    seed       = random.randint(0, 2**32 - 1)
+    state      = polyshark.make_random_game(seed)
     trajectory = []  # (spatial, global_vec, policy, current_player)
     history    = []  # raw actions for replay file
 
