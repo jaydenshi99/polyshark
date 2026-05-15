@@ -2,9 +2,9 @@ import math
 import numpy as np
 import torch
 
-from .encoder import encode
-from .model import ACTION_SIZE
-from .action_codec import legal_action_indices, index_to_action
+from encoder import encode
+from model import ACTION_SIZE
+from action_codec import legal_action_indices, index_to_action
 
 END_TURN_ACTION = ACTION_SIZE - 1  # 7994
 

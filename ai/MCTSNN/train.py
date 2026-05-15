@@ -173,6 +173,46 @@ def train_step(model, optimizer, buffer, device):
     return policy_loss.item(), value_loss.item()
 
 
+# --- Evaluation ---
+
+def evaluate(new_model, old_model, device, n_games=20):
+    """Pit new_model against old_model. Returns win rate of new_model."""
+    new_mcts = MCTS(new_model, device=device)
+    old_mcts = MCTS(old_model, device=device)
+
+    new_wins = 0
+    for game_idx in range(n_games):
+        # Alternate which side new_model plays to avoid first-mover bias
+        new_is_p0 = (game_idx % 2 == 0)
+        state = polyshark.make_game()
+
+        while not state.is_terminal():
+            if state.get_turn() >= TURN_LIMIT:
+                break
+            player  = state.current_player()
+            is_new  = (player == 0 and new_is_p0) or (player == 1 and not new_is_p0)
+            mcts    = new_mcts if is_new else old_mcts
+            root    = mcts.search(state, n_simulations=N_SIMULATIONS, add_noise=False)
+            policy  = mcts.get_policy(root, temperature=0)
+            action_idx = int(np.argmax(policy))
+            action  = index_to_action(action_idx, state)
+            state   = state.apply_action(action)
+
+        if state.is_terminal():
+            winner        = state.winner()
+            new_player_id = 0 if new_is_p0 else 1
+            if winner == new_player_id:
+                new_wins += 1
+        else:
+            # No terminal — use heuristic to decide
+            new_player_id = 0 if new_is_p0 else 1
+            h = heuristic_value(state, new_player_id)
+            if h > 0:
+                new_wins += 1
+
+    return new_wins / n_games
+
+
 # --- Checkpointing ---
 
 def save_checkpoint(model, gen):
