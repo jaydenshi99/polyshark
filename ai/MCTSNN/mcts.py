@@ -16,23 +16,21 @@ BATCH_SIZE = 8  # leaves evaluated per wave
 
 
 class Node:
-    __slots__ = ('p', 'w', 'n', 'children', 'is_expanded', 'is_terminal', 'cached_value')
+    __slots__ = ('p', 'w', 'n', 'children', 'is_expanded')
 
-    def __init__(self, terminal: bool = False):
+    def __init__(self):
         self.p: dict[int, float] = {}
         self.w: dict[int, float] = {}
         self.n: dict[int, int] = {}
         self.children: dict[int, 'Node'] = {}
         self.is_expanded = False
-        self.is_terminal = terminal
-        self.cached_value: float | None = None
 
     def init_priors(self, policy: np.ndarray, legal: list[int]):
         for a in legal:
             self.p[a] = float(policy[a])
             self.w[a] = 0.0
             self.n[a] = 0
-            self.children[a] = Node(terminal=(a == END_TURN_ACTION))
+            self.children[a] = Node()
         self.is_expanded = True
 
     def select_action(self) -> int:
@@ -139,12 +137,8 @@ class MCTS:
 
         for i, (state, node) in enumerate(zip(states, nodes)):
             if state.is_terminal():
-                values[i] = float(state.terminal_value())
-            elif node.is_terminal:
-                if node.cached_value is not None:
-                    values[i] = node.cached_value
-                else:
-                    value_only_idx.append(i)
+                winner = state.winner()
+                values[i] = 1.0 if winner == state.current_player() else -1.0
             elif not node.is_expanded:
                 expand_idx.append(i)
             else:
@@ -161,9 +155,6 @@ class MCTS:
         if value_only_idx:
             vs = self._value_only([states[i] for i in value_only_idx])
             for j, i in enumerate(value_only_idx):
-                node = nodes[i]
-                if node.is_terminal and node.cached_value is None:
-                    node.cached_value = vs[j]
                 values[i] = vs[j]
 
         return values
