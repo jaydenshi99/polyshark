@@ -3,14 +3,15 @@ import os
 import numpy as np
 from datetime import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../build/bindings"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../build/bindings"))
 import polyshark
 
-from MCTSNN.model import PolysharkNet
-from MCTSNN.mcts import MCTS
-from MCTSNN.action_codec import index_to_action
+sys.path.insert(0, os.path.dirname(__file__))
+from model import PolysharkNet
+from mcts import MCTS
+from action_codec import index_to_action
 
-REPLAYS_DIR = os.path.join(os.path.dirname(__file__), "../replays")
+REPLAYS_DIR = os.path.join(os.path.dirname(__file__), "../../replays")
 N_SIMULATIONS = 800
 TEMPERATURE = 1.0
 
