@@ -24,7 +24,7 @@ TRAIN_STEPS        = 500
 BUFFER_SIZE        = 50_000
 BATCH_SIZE         = 256
 LR                 = 1e-3
-N_SIMULATIONS      = 50
+N_SIMULATIONS      = 400
 TEMPERATURE_CUTOFF = 6    # use temp=1.0 for first 6 turns, then greedy
 HEURISTIC_DECAY_GENS = 50   # heuristic weight decays from 1.0 → 0.0 over this many gens
 
@@ -35,11 +35,9 @@ REPLAYS_DIR    = os.path.join(os.path.dirname(__file__), "../../replays")
 # --- Heuristic ---
 
 def heuristic_value(state, player):
-    opp = 1 - player
-    sz  = state.map_size()
+    sz = state.map_size()
 
     my_income = my_cities = my_levels = my_units = 0
-    op_income = op_cities = op_levels = op_units = 0
 
     for i in range(sz * sz):
         tile = state.tile_at(i)
@@ -49,29 +47,21 @@ def heuristic_value(state, player):
                 my_income += city.stars_per_turn
                 my_cities += 1
                 my_levels += city.level
-            else:
-                op_income += city.stars_per_turn
-                op_cities += 1
-                op_levels += city.level
         if tile.has_unit:
             unit = state.get_unit(tile.unit_id)
-            if unit.is_alive:
-                if unit.owner == player:
-                    my_units += 1
-                else:
-                    op_units += 1
+            if unit.is_alive and unit.owner == player:
+                my_units += 1
 
     my_techs = bin(state.get_techs(player)).count('1')
-    op_techs = bin(state.get_techs(opp)).count('1')
 
     score = (
-        2.0 * (my_income - op_income) +
-        1.5 * (my_cities - op_cities) +
-        1.0 * (my_levels - op_levels) +
-        0.8 * (my_techs  - op_techs)  +
-        0.2 * (my_units  - op_units)
+        2.0 * my_income +
+        1.5 * my_cities +
+        1.0 * my_levels +
+        0.8 * my_techs  +
+        0.2 * my_units
     )
-    return math.tanh(score * 0.3)
+    return math.tanh(score * 0.15)
 
 
 # --- Replay Buffer ---
