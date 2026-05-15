@@ -262,11 +262,6 @@ def train(n_generations=200):
 
     start_gen = load_latest_checkpoint(model)
 
-    # Snapshot of previous generation's weights for evaluation
-    prev_model = PolysharkNet().to(device)
-    prev_model.load_state_dict(model.state_dict())
-    prev_model.eval()
-
     for gen in range(start_gen, start_gen + n_generations):
         # Self-play phase
         terminals = 0
@@ -300,10 +295,6 @@ def train(n_generations=200):
         path = save_checkpoint(model, gen + 1)
         print(f"  Saved {path}")
 
-        # Evaluation: new model vs previous generation
-        win_rate = evaluate(model, prev_model, device)
-        print(f"  Eval vs gen {gen}: win_rate={win_rate:.2f}")
-        prev_model.load_state_dict(model.state_dict())
 
 
 if __name__ == "__main__":
