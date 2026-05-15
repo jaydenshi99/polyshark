@@ -182,6 +182,7 @@ def train_step(model, optimizer, buffer, device):
 
     optimizer.zero_grad()
     loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer.step()
     model.eval()
 
@@ -191,14 +192,19 @@ def train_step(model, optimizer, buffer, device):
 
 # --- Checkpointing ---
 
-def save_checkpoint(model, gen):
+def save_checkpoint(model, buffer, gen):
+    import pickle
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     path = os.path.join(CHECKPOINT_DIR, f"model_{gen:04d}.pt")
     torch.save({'gen': gen, 'model': model.state_dict()}, path)
+    buf_path = os.path.join(CHECKPOINT_DIR, "buffer.pkl")
+    with open(buf_path, 'wb') as f:
+        pickle.dump(buffer._buf, f)
     return path
 
 
-def load_latest_checkpoint(model):
+def load_latest_checkpoint(model, buffer):
+    import pickle
     if not os.path.exists(CHECKPOINT_DIR):
         return 0
     files = [f for f in os.listdir(CHECKPOINT_DIR) if f.endswith('.pt')]
@@ -207,6 +213,11 @@ def load_latest_checkpoint(model):
     latest = max(files, key=lambda f: int(f.split('_')[1].split('.')[0]))
     ckpt   = torch.load(os.path.join(CHECKPOINT_DIR, latest), weights_only=True)
     model.load_state_dict(ckpt['model'])
+    buf_path = os.path.join(CHECKPOINT_DIR, "buffer.pkl")
+    if os.path.exists(buf_path):
+        with open(buf_path, 'rb') as f:
+            buffer._buf = pickle.load(f)
+        print(f"Resumed buffer ({len(buffer)} positions)")
     print(f"Resumed from generation {ckpt['gen']}")
     return ckpt['gen']
 
@@ -222,7 +233,15 @@ def train(n_generations=200):
     buffer    = ReplayBuffer()
     mcts      = MCTS(model, device=device)
 
-    start_gen = load_latest_checkpoint(model)
+    start_gen = load_latest_checkpoint(model, buffer)
+
+    log_path = os.path.join(CHECKPOINT_DIR, "training_log.csv")
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    log_exists = os.path.exists(log_path)
+    log_file = open(log_path, "a")
+    if not log_exists:
+        log_file.write("gen,terminals,positions,buffer,policy_loss,value_loss\n")
+        log_file.flush()
 
     for gen in range(start_gen, start_gen + n_generations):
         # Self-play phase
@@ -254,9 +273,13 @@ def train(n_generations=200):
             f"policy_loss={avg_pl:.4f} value_loss={avg_vl:.4f}"
         )
 
-        path = save_checkpoint(model, gen + 1)
+        path = save_checkpoint(model, buffer, gen + 1)
         print(f"  Saved {path}")
 
+        log_file.write(f"{gen+1},{terminals},{positions},{len(buffer)},{avg_pl:.6f},{avg_vl:.6f}\n")
+        log_file.flush()
+
+    log_file.close()
 
 
 if __name__ == "__main__":
