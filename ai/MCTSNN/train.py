@@ -152,8 +152,11 @@ def run_game(mcts, gen=0, game_idx=0) -> tuple[list, bool]:
     if terminal:
         winner   = state.winner()
         outcomes = [1.0 if p == winner else -1.0 for _, _, _, p in trajectory]
+        print(f"  -> P{winner} wins")
     else:
         outcomes = [heuristic_value(state, p) for _, _, _, p in trajectory]
+        h0 = heuristic_value(state, 0)
+        print(f"  -> Turn limit hit | heuristic P0={h0:.2f} P1={-h0:.2f}")
 
     examples = [(s, g, pol, out) for (s, g, pol, _), out in zip(trajectory, outcomes)]
     save_replay(history, gen, game_idx)
