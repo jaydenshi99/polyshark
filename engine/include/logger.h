@@ -44,6 +44,6 @@ public:
     static int size() { return count < MAX_ENTRIES ? count : MAX_ENTRIES; }
 };
 
-inline bool Logger::debugEnabled = true;
+inline bool Logger::debugEnabled = false;
 inline int  Logger::count        = 0;
 inline char Logger::entries[Logger::MAX_ENTRIES][Logger::ENTRY_LEN] = {};
