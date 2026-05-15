@@ -286,19 +286,26 @@ void GameState::legal_actions(Action out[], int& out_count) const {
 
     if (can_harvest) {
         // --- Train Unit ---
-        for (int i = 0; i < s.city_count; i++) {
-            const City& city = s.cities[i];
-            if (city.owner() != p) continue;
-            if (city.has_pending_upgrade()) continue;
-            int tile = city.tile_index();
-            if (s.tile_at(tile).has_unit()) continue;
-            int pop_cap = city.level() + 1;
-            if (city.population() >= pop_cap) continue;
-            for (int ut = 1; ut < static_cast<int>(UnitType::Count); ut++) {
-                const UnitDef& udef = unit_def(static_cast<UnitType>(ut));
-                if (udef.required_tech != TechType::Count && !s.has_tech(p, udef.required_tech)) continue;
-                bool can_afford = s.players[p].stars >= udef.cost;
-                out[out_count++] = { ActionType::TrainUnit, tile, tile, ut, can_afford };
+        // Unit cap: total alive units <= sum of all city levels for this player.
+        int total_levels = 0, total_units = 0;
+        for (int i = 0; i < s.city_count; i++)
+            if (s.cities[i].owner() == p) total_levels += s.cities[i].level();
+        for (int i = 0; i < s.unit_count; i++)
+            if (s.units[i].owner() == p && s.units[i].is_alive()) total_units++;
+
+        if (total_units < total_levels) {
+            for (int i = 0; i < s.city_count; i++) {
+                const City& city = s.cities[i];
+                if (city.owner() != p) continue;
+                if (city.has_pending_upgrade()) continue;
+                int tile = city.tile_index();
+                if (s.tile_at(tile).has_unit()) continue;
+                for (int ut = 1; ut < static_cast<int>(UnitType::Count); ut++) {
+                    const UnitDef& udef = unit_def(static_cast<UnitType>(ut));
+                    if (udef.required_tech != TechType::Count && !s.has_tech(p, udef.required_tech)) continue;
+                    bool can_afford = s.players[p].stars >= udef.cost;
+                    out[out_count++] = { ActionType::TrainUnit, tile, tile, ut, can_afford };
+                }
             }
         }
 
@@ -464,12 +471,6 @@ GameState GameState::apply_action(Action a) const {
             s.players[p].stars -= udef.cost;
             int uid = s.spawn_unit(ut, p, a.from);
             s.units[uid].spend_movement(s.units[uid].move_points());
-            for (int i = 0; i < s.city_count; i++) {
-                if (s.cities[i].tile_index() == a.from) {
-                    s.cities[i].add_population(1);
-                    break;
-                }
-            }
             return s;
         }
 

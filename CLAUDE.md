@@ -60,6 +60,16 @@ Phase 1 MVP in progress. Implementing a stripped-down version of Polytopia to ge
 
 Full MVP ruleset is documented in [engine/docs/rules.md](engine/docs/rules.md).
 
+**Unit cap (confirmed):**
+- Total alive units owned by a player <= sum of all that player's city levels
+- Level 1 city = 1 unit slot, level 2 = 2 slots, etc. (global, not per-city)
+- A city tile must also be empty to train a unit there
+
+**Population (confirmed):**
+- Training a unit does NOT grant population to a city
+- Population is gained only from: harvesting resources (pop_reward from resource def) and certain city upgrades (e.g. Population Growth)
+- Population tracks progress toward the next city level-up
+
 **Fog of war (confirmed):**
 - Standard vision: 1-tile radius (full 3×3 square, all 8 directions) for units and cities
 - Mountain bonus: extended vision (exact radius TBD)

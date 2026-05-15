@@ -1,3 +1,5 @@
 engine/build/
 build/
 replays/
+__pycache__/
+*.pyc
