@@ -54,7 +54,10 @@ static std::string format_action_str(const Action& a, int player, int turn, int 
         case ActionType::CaptureCity:       return p + "Capture " + coords(a.to);
         case ActionType::HarvestResource:   return p + "Harvest " + coords(a.from);
         case ActionType::ConstructBuilding: return p + "Build @ " + coords(a.from);
-        case ActionType::UpgradeCity:       return p + "Upgrade " + coords(a.from);
+        case ActionType::UpgradeCity: {
+            static const char* unames[] = {"Workshop","Explorer","Resources","Walls","BorderGrowth","PopGrowth","Park","SuperUnit"};
+            return p + "Upgrade: " + (a.param >= 0 && a.param < 8 ? unames[a.param] : "?");
+        }
         case ActionType::EndTurn:           return p + "EndTurn";
         case ActionType::TrainUnit:
             return p + "Train " + (a.param > 0 && a.param < 4 ? unit_names[a.param] : "?") + " @ " + coords(a.from);

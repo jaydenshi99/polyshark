@@ -467,12 +467,6 @@ GameState GameState::apply_action(Action a) const {
             s.players[p].stars -= udef.cost;
             int uid = s.spawn_unit(ut, p, a.from);
             s.units[uid].spend_movement(s.units[uid].move_points());
-            for (int i = 0; i < s.city_count; i++) {
-                if (s.cities[i].tile_index() == a.from) {
-                    s.cities[i].add_population(1);
-                    break;
-                }
-            }
             return s;
         }
 
