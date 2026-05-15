@@ -2,6 +2,7 @@ import sys
 import os
 import math
 import random
+import time
 from collections import deque
 import numpy as np
 import torch
@@ -125,8 +126,10 @@ def run_game(mcts, gen=0, game_idx=0) -> tuple[list, bool]:
             log_state(state)
             last_logged_turn = turn
 
+        t0 = time.perf_counter()
         root   = mcts.search(state, n_simulations=N_SIMULATIONS, add_noise=True)
         ts, te, tb = mcts._last_timings; t_select += ts; t_eval += te; t_backup += tb
+        print(f"    [step] {time.perf_counter()-t0:.3f}s")
         temp   = 1.0 if turn < TEMPERATURE_CUTOFF else 0.0
         policy = mcts.get_policy(root, temperature=temp)
 

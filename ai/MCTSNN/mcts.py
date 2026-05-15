@@ -13,7 +13,7 @@ C_PUCT = 0.5
 DIRICHLET_ALPHA = 0.3
 DIRICHLET_EPSILON = 0.25
 VIRTUAL_LOSS = 1.0
-BATCH_SIZE = 8  # leaves evaluated per wave
+BATCH_SIZE = 10  # leaves evaluated per wave
 
 
 class Node:
