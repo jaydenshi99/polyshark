@@ -111,6 +111,7 @@ def run_game(mcts, gen=0, game_idx=0) -> tuple[list, bool]:
 
     print(f"\n--- Gen {gen} Game {game_idx} ---")
     last_logged_turn = -1
+    t_select = t_eval = t_backup = 0.0
 
     while not state.is_terminal():
         if state.get_turn() >= TURN_LIMIT:
@@ -125,6 +126,7 @@ def run_game(mcts, gen=0, game_idx=0) -> tuple[list, bool]:
             last_logged_turn = turn
 
         root   = mcts.search(state, n_simulations=N_SIMULATIONS, add_noise=True)
+        ts, te, tb = mcts._last_timings; t_select += ts; t_eval += te; t_backup += tb
         temp   = 1.0 if turn < TEMPERATURE_CUTOFF else 0.0
         policy = mcts.get_policy(root, temperature=temp)
 
@@ -147,6 +149,9 @@ def run_game(mcts, gen=0, game_idx=0) -> tuple[list, bool]:
         outcomes = [heuristic_value(state, p) for _, _, _, p in trajectory]
         h0 = heuristic_value(state, 0)
         print(f"  -> Turn limit hit | heuristic P0={h0:.2f} P1={-h0:.2f}")
+
+    total = t_select + t_eval + t_backup
+    print(f"  [time] select={t_select:.2f}s  eval={t_eval:.2f}s  backup={t_backup:.2f}s  total={total:.2f}s")
 
     examples = [(s, g, pol, out) for (s, g, pol, _), out in zip(trajectory, outcomes)]
     save_replay(history, seed, gen, game_idx)

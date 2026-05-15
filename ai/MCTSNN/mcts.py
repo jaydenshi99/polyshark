@@ -1,4 +1,5 @@
 import math
+import time
 import numpy as np
 import torch
 
@@ -53,6 +54,7 @@ class MCTS:
         self.heuristic_fn   = heuristic_fn
         self.heuristic_weight = heuristic_weight
         self.model.eval()
+        self._last_timings  = (0.0, 0.0, 0.0)
 
     def search(self, root_state, n_simulations: int = 800, add_noise: bool = False) -> Node:
         """
@@ -66,27 +68,35 @@ class MCTS:
         if add_noise and root.p:
             self._add_dirichlet_noise(root)
 
+        t_select = t_eval = t_backup = 0.0
         done = 0
         while done < n_simulations:
             wave = min(BATCH_SIZE, n_simulations - done)
 
             paths, leaf_nodes, leaf_states = [], [], []
+            t0 = time.perf_counter()
             for _ in range(wave):
                 path, node, state = self._select(root, root_state)
                 paths.append(path)
                 leaf_nodes.append(node)
                 leaf_states.append(state)
+            t_select += time.perf_counter() - t0
 
+            t0 = time.perf_counter()
             values = self._evaluate_leaves(leaf_states, leaf_nodes)
+            t_eval += time.perf_counter() - t0
 
+            t0 = time.perf_counter()
             for path, v in zip(paths, values):
                 for parent, a in reversed(path):
                     if a == END_TURN_ACTION:
                         v = -v
                     parent.w[a] += VIRTUAL_LOSS + v
-                    # n[a] already incremented during _select via virtual loss
+            t_backup += time.perf_counter() - t0
 
             done += wave
+
+        self._last_timings = (t_select, t_eval, t_backup)
 
         return root
 
