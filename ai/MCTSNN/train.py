@@ -26,7 +26,7 @@ BATCH_SIZE         = 256
 LR                 = 1e-3
 N_SIMULATIONS      = 50
 TEMPERATURE_CUTOFF = 6    # use temp=1.0 for first 6 turns, then greedy
-HEURISTIC_DECAY_GENS = 100  # heuristic weight decays from 1.0 → 0.0 over this many gens
+HEURISTIC_DECAY_GENS = 50   # heuristic weight decays from 1.0 → 0.0 over this many gens
 
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "../../checkpoints")
 REPLAYS_DIR    = os.path.join(os.path.dirname(__file__), "../../replays")

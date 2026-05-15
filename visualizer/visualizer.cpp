@@ -7,6 +7,7 @@
 #include "tech_def.h"
 #include "game_state.h"
 #include <utility>
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <vector>
@@ -22,7 +23,8 @@ static constexpr int MAP_OFF  = TECH_W;  // map x-offset (tech panel sits left o
 // Fixed canvas: constant pixel budget. TILE scales to fill this regardless of actual map_size.
 static constexpr int MAP_CANVAS = 616;
 static constexpr int MAP_PX     = MAP_CANVAS + PAD * 2 + LABEL;
-static constexpr int W          = TECH_W + MAP_PX + SIDEBAR;
+static constexpr int LOG_W      = 260;
+static constexpr int W          = TECH_W + MAP_PX + SIDEBAR + LOG_W;
 static constexpr int H          = TOP_HUD + MAP_CANVAS + PAD * 2 + LABEL;
 
 enum class ViewMode { Omni, P0, P1, Current };
@@ -37,6 +39,30 @@ static constexpr Color COL_P1     = { 220,  80,  80, 255 };
 // Tile pixel origin
 static inline int tile_px(int x) { return MAP_OFF + PAD + LABEL + x * TILE; }
 static inline int tile_py(int y) { return TOP_HUD + PAD + LABEL + y * TILE; }
+
+static std::string format_action_str(const Action& a, int player, int turn, int sz) {
+    auto coords = [sz](int idx) {
+        char buf[12]; snprintf(buf, sizeof(buf), "(%d,%d)", idx / sz, idx % sz); return std::string(buf);
+    };
+    static const char* unit_names[] = {"?","Warrior","Archer","Rider"};
+    static const char* tech_names[] = {"Origin","Hunting","Org","Farming","Riding","Climb","Archery","Mining"};
+    char prefix[24]; snprintf(prefix, sizeof(prefix), "P%d T%d: ", player, turn);
+    std::string p = prefix;
+    switch (a.type) {
+        case ActionType::Move:              return p + "Move "    + coords(a.from) + "->" + coords(a.to);
+        case ActionType::Attack:            return p + "Attack "  + coords(a.from) + "->" + coords(a.to);
+        case ActionType::CaptureCity:       return p + "Capture " + coords(a.to);
+        case ActionType::HarvestResource:   return p + "Harvest " + coords(a.from);
+        case ActionType::ConstructBuilding: return p + "Build @ " + coords(a.from);
+        case ActionType::UpgradeCity:       return p + "Upgrade " + coords(a.from);
+        case ActionType::EndTurn:           return p + "EndTurn";
+        case ActionType::TrainUnit:
+            return p + "Train " + (a.param > 0 && a.param < 4 ? unit_names[a.param] : "?") + " @ " + coords(a.from);
+        case ActionType::ResearchTech:
+            return p + "Tech " + (a.param >= 0 && a.param < 8 ? tech_names[a.param] : "?");
+        default: return p + "Action";
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Colourer — assigns each city a distinct-but-similar colour and tracks which
@@ -640,9 +666,14 @@ int main(int argc, char** argv) {
     TILE = MAP_CANVAS / initial.map_size();
     GameState s = initial;
 
+    // Action log (replay: all actions; live: accumulated)
+    std::vector<std::string> action_log;
+    int log_scroll = 0;
+
     // Replay mode: --replay <path>
     bool replay_mode = false;
     std::vector<GameState> replay_states;
+    std::vector<std::string> replay_log; // one entry per action
     int replay_step = 0;
     for (int i = 1; i < argc - 1; i++) {
         if (std::string(argv[i]) == "--replay") {
@@ -662,13 +693,18 @@ int main(int argc, char** argv) {
                 // first token was already consumed — push it back as action fields
                 int t = std::stoi(first), fr, to, pa;
                 f >> fr >> to >> pa;
+                Action act0 = {(ActionType)t, fr, to, pa, true};
+                replay_log.push_back(format_action_str(act0, rs.current_player(), rs.get_turn(), rs.map_size()));
                 replay_states.push_back(rs);
-                replay_states.push_back(rs = rs.apply_action({(ActionType)t, fr, to, pa, true}));
+                replay_states.push_back(rs = rs.apply_action(act0));
             }
             replay_states.push_back(rs);
             int t, fr, to, pa;
-            while (f >> t >> fr >> to >> pa)
-                replay_states.push_back(rs = rs.apply_action({(ActionType)t, fr, to, pa, true}));
+            while (f >> t >> fr >> to >> pa) {
+                Action act = {(ActionType)t, fr, to, pa, true};
+                replay_log.push_back(format_action_str(act, rs.current_player(), rs.get_turn(), rs.map_size()));
+                replay_states.push_back(rs = rs.apply_action(act));
+            }
             initial = s = replay_states[0];
             TILE = MAP_CANVAS / s.map_size();
             break;
@@ -1161,23 +1197,33 @@ int main(int argc, char** argv) {
             s.legal_actions(actions, action_count);
             sidebar_scroll = 0;
             selected_tile  = -1;
+            action_log.clear();
+            log_scroll = 0;
         } else if (reset) {
             if (replay_mode) {
                 replay_step = 0;
                 s = replay_states[0];
             } else {
                 s = initial;
+                action_log.clear();
             }
             init_colourers();
             s.legal_actions(actions, action_count);
             sidebar_scroll = 0;
             selected_tile  = -1;
+            log_scroll = 0;
         }
         if (applied >= 0 && !replay_mode) {
+            action_log.push_back(format_action_str(actions[applied], s.current_player(), s.get_turn(), s.map_size()));
             s = s.apply_action(actions[applied]);
             refresh_borders();
             s.legal_actions(actions, action_count);
             sidebar_scroll = 0;
+        }
+
+        // Sync log to current replay step
+        if (replay_mode) {
+            action_log.assign(replay_log.begin(), replay_log.begin() + std::min(replay_step, (int)replay_log.size()));
         }
 
 
@@ -1228,6 +1274,53 @@ int main(int argc, char** argv) {
             DrawRectangleLinesEx(
                 { (float)tile_px(sx), (float)tile_py(sy), (float)TILE - 1, (float)TILE - 1 },
                 2, WHITE);
+        }
+
+        // --- Action log panel ---
+        {
+            constexpr int ROW_H   = 17;
+            constexpr int LOG_PAD = 6;
+            int lx = TECH_W + MAP_PX + SIDEBAR;
+            DrawRectangle(lx, 0, LOG_W, H, { 18, 18, 18, 255 });
+            DrawLine(lx, 0, lx, H, PANEL_LINE);
+            DrawText("ACTION LOG", lx + 8, 8, 14, GRAY);
+            DrawLine(lx + 4, 28, lx + LOG_W - 4, 28, { 50, 50, 50, 255 });
+
+            int visible_rows = (H - 28 - LOG_PAD) / ROW_H;
+            int total_entries = (int)action_log.size();
+
+            // Auto-scroll to bottom unless user has scrolled up
+            int max_scroll = std::max(0, total_entries - visible_rows);
+            if (log_scroll > max_scroll) log_scroll = max_scroll;
+
+            // Mouse wheel scroll when over panel
+            Rectangle panel_rect = { (float)lx, 28, (float)LOG_W, (float)(H - 28) };
+            if (CheckCollisionPointRec(mouse, panel_rect)) {
+                log_scroll -= (int)GetMouseWheelMove();
+                if (log_scroll < 0) log_scroll = 0;
+                if (log_scroll > max_scroll) log_scroll = max_scroll;
+            }
+
+            BeginScissorMode(lx, 28 + LOG_PAD, LOG_W, H - 28 - LOG_PAD);
+            for (int i = 0; i < visible_rows; i++) {
+                int entry_idx = log_scroll + i;
+                if (entry_idx >= total_entries) break;
+                const std::string& entry = action_log[entry_idx];
+                int ey = 28 + LOG_PAD + i * ROW_H;
+                if (i % 2 == 0)
+                    DrawRectangle(lx + 2, ey, LOG_W - 4, ROW_H - 1, { 25, 25, 25, 255 });
+                // Color by player
+                Color tc = (entry.size() > 1 && entry[1] == '0') ? COL_P0 : COL_P1;
+                DrawText(entry.c_str(), lx + 6, ey + 2, 11, tc);
+            }
+            EndScissorMode();
+
+            // Scrollbar
+            if (total_entries > visible_rows) {
+                float bar_h = (float)(H - 28) * visible_rows / total_entries;
+                float bar_y = 28 + (float)(H - 28) * log_scroll / total_entries;
+                DrawRectangle(lx + LOG_W - 4, (int)bar_y, 3, (int)bar_h, { 90, 90, 90, 255 });
+            }
         }
 
         // Scrubber bar (drawn on top of everything, replay mode only)
