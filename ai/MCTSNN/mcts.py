@@ -5,7 +5,7 @@ import torch
 
 from encoder import encode
 from model import ACTION_SIZE
-from action_codec import legal_action_indices, index_to_action
+from action_codec import legal_action_indices, index_to_action, action_to_index
 
 END_TURN_ACTION = ACTION_SIZE - 1  # 7994
 
@@ -17,21 +17,23 @@ BATCH_SIZE = 8  # leaves evaluated per wave
 
 
 class Node:
-    __slots__ = ('p', 'w', 'n', 'children', 'is_expanded')
+    __slots__ = ('p', 'w', 'n', 'children', 'actions', 'is_expanded')
 
     def __init__(self):
         self.p: dict[int, float] = {}
         self.w: dict[int, float] = {}
         self.n: dict[int, int] = {}
         self.children: dict[int, 'Node'] = {}
+        self.actions:  dict[int, object] = {}  # index → engine Action
         self.is_expanded = False
 
-    def init_priors(self, policy: np.ndarray, legal: list[int]):
+    def init_priors(self, policy: np.ndarray, legal: list[int], action_map: dict):
         for a in legal:
             self.p[a] = float(policy[a])
             self.w[a] = 0.0
             self.n[a] = 0
             self.children[a] = Node()
+            self.actions[a]  = action_map[a]
         self.is_expanded = True
 
     def select_action(self) -> int:
@@ -127,8 +129,9 @@ class MCTS:
             node.w[a] -= VIRTUAL_LOSS
             node.n[a] += 1
             path.append((node, a))
+            action = node.actions[a]
             node = node.children[a]
-            state = state.apply_action(index_to_action(a, state))
+            state = state.apply_action(action)
 
         return path, node, state
 
@@ -177,30 +180,43 @@ class MCTS:
 
     def _expand_nodes(self, states: list, nodes: list[Node]) -> list[float]:
         """Batch NN call: populate priors, return value estimates."""
-        spatial_t, global_t, legals, mask = self._encode_batch(states)
+        spatial_t, global_t, legals, action_maps, mask = self._encode_batch(states)
         with torch.no_grad():
             policies, vals = self.model(spatial_t, global_t, mask)
         policies_np = policies.cpu().numpy()
         vals_np = vals.squeeze(-1).cpu().numpy()
         for i, node in enumerate(nodes):
             if not node.is_expanded:
-                node.init_priors(policies_np[i], legals[i])
+                node.init_priors(policies_np[i], legals[i], action_maps[i])
         return [self._blend(float(vals_np[i]), states[i]) for i in range(len(states))]
 
     def _value_only(self, states: list) -> list[float]:
         """Batch NN call: value head only, no expansion."""
-        spatial_t, global_t, _, _ = self._encode_batch(states)
+        spatial_t, global_t, _, _, _ = self._encode_batch(states)
         with torch.no_grad():
             _, vals = self.model(spatial_t, global_t)
         return [self._blend(float(v), s) for v, s in zip(vals.squeeze(-1).cpu().numpy(), states)]
 
     def _encode_batch(self, states: list):
-        spatials, globals_, legals = [], [], []
+        spatials, globals_, legals, action_maps = [], [], [], []
         for state in states:
             spatial, global_vec = encode(state)
             spatials.append(spatial)
             globals_.append(global_vec)
-            legals.append(legal_action_indices(state))
+            # Build index→Action map once per state expansion
+            amap = {}
+            idxs = []
+            for action in state.legal_actions():
+                if not action.affordable:
+                    continue
+                try:
+                    idx = action_to_index(action, state)
+                    amap[idx] = action
+                    idxs.append(idx)
+                except ValueError:
+                    pass
+            legals.append(idxs)
+            action_maps.append(amap)
 
         spatial_t = torch.tensor(np.stack(spatials)).to(self.device)
         global_t  = torch.tensor(np.stack(globals_)).to(self.device)
@@ -210,7 +226,7 @@ class MCTS:
         for i, legal in enumerate(legals):
             mask[i, legal] = True
 
-        return spatial_t, global_t, legals, mask
+        return spatial_t, global_t, legals, action_maps, mask
 
     def _add_dirichlet_noise(self, root: Node):
         actions = list(root.p.keys())
