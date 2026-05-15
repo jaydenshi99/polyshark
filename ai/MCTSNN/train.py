@@ -26,6 +26,7 @@ BATCH_SIZE         = 256
 LR                 = 1e-3
 N_SIMULATIONS      = 50
 TEMPERATURE_CUTOFF = 6    # use temp=1.0 for first 6 turns, then greedy
+HEURISTIC_DECAY_GENS = 100  # heuristic weight decays from 1.0 → 0.0 over this many gens
 
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "../../checkpoints")
 REPLAYS_DIR    = os.path.join(os.path.dirname(__file__), "../../replays")
@@ -62,15 +63,12 @@ def heuristic_value(state, player):
 
     my_techs = bin(state.get_techs(player)).count('1')
     op_techs = bin(state.get_techs(opp)).count('1')
-    my_stars = state.get_stars(player)
-    op_stars = state.get_stars(opp)
 
     score = (
         2.0 * (my_income - op_income) +
         1.5 * (my_cities - op_cities) +
         1.0 * (my_levels - op_levels) +
         0.8 * (my_techs  - op_techs)  +
-        0.3 * (my_stars  - op_stars)  +
         0.2 * (my_units  - op_units)
     )
     return math.tanh(score * 0.3)
@@ -231,7 +229,7 @@ def train(n_generations=200):
     model     = PolysharkNet().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     buffer    = ReplayBuffer()
-    mcts      = MCTS(model, device=device)
+    mcts      = MCTS(model, device=device, heuristic_fn=heuristic_value, heuristic_weight=1.0)
 
     start_gen = load_latest_checkpoint(model, buffer)
 
@@ -240,10 +238,13 @@ def train(n_generations=200):
     log_exists = os.path.exists(log_path)
     log_file = open(log_path, "a")
     if not log_exists:
-        log_file.write("gen,terminals,positions,buffer,policy_loss,value_loss\n")
+        log_file.write("gen,terminals,positions,buffer,policy_loss,value_loss,heuristic_weight\n")
         log_file.flush()
 
     for gen in range(start_gen, start_gen + n_generations):
+        hw = max(0.0, 1.0 - gen / HEURISTIC_DECAY_GENS)
+        mcts.heuristic_weight = hw
+
         # Self-play phase
         terminals = 0
         positions = 0
@@ -270,13 +271,13 @@ def train(n_generations=200):
         print(
             f"Gen {gen+1:4d} | "
             f"terminals={terminals}/{GAMES_PER_GEN} positions={positions} buf={len(buffer)} | "
-            f"policy_loss={avg_pl:.4f} value_loss={avg_vl:.4f}"
+            f"policy_loss={avg_pl:.4f} value_loss={avg_vl:.4f} heuristic_w={hw:.2f}"
         )
 
         path = save_checkpoint(model, buffer, gen + 1)
         print(f"  Saved {path}")
 
-        log_file.write(f"{gen+1},{terminals},{positions},{len(buffer)},{avg_pl:.6f},{avg_vl:.6f}\n")
+        log_file.write(f"{gen+1},{terminals},{positions},{len(buffer)},{avg_pl:.6f},{avg_vl:.6f},{hw:.4f}\n")
         log_file.flush()
 
     log_file.close()

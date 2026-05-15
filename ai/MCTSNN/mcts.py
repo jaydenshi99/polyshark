@@ -49,9 +49,11 @@ class Node:
 
 
 class MCTS:
-    def __init__(self, model, device: str = 'cpu'):
-        self.model = model
-        self.device = device
+    def __init__(self, model, device: str = 'cpu', heuristic_fn=None, heuristic_weight: float = 0.0):
+        self.model          = model
+        self.device         = device
+        self.heuristic_fn   = heuristic_fn
+        self.heuristic_weight = heuristic_weight
         self.model.eval()
 
     def search(self, root_state, n_simulations: int = 800, add_noise: bool = False) -> Node:
@@ -166,6 +168,12 @@ class MCTS:
 
         return values
 
+    def _blend(self, nn_val: float, state) -> float:
+        if self.heuristic_fn is None or self.heuristic_weight <= 0.0:
+            return nn_val
+        h = self.heuristic_fn(state, state.current_player())
+        return (1.0 - self.heuristic_weight) * nn_val + self.heuristic_weight * h
+
     def _expand_nodes(self, states: list, nodes: list[Node]) -> list[float]:
         """Batch NN call: populate priors, return value estimates."""
         spatial_t, global_t, legals, mask = self._encode_batch(states)
@@ -176,14 +184,14 @@ class MCTS:
         for i, node in enumerate(nodes):
             if not node.is_expanded:
                 node.init_priors(policies_np[i], legals[i])
-        return [float(v) for v in vals_np]
+        return [self._blend(float(vals_np[i]), states[i]) for i in range(len(states))]
 
     def _value_only(self, states: list) -> list[float]:
         """Batch NN call: value head only, no expansion."""
         spatial_t, global_t, _, _ = self._encode_batch(states)
         with torch.no_grad():
             _, vals = self.model(spatial_t, global_t)
-        return [float(v) for v in vals.squeeze(-1).cpu().numpy()]
+        return [self._blend(float(v), s) for v, s in zip(vals.squeeze(-1).cpu().numpy(), states)]
 
     def _encode_batch(self, states: list):
         spatials, globals_, legals = [], [], []
