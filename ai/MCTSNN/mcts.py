@@ -112,7 +112,7 @@ class MCTS:
         state = root_state
         path: list[tuple[Node, int]] = []
 
-        while node.is_expanded and not node.is_terminal:
+        while node.is_expanded:
             a = node.select_action()
             node.w[a] -= VIRTUAL_LOSS
             node.n[a] += 1
