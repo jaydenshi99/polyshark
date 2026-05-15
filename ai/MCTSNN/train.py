@@ -20,7 +20,7 @@ from log_utils import format_action, log_state
 # --- Hyperparameters ---
 TURN_LIMIT         = 10
 GAMES_PER_GEN      = 20
-TRAIN_STEPS        = 500
+TRAIN_STEPS        = 50
 BUFFER_SIZE        = 50_000
 BATCH_SIZE         = 256
 LR                 = 1e-3
@@ -213,7 +213,7 @@ def load_latest_checkpoint(model, buffer):
 # --- Main loop ---
 
 def train(n_generations=200):
-    device    = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device    = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
     print(f"Device: {device}")
 
     model     = PolysharkNet().to(device)

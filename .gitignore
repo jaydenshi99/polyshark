@@ -1,5 +1,6 @@
 engine/build/
 build/
 replays/
+checkpoints/
 __pycache__/
 *.pyc
