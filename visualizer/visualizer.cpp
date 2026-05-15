@@ -647,9 +647,24 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc - 1; i++) {
         if (std::string(argv[i]) == "--replay") {
             replay_mode = true;
-            GameState rs = make_game();
-            replay_states.push_back(rs);
             std::ifstream f(argv[i + 1]);
+            GameState rs;
+            std::string first;
+            f >> first;
+            if (first == "seed") {
+                uint64_t seed; f >> seed;
+                MapGenParams p = MapGen::drylands_defaults();
+                p.seed = seed;
+                rs = MapGen(p).generate().state;
+            } else {
+                rs = make_game();
+                // first token was already consumed — push it back as action fields
+                int t = std::stoi(first), fr, to, pa;
+                f >> fr >> to >> pa;
+                replay_states.push_back(rs);
+                replay_states.push_back(rs = rs.apply_action({(ActionType)t, fr, to, pa, true}));
+            }
+            replay_states.push_back(rs);
             int t, fr, to, pa;
             while (f >> t >> fr >> to >> pa)
                 replay_states.push_back(rs = rs.apply_action({(ActionType)t, fr, to, pa, true}));
