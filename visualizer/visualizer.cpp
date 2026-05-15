@@ -648,6 +648,7 @@ int main(int argc, char** argv) {
         if (std::string(argv[i]) == "--replay") {
             replay_mode = true;
             std::ifstream f(argv[i + 1]);
+            if (!f) { fprintf(stderr, "Cannot open replay: %s\n", argv[i + 1]); return 1; }
             GameState rs;
             std::string first;
             f >> first;
@@ -1068,8 +1069,22 @@ int main(int argc, char** argv) {
                 }
             };
 
-            if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_SPACE)) jump_to(replay_step + 1);
-            if (IsKeyPressed(KEY_LEFT))                              jump_to(replay_step - 1);
+            static float key_timer = 0.0f;
+            static int   key_held  = 0; // -1 left, 0 none, 1 right
+            constexpr float HOLD_DELAY  = 0.3f;
+            constexpr float HOLD_REPEAT = 0.07f;
+
+            if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_SPACE)) { jump_to(replay_step + 1); key_held = 1;  key_timer = 0.0f; }
+            else if (IsKeyPressed(KEY_LEFT))                         { jump_to(replay_step - 1); key_held = -1; key_timer = 0.0f; }
+            else if (key_held != 0) {
+                bool still = (key_held == 1 && (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_SPACE)))
+                           || (key_held == -1 && IsKeyDown(KEY_LEFT));
+                if (still) {
+                    key_timer += GetFrameTime();
+                    float threshold = (key_timer < HOLD_DELAY + HOLD_REPEAT) ? HOLD_DELAY : HOLD_REPEAT;
+                    if (key_timer >= threshold) { jump_to(replay_step + key_held); key_timer -= threshold; }
+                } else { key_held = 0; key_timer = 0.0f; }
+            }
         }
 
         BeginScissorMode(SB, SB_CONTENT_TOP, SIDEBAR, SB_CONTENT_BOT - SB_CONTENT_TOP);
