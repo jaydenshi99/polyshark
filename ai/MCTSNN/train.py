@@ -185,6 +185,19 @@ def train_step(model, optimizer, buffer, device):
     return policy_loss.item(), value_loss.item()
 
 
+def compute_test_loss(model, examples, device):
+    if not examples:
+        return None, None
+    spatials  = torch.tensor(np.stack([e[0] for e in examples])).to(device)
+    globals_  = torch.tensor(np.stack([e[1] for e in examples])).to(device)
+    policies  = torch.tensor(np.stack([e[2] for e in examples])).to(device)
+    outcomes  = torch.tensor(np.array([e[3] for e in examples], dtype=np.float32)).to(device)
+    with torch.no_grad():
+        policy, value = model(spatials, globals_)
+        pl = -torch.sum(policies * torch.log(policy + 1e-8), dim=-1).mean()
+        vl = F.mse_loss(value.squeeze(-1), outcomes)
+    return pl.item(), vl.item()
+
 
 # --- Checkpointing ---
 
@@ -225,7 +238,7 @@ def train(n_generations=200):
     print(f"Device: {device}")
 
     model     = PolysharkNet().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     buffer    = ReplayBuffer()
     mcts      = MCTS(model, device=device, heuristic_fn=heuristic_value, heuristic_weight=1.0)
 
@@ -236,7 +249,7 @@ def train(n_generations=200):
     log_exists = os.path.exists(log_path)
     log_file = open(log_path, "a")
     if not log_exists:
-        log_file.write("gen,terminals,positions,buffer,policy_loss,value_loss,heuristic_weight\n")
+        log_file.write("gen,terminals,positions,buffer,train_policy_loss,train_value_loss,test_policy_loss,test_value_loss,heuristic_weight\n")
         log_file.flush()
 
     for gen in range(start_gen, start_gen + n_generations):
@@ -244,14 +257,18 @@ def train(n_generations=200):
         mcts.heuristic_weight = hw
 
         # Self-play phase
-        terminals = 0
-        positions = 0
+        terminals    = 0
+        new_examples = []
         for game_idx in range(GAMES_PER_GEN):
             examples, terminal = run_game(mcts, gen=gen + 1, game_idx=game_idx)
-            for example in examples:
-                buffer.add(*example)
-            positions += len(examples)
+            new_examples.extend(examples)
             terminals += int(terminal)
+
+        # Test loss on fresh positions before they enter the buffer
+        test_pl, test_vl = compute_test_loss(model, new_examples, device)
+        positions = len(new_examples)
+        for example in new_examples:
+            buffer.add(*example)
 
         # Training phase
         total_ploss = total_vloss = 0.0
@@ -269,13 +286,15 @@ def train(n_generations=200):
         print(
             f"Gen {gen+1:4d} | "
             f"terminals={terminals}/{GAMES_PER_GEN} positions={positions} buf={len(buffer)} | "
-            f"policy_loss={avg_pl:.4f} value_loss={avg_vl:.4f} heuristic_w={hw:.2f}"
+            f"train_pl={avg_pl:.4f} train_vl={avg_vl:.4f} | "
+            f"test_pl={test_pl:.4f} test_vl={test_vl:.4f} | "
+            f"heuristic_w={hw:.2f}"
         )
 
         path = save_checkpoint(model, buffer, gen + 1)
         print(f"  Saved {path}")
 
-        log_file.write(f"{gen+1},{terminals},{positions},{len(buffer)},{avg_pl:.6f},{avg_vl:.6f},{hw:.4f}\n")
+        log_file.write(f"{gen+1},{terminals},{positions},{len(buffer)},{avg_pl:.6f},{avg_vl:.6f},{test_pl:.6f},{test_vl:.6f},{hw:.4f}\n")
         log_file.flush()
 
     log_file.close()
