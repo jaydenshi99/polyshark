@@ -3,6 +3,7 @@
 #include <cstdint>
 
 enum class TerrainType {
+    None,
     Field,
     Forest,
     Mountain,
@@ -23,6 +24,7 @@ enum class UnitType {
     Warrior,
     Archer,
     Rider,
+    Defender,
     Count,
 };
 
@@ -60,5 +62,6 @@ enum class TechType {
     Climbing,     // allows units to enter mountain tiles; unlocks Mining
     Archery,      // requires Hunting
     Mining,       // unlocks Metal harvesting; requires Climbing
+    Strategy,
     Count,
 };

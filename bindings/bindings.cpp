@@ -3,7 +3,6 @@
 
 #include "game_state.h"
 #include "unit_def.h"
-#include "init.h"
 #include "mapgen.h"
 
 namespace py = pybind11;
@@ -141,7 +140,8 @@ PYBIND11_MODULE(polyshark, m) {
         .def("is_visible",     &GameState::is_visible)
         .def("is_explored",    &GameState::is_explored)
         .def("get_stars",      &GameState::get_stars)
-        .def("get_techs",      &GameState::get_techs);
+        .def("get_techs",      &GameState::get_techs)
+        .def("techs_mask",     &GameState::techs_mask);
 
     // Base movement per unit type, indexed by UnitType int value.
     // Exposed so the encoder can normalise move_points without hardcoding.
@@ -149,7 +149,6 @@ PYBIND11_MODULE(polyshark, m) {
         return unit_def(static_cast<UnitType>(unit_type)).movement;
     });
 
-    m.def("make_game", &make_game);
     m.def("make_random_game", [](uint64_t seed) {
         MapGenParams p = MapGen::drylands_defaults();
         p.seed = seed;

@@ -1,10 +1,14 @@
 #pragma once
 
 #include "types.h"
+#include "unit_def.h"
 
 class Unit {
 public:
     UnitType type()            const { return _type; }
+    bool     has_ability(uint32_t ability) const {
+        return unit_def(_type).abilities & ability;
+    }
     int      owner()           const { return _owner; }
     int      tile_index()      const { return _tile_index; }
     int      hp()              const { return _hp; }
@@ -13,9 +17,10 @@ public:
     bool     has_attacked()    const { return _has_attacked; }
     int      kills()           const { return _kills; }
     bool     promotion_ready() const { return _promotion_ready; }
+    int      city_id()         const { return _city_id; }
+    void     set_city_id(int city_id) { _city_id = city_id; }
 
     bool is_alive() const { return _hp > 0; }
-
     void take_damage(int amount);
     void heal(int amount);         // recovers HP, capped at max_hp
     void spend_movement(int amount);
@@ -23,6 +28,8 @@ public:
     void add_kill();          // increments kill count, sets promotion_ready at 3
     void accept_promotion();  // +5 max hp, full heal, clears promotion_ready
 
+    // Helper for actions that fully consume the unit's turn (e.g. CaptureCity).
+    void end_turn_actions() { _move_points = 0; _has_attacked = true; }
     // Resets turn state — caller provides base movement from UnitDef
     void reset_turn(int base_movement);
 
@@ -42,6 +49,7 @@ private:
     int      _max_hp          = 0;
     int      _move_points     = 0;
     int      _kills           = 0;
+    int      _city_id         = -1;  // city that trained this unit; 
     bool     _has_attacked    = false;
     bool     _promotion_ready = false;
 };

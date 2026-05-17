@@ -23,7 +23,7 @@ def save_replay(actions, path):
 
 
 def run_game():
-    state = polyshark.make_game()
+    state = polyshark.make_random_game()
     history = []
 
     while not state.is_terminal():

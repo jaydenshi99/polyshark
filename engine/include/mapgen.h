@@ -1,5 +1,6 @@
 #pragma once
 #include "game_state.h"
+#include "config.h"
 #include <cstdint>
 
 enum class BiomeType {
@@ -23,12 +24,11 @@ struct TribeRates {
 
 struct MapGenParams {
     BiomeType biome            = BiomeType::Drylands;
-    int      map_size          = MAP_SIZE;  // must be <= MAX_MAP_SIZE
-    uint64_t seed              = 0;
+    int      map_size          = cfg::map::DEFAULT_SIZE;  // must be <= MAX_MAP_SIZE
+    uint64_t seed              = cfg::map::DEFAULT_SEED;
     // Bit i set → villages cannot be placed at edge-distance i.
-    // Drylands: exclude 0,1,3 → distances 2,4,5 are valid (rows 2,4,5,6,8 on 11x11).
-    uint8_t  village_edge_exclusion = 0b00001011; // bits 0,1,3
-    int      village_min_spacing    = 3;           // 2 tiles between = Chebyshev 3
+    uint8_t  village_edge_exclusion = cfg::map::VILLAGE_EDGE_EXCLUDE;
+    int      village_min_spacing    = cfg::map::VILLAGE_MIN_SPACING;
     TribeRates tribe_rates[2];                     // [0] = P0 zone, [1] = P1 zone
 
     static MapGenParams for_biome(BiomeType b, int sz = MAP_SIZE);
@@ -60,5 +60,6 @@ private:
     void fill_climate    (int climate[], int cap0, int cap1);
     void place_villages  (GameState& s, int cap0, int cap1);
     void reroll_inner    (GameState& s, const int climate[], int cap0, int cap1);
+    void clear_far_resources(GameState& s, int cap0, int cap1);
     void init_players    (GameState& s, int cap0, int cap1);
 };

@@ -25,6 +25,8 @@ static const UnitDef UNIT_DEFS[] = {
     // Rider
     {             10,  2,  1,  2,  1,  3,   ABILITY_ESCAPE  | ABILITY_FORTIFY | ABILITY_DASH,
                                                                                 TechType::Riding  },
+    {             15,  1,  3,  1,  1,  3,   ABILITY_FORTIFY,
+                                                                                TechType::Strategy  },
 };
 
 inline const UnitDef& unit_def(UnitType t) {

@@ -1,4 +1,5 @@
 #include "unit.h"
+#include "config.h"
 
 void Unit::take_damage(int amount) {
     _hp -= amount;
@@ -21,12 +22,12 @@ void Unit::mark_attacked() {
 
 void Unit::add_kill() {
     _kills++;
-    if (_kills >= 3)
+    if (_kills >= cfg::combat::KILLS_FOR_PROMOTION)
         _promotion_ready = true;
 }
 
 void Unit::accept_promotion() {
-    _max_hp += 5;
+    _max_hp += cfg::combat::PROMOTION_HP_BONUS;
     _hp = _max_hp;
     _promotion_ready = false;
 }

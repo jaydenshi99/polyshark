@@ -12,8 +12,8 @@ MapGenParams MapGenParams::for_biome(BiomeType b, int sz) {
     switch (b) {
         case BiomeType::Drylands:
         default:
-            p.village_edge_exclusion = 0b00001011;
-            p.village_min_spacing    = 3;
+            p.village_edge_exclusion = cfg::map::VILLAGE_EDGE_EXCLUDE;
+            p.village_min_spacing    = cfg::map::VILLAGE_MIN_SPACING;
 
             // hardcoded for imperius tribe.
             for (int i = 0; i < 2; i++) {
@@ -90,6 +90,7 @@ MapGenResult MapGen::generate() {
     place_terrain(s, result.climate, cap0, cap1);
     place_villages(s, cap0, cap1);
     reroll_inner(s, result.climate, cap0, cap1);
+    clear_far_resources(s, cap0, cap1);
 
     // TODO: ruins
 
@@ -248,6 +249,41 @@ void MapGen::place_villages(GameState& s, int cap0, int cap1) {
     }
 }
 
+// Resources (Animal, Fruit, Crop, Metal) only spawn within Chebyshev distance 2
+// of a city — i.e., a capital or a village. Clear them anywhere else.
+void MapGen::clear_far_resources(GameState& s, int cap0, int cap1) {
+    const int sz   = _p.map_size;
+    const int mtsz = sz * sz;
+
+    bool near_city[MAX_MAP_TILES] = {};
+    for (int i = 0; i < mtsz; i++) {
+        bool is_city = (i == cap0 || i == cap1)
+                    || s.tile_at(i).terrain() == TerrainType::Village;
+        if (!is_city) continue;
+        int cx, cy; to_coords(i, cx, cy, sz);
+        for (int dy = -2; dy <= 2; dy++)
+            for (int dx = -2; dx <= 2; dx++) {
+                int nx = cx + dx, ny = cy + dy;
+                if (!in_bounds(nx, ny, sz)) continue;
+                near_city[to_index(nx, ny, sz)] = true;
+            }
+    }
+
+    for (int i = 0; i < mtsz; i++)
+        if (!near_city[i])
+            s.tile_at(i).set_resource(ResourceType::None);
+
+    // Lighthouses (map corners) never hold a resource, even if within
+    // 2 tiles of a city.
+    int corners[4] = {
+        to_index(0,      0,      sz),
+        to_index(sz - 1, 0,      sz),
+        to_index(0,      sz - 1, sz),
+        to_index(sz - 1, sz - 1, sz),
+    };
+    for (int c : corners) s.tile_at(c).set_resource(ResourceType::None);
+}
+
 void MapGen::reroll_inner(GameState& s, const int climate[], int cap0, int cap1) {
     const int sz   = _p.map_size;
     const int mtsz = sz * sz;
@@ -274,22 +310,28 @@ void MapGen::reroll_inner(GameState& s, const int climate[], int cap0, int cap1)
 
 void MapGen::init_players(GameState& s, int cap0, int cap1) {
     const int sz = _p.map_size;
-    s.spawn_city(cap0, 0, true);
-    s.spawn_city(cap1, 1, true);
-    s.spawn_unit(UnitType::Warrior, 0, cap0);
-    s.spawn_unit(UnitType::Warrior, 1, cap1);
+    int city0 = s.spawn_city(cap0, 0, true);
+    int city1 = s.spawn_city(cap1, 1, true);
+    s.spawn_unit(UnitType::Warrior, 0, cap0, city0);
+    s.spawn_unit(UnitType::Warrior, 1, cap1, city1);
     s.set_stars(0, 5);
     s.set_stars(1, 5);
     s.research_tech(0, TechType::Origin);
     s.research_tech(1, TechType::Origin);
 
     int caps[2] = {cap0, cap1};
+    auto is_corner = [&](int x, int y) {
+        return (x == 0 || x == sz - 1) && (y == 0 || y == sz - 1);
+    };
     for (int p = 0; p < 2; p++) {
         int cx, cy;
         to_coords(caps[p], cx, cy, sz);
         for (int dy = -2; dy <= 2; dy++)
-            for (int dx = -2; dx <= 2; dx++)
-                if (in_bounds(cx + dx, cy + dy, sz))
-                    s.set_explored(p, to_index(cx + dx, cy + dy, sz));
+            for (int dx = -2; dx <= 2; dx++) {
+                int tx = cx + dx, ty = cy + dy;
+                if (!in_bounds(tx, ty, sz)) continue;
+                if (is_corner(tx, ty)) continue;  // lighthouses stay fogged
+                s.set_explored(p, to_index(tx, ty, sz));
+            }
     }
 }

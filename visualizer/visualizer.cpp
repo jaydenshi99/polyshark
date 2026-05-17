@@ -1,13 +1,15 @@
 #include "raylib.h"
-#include "init.h"
+#include "rlgl.h"
 #include "mapgen.h"
 #include "unit_def.h"
 #include "resource_def.h"
 #include "building_def.h"
 #include "tech_def.h"
 #include "game_state.h"
+#include "logger.h"
 #include <utility>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <vector>
@@ -44,7 +46,7 @@ static std::string format_action_str(const Action& a, int player, int turn, int 
     auto coords = [sz](int idx) {
         char buf[12]; snprintf(buf, sizeof(buf), "(%d,%d)", idx / sz, idx % sz); return std::string(buf);
     };
-    static const char* unit_names[] = {"?","Warrior","Archer","Rider"};
+    static const char* unit_names[] = {"?","Warrior","Archer","Rider","Defender"};
     static const char* tech_names[] = {"Origin","Hunting","Org","Farming","Riding","Climb","Archery","Mining"};
     char prefix[24]; snprintf(prefix, sizeof(prefix), "P%d T%d: ", player, turn);
     std::string p = prefix;
@@ -125,7 +127,7 @@ static Color terrain_color(TerrainType t) {
 }
 
 
-static void action_cost(const Action& a, char* buf, int size) {
+static void action_cost(const Action& a, char* buf, int size, int owned_cities) {
     switch (a.type) {
         case ActionType::TrainUnit:
             snprintf(buf, size, "%d*", unit_def(static_cast<UnitType>(a.param)).cost);
@@ -136,7 +138,7 @@ static void action_cost(const Action& a, char* buf, int size) {
             break;
         case ActionType::ResearchTech:
             snprintf(buf, size, "%d*",
-                tech_def(static_cast<TechType>(a.param)).cost);
+                tech_cost(static_cast<TechType>(a.param), owned_cities));
             break;
         default:
             buf[0] = '\0';
@@ -180,7 +182,7 @@ static void action_label(const Action& a, char* buf, int size) {
     int fx, fy, tx, ty;
     switch (a.type) {
         case ActionType::EndTurn:
-            snprintf(buf, size, "End Turn");
+            snprintf(buf, size, "End Turn (SPACE)");
             break;
         case ActionType::Move:
             to_coords(a.from, fx, fy); to_coords(a.to, tx, ty);
@@ -191,7 +193,7 @@ static void action_label(const Action& a, char* buf, int size) {
             snprintf(buf, size, "(%d,%d) -> (%d,%d)", fx, fy, tx, ty);
             break;
         case ActionType::TrainUnit: {
-            static const char* unit_names[] = { "?", "Warrior", "Archer", "Rider" };
+            static const char* unit_names[] = { "?", "Warrior", "Archer", "Rider", "Defender" };
             const char* uname = (a.param > 0 && a.param < 4) ? unit_names[a.param] : "?";
             snprintf(buf, size, "%s", uname);
             break;
@@ -423,6 +425,41 @@ static void draw_metal_icon(int px, int py) {
 // ---------------------------------------------------------------------------
 // Building / city decoration icons
 // ---------------------------------------------------------------------------
+static void draw_lighthouse_outline(int px, int py) {
+    int cx = px + TILE / 2;
+    int top_y = py + 6;
+    // Tapered tower body (trapezoid) — white fill with a red band across the middle
+    Vector2 tl = { (float)(cx - 4), (float)(top_y + 6) };
+    Vector2 tr = { (float)(cx + 4), (float)(top_y + 6) };
+    Vector2 bl = { (float)(cx - 7), (float)(top_y + TILE - 22) };
+    Vector2 br = { (float)(cx + 7), (float)(top_y + TILE - 22) };
+    Color   tower_white = { 245, 245, 245, 255 };
+    Color   band_red    = { 200, 40, 40, 255 };
+    DrawTriangle(tl, bl, br, tower_white);
+    DrawTriangle(tl, br, tr, tower_white);
+    int band_y = top_y + 6 + (TILE - 28) / 2 - 1;
+    DrawRectangle(cx - 6, band_y, 12, 3, band_red);
+    Vector2 body[] = { tl, tr, br, bl, tl };
+    DrawLineStrip(body, 5, BLACK);
+    // Lantern cap on top
+    DrawLine(cx - 5, top_y + 6, cx + 5, top_y + 6, BLACK);
+    DrawLine(cx - 5, top_y + 6, cx - 5, top_y + 2, BLACK);
+    DrawLine(cx + 5, top_y + 6, cx + 5, top_y + 2, BLACK);
+    DrawLine(cx - 5, top_y + 2, cx + 5, top_y + 2, BLACK);
+    // Roof — triangle
+    DrawLine(cx - 6, top_y + 2, cx + 6, top_y + 2, BLACK);
+    DrawLine(cx - 6, top_y + 2, cx,     top_y - 3, BLACK);
+    DrawLine(cx + 6, top_y + 2, cx,     top_y - 3, BLACK);
+    // Door at base
+    int door_y = top_y + TILE - 22;
+    DrawLine(cx - 2, door_y, cx - 2, door_y - 5, BLACK);
+    DrawLine(cx + 2, door_y, cx + 2, door_y - 5, BLACK);
+    DrawLine(cx - 2, door_y - 5, cx + 2, door_y - 5, BLACK);
+    // Light beams
+    DrawLine(cx - 8, top_y + 4, cx - 5, top_y + 4, { 255, 220, 60, 220 });
+    DrawLine(cx + 5, top_y + 4, cx + 8, top_y + 4, { 255, 220, 60, 220 });
+}
+
 static void draw_castle_icon(int px, int py) {
     Color stone = { 170, 160, 145, 255 };
     Color dark  = {  60,  55,  48, 255 };
@@ -525,9 +562,9 @@ static void draw_workshop_icon(int px, int py) {
     DrawTriangleLines(wbl, wbr, wt, BLACK);
 }
 
-static void draw_pop_bar(int px, int py, int pop, int needed, int pending_pop) {
+static void draw_pop_bar(int px, int py, int pop, int needed, int pending_pop, int units_owned) {
     int bx = px + 2, by = py + TILE - 9, bw = TILE - 5, bh = 6;
-    DrawRectangle(bx, by, bw, bh, { 20, 20, 20, 200 });
+    DrawRectangle(bx, by, bw, bh, { 195, 175, 130, 255 });
     int filled = (bw * pop) / needed;
     if (filled > 0)
         DrawRectangle(bx, by, filled, bh, { 255, 210, 60, 230 });
@@ -540,6 +577,16 @@ static void draw_pop_bar(int px, int py, int pop, int needed, int pending_pop) {
     for (int seg = 1; seg < needed; seg++) {
         int lx = bx + (bw * seg) / needed;
         DrawLine(lx, by, lx, by + bh, { 0, 0, 0, 180 });
+    }
+    // Used-population dots: one per alive unit owned by this city,
+    // centered in successive segments from the left
+    int dots = units_owned < needed ? units_owned : needed;
+    for (int i = 0; i < dots; i++) {
+        int seg_lx = bx + (bw * i)     / needed;
+        int seg_rx = bx + (bw * (i+1)) / needed;
+        int cx = (seg_lx + seg_rx) / 2;
+        int cy = by + bh / 2;
+        DrawCircle(cx, cy, 1.4f, BLACK);
     }
     DrawRectangleLines(bx, by, bw, bh, { 80, 80, 80, 200 });
 }
@@ -655,6 +702,7 @@ static void draw_tech_tree(uint32_t owned_techs, int player_idx,
 }
 
 int main(int argc, char** argv) {
+    Logger::debugEnabled = true;
     uint64_t gen_seed = 1;
     int climate[MAX_MAP_TILES] = {};
     auto new_map = [&]() {
@@ -669,9 +717,20 @@ int main(int argc, char** argv) {
     TILE = MAP_CANVAS / initial.map_size();
     GameState s = initial;
 
-    // Action log (replay: all actions; live: accumulated)
+    // Action log (replay: all actions; live: accumulated).
+    // Parallel `_debug` vector marks entries that came from Logger::print
+    // — those render in grey instead of the player colour.
     std::vector<std::string> action_log;
+    std::vector<bool>        action_log_debug;
+    int last_logger_count = 0;
+    // Trails left by Explorer upgrades — each entry is the sequence of tile
+    // indices the explorer walked. Visualizer-only state.
+    std::vector<std::vector<int>> explorer_trails;
     int log_scroll = 0;
+
+    auto clear_visuals = [&]() {
+        explorer_trails.clear();
+    };
 
     // Replay mode: --replay <path>
     bool replay_mode = false;
@@ -692,7 +751,7 @@ int main(int argc, char** argv) {
                 p.seed = seed;
                 rs = MapGen(p).generate().state;
             } else {
-                rs = make_game();
+                rs = MapGen(MapGen::drylands_defaults()).generate().state;
                 // first token was already consumed — push it back as action fields
                 int t = std::stoi(first), fr, to, pa;
                 f >> fr >> to >> pa;
@@ -714,7 +773,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    ViewMode  view = ViewMode::Omni;
+    ViewMode  view = ViewMode::Current;
 
     Colourer colourers[2];
 
@@ -816,6 +875,9 @@ int main(int argc, char** argv) {
                 case ActionType::UpgradeCity:
                     highlight_tiles[0] = s.get_city(ha.from).tile_index();
                     break;
+                case ActionType::TrainUnit:
+                    highlight_tiles[0] = ha.from;  // city tile
+                    break;
                 case ActionType::Move:
                 case ActionType::Attack:
                     highlight_tiles[0] = ha.from;
@@ -839,6 +901,7 @@ int main(int argc, char** argv) {
                 t = t < 0 ? 0 : t > 1 ? 1 : t;
                 int new_step = (int)(t * ((int)replay_states.size() - 1));
                 if (new_step != replay_step) {
+                    clear_visuals();
                     replay_step = new_step;
                     s = replay_states[replay_step];
                     refresh_borders();
@@ -847,18 +910,67 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Map tile selection — click toggles; clicking same tile deselects
+        // Collect Move/Attack destinations from the currently selected unit (if any).
+        int move_dest_tile[256],  move_dest_action[256];
+        int attack_dest_tile[64], attack_dest_action[64];
+        int move_dest_count = 0, attack_dest_count = 0;
+        int click_applied = -1;
+        if (selected_tile >= 0) {
+            const Tile& st = s.tile_at(selected_tile);
+            if (st.has_unit() && s.get_unit(st.unit_id()).owner() == s.current_player()) {
+                for (int i = 0; i < action_count; i++) {
+                    const Action& a = actions[i];
+                    if (!a.affordable || a.from != selected_tile) continue;
+                    if (a.type == ActionType::Move && move_dest_count < 256) {
+                        move_dest_tile[move_dest_count]   = a.to;
+                        move_dest_action[move_dest_count] = i;
+                        move_dest_count++;
+                    } else if (a.type == ActionType::Attack && attack_dest_count < 64) {
+                        attack_dest_tile[attack_dest_count]   = a.to;
+                        attack_dest_action[attack_dest_count] = i;
+                        attack_dest_count++;
+                    }
+                }
+            }
+        }
+
+        // Map tile click: a click on a highlighted destination applies that Move/Attack;
+        // otherwise toggle selection (same-tile click deselects).
         {
             int tx = ((int)mouse.x - (MAP_OFF + PAD + LABEL)) / TILE;
             int ty = ((int)mouse.y - (TOP_HUD + PAD + LABEL)) / TILE;
             if (clicked && !scrubbing && tx >= 0 && tx < cur_msz && ty >= 0 && ty < cur_msz) {
                 int tidx = to_index(tx, ty, cur_msz);
-                selected_tile = (selected_tile == tidx) ? -1 : tidx;
+
+                int matched = -1;
+                bool was_move = false;
+                for (int i = 0; i < move_dest_count; i++)
+                    if (move_dest_tile[i] == tidx) { matched = move_dest_action[i]; was_move = true; break; }
+                if (matched < 0)
+                    for (int i = 0; i < attack_dest_count; i++)
+                        if (attack_dest_tile[i] == tidx) { matched = attack_dest_action[i]; break; }
+
+                if (matched >= 0) {
+                    click_applied = matched;
+                    // Keep selection on the unit so the next click sees fresh
+                    // Move/Attack destinations from its new tile.
+                    if (was_move) selected_tile = tidx;
+                } else {
+                    selected_tile = (selected_tile == tidx) ? -1 : tidx;
+                }
             }
         }
 
         auto is_highlighted = [&](int idx) {
             for (int h : highlight_tiles) if (h == idx) return true;
+            return false;
+        };
+        auto is_move_dest = [&](int idx) {
+            for (int i = 0; i < move_dest_count; i++) if (move_dest_tile[i] == idx) return true;
+            return false;
+        };
+        auto is_attack_dest = [&](int idx) {
+            for (int i = 0; i < attack_dest_count; i++) if (attack_dest_tile[i] == idx) return true;
             return false;
         };
 
@@ -909,6 +1021,12 @@ int main(int argc, char** argv) {
                     else if (ter == TerrainType::Mountain) draw_mountain_icon(px, py);
                     else if (ter == TerrainType::Forest)   draw_forest_icon(px, py);
 
+                    // Lighthouse on every map corner
+                    int _msz = s.map_size();
+                    bool corner = (x == 0 || x == _msz - 1)
+                               && (y == 0 || y == _msz - 1);
+                    if (corner) draw_lighthouse_outline(px, py);
+
                     // Climate tint
                     Color ctint = (climate[idx] == 0)
                         ? Color{ 255, 170, 50,  28 }   // warm amber — P0 tribe
@@ -950,14 +1068,29 @@ int main(int argc, char** argv) {
 
                     // City ID bottom-left, stars bottom-right — same y, above the pop bar
                     int label_y = py + TILE - 22;
-                    DrawText(TextFormat("%d", t.city_id()), px + 4, label_y, 11, WHITE);
+                    DrawText(TextFormat("%d", t.city_id()), px + 10, label_y, 11, WHITE);
 
                     const char* spt_str = TextFormat("%d*", city.stars_per_turn());
                     int spt_w = MeasureText(spt_str, 11);
-                    DrawText(spt_str, px + TILE - 5 - spt_w, label_y, 11, { 255, 230, 50, 255 });
+                    DrawText(spt_str, px + TILE - 11 - spt_w, label_y, 11, { 255, 230, 50, 255 });
 
-                    if (city.is_capital())   draw_castle_icon(px, py);
-                    else if (city.owner() >= 0) draw_small_castle_icon(px, py);
+                    if (city.is_capital() || city.owner() >= 0) {
+                        const float CITY_SCALE = 1.3f;
+                        // Vertical center of each icon as drawn (offset from tile top).
+                        // Capital spans roughly [TILE/2 - 20, TILE/2 - 1] → centre ≈ TILE/2 - 10.
+                        // Small   spans roughly [TILE/2 -  8, TILE/2 + 4] → centre ≈ TILE/2 - 2.
+                        float icon_cy = py + (city.is_capital() ? (TILE * 0.5f - 10.0f)
+                                                                : (TILE * 0.5f -  2.0f));
+                        float tcx = px + TILE * 0.5f;
+                        float tcy = py + TILE * 0.5f;
+                        rlPushMatrix();
+                        rlTranslatef(tcx, tcy, 0);                      // 4. land at tile centre
+                        rlScalef(CITY_SCALE, CITY_SCALE, 1.0f);         // 3. scale
+                        rlTranslatef(-tcx, -icon_cy, 0);                // 2. re-anchor on icon centre
+                        if (city.is_capital()) draw_castle_icon(px, py);
+                        else                   draw_small_castle_icon(px, py);
+                        rlPopMatrix();
+                    }
                     if (city.has_walls())    draw_shield_icon(px, py);
                     if (city.has_workshop()) draw_workshop_icon(px, py);
 
@@ -971,24 +1104,48 @@ int main(int argc, char** argv) {
                                 : ha.param;
                         }
                     }
-                    draw_pop_bar(px, py, city.population(), city.level() + 1, pending_pop);
+                    draw_pop_bar(px, py, city.population(), city.level() + 1, pending_pop, city.units_owned());
                 }
 
-                // Units — visible tiles or own units
+                // Units shown on any explored tile (units are only ever hidden by fog)
                 if (t.has_unit()) {
                     const Unit& u = s.get_unit(t.unit_id());
                     bool show = (view == ViewMode::Omni)
-                             || s.is_visible(vp, idx)
+                             || s.is_explored(vp, idx)
                              || u.owner() == vp;
                     if (show) {
                         int cx = px + TILE / 2;
                         int cy = py + TILE / 2;
                         Color uc = (u.owner() == 0) ? BLUE : RED;
-                        DrawCircle(cx, cy, TILE / 5, uc);
-                        static const char* unit_icon[] = { "?", "W", "A", "R" };
+                        // Yellow ready-ring: a Move/Attack/Capture exists for this unit's tile.
+                        // (In UpgradingCity phase those actions are suppressed — fall back to
+                        // the budget check so units don't all lose their ring mid-upgrade.)
+                        bool can_act = false;
+                        if (u.owner() == s.current_player()) {
+                            if (s.phase() != GameStateType::Idle) {
+                                can_act = (u.move_points() > 0 || !u.has_attacked());
+                            } else {
+                                for (int ai = 0; ai < action_count; ai++) {
+                                    const Action& aa = actions[ai];
+                                    if ((aa.type == ActionType::Move        && aa.from == idx)
+                                     || (aa.type == ActionType::Attack      && aa.from == idx)
+                                     || (aa.type == ActionType::CaptureCity && aa.to   == idx)) {
+                                        can_act = true; break;
+                                    }
+                                }
+                            }
+                        }
+                        if (can_act)
+                            DrawCircle(cx, cy, TILE / 7 + 2, { 255, 220, 60, 255 });
+                        DrawCircle(cx, cy, TILE / 7, uc);
+                        static const char* unit_icon[] = { "?", "W", "A", "R", "D" };
                         const char* icon = unit_icon[(int)u.type()];
-                        DrawText(icon, cx - MeasureText(icon, 10) / 2, cy - 5, 10, WHITE);
-                        DrawText(TextFormat("%d", u.hp()), px + 4, py + 4, 11, WHITE);
+                        DrawText(icon, cx - MeasureText(icon, 9) / 2, cy - 4, 9, WHITE);
+                        {
+                            const char* hp_str = TextFormat("%d", u.hp());
+                            int hp_w = MeasureText(hp_str, 11);
+                            DrawText(hp_str, cx - TILE / 7 - hp_w - 1, cy - TILE / 7 - 10, 11, WHITE);
+                        }
                     }
                 }
 
@@ -998,6 +1155,17 @@ int main(int argc, char** argv) {
                     DrawRectangleLinesEx({ (float)px, (float)py, (float)TILE-1, (float)TILE-1 },
                                          3, { 255, 255, 80, 220 });
 
+                }
+
+                // Click-to-move / click-to-attack destinations for the selected unit
+                if (is_move_dest(idx)) {
+                    DrawRectangle(px, py, TILE - 1, TILE - 1, { 100, 220, 100, 70 });
+                    DrawRectangleLinesEx({ (float)px, (float)py, (float)TILE-1, (float)TILE-1 },
+                                         2, { 90, 220, 90, 230 });
+                } else if (is_attack_dest(idx)) {
+                    DrawRectangle(px, py, TILE - 1, TILE - 1, { 230, 80, 80, 80 });
+                    DrawRectangleLinesEx({ (float)px, (float)py, (float)TILE-1, (float)TILE-1 },
+                                         2, { 240, 80, 80, 230 });
                 }
 
                 DrawRectangleLines(px, py, TILE, TILE, { 0, 0, 0, 60 });
@@ -1029,6 +1197,30 @@ int main(int argc, char** argv) {
             }
         }
 
+        // --- Explorer trails ---
+        for (const auto& trail : explorer_trails) {
+            for (size_t k = 0; k + 1 < trail.size(); k++) {
+                int tx, ty; to_coords(trail[k],     tx, ty, s.map_size());
+                int nx, ny; to_coords(trail[k + 1], nx, ny, s.map_size());
+                Vector2 a = { (float)(tile_px(tx) + TILE / 2), (float)(tile_py(ty) + TILE / 2) };
+                Vector2 b = { (float)(tile_px(nx) + TILE / 2), (float)(tile_py(ny) + TILE / 2) };
+                Color trail_c = { 255, 230, 60, 200 };
+                DrawLineEx(a, b, 2.0f, trail_c);
+                // Arrowhead at the destination end
+                float dx = b.x - a.x, dy = b.y - a.y;
+                float len = sqrtf(dx*dx + dy*dy);
+                if (len > 0.01f) {
+                    dx /= len; dy /= len;
+                    float hx = b.x - dx * 8.0f, hy = b.y - dy * 8.0f;
+                    float nxp = -dy, nyp = dx;
+                    Vector2 tip   = { b.x, b.y };
+                    Vector2 left  = { hx + nxp * 4.0f, hy + nyp * 4.0f };
+                    Vector2 right = { hx - nxp * 4.0f, hy - nyp * 4.0f };
+                    DrawTriangle(tip, left, right, trail_c);
+                }
+            }
+        }
+
         // --- Tech tree panel (left) ---
         DrawRectangle(0, TOP_HUD, TECH_W, H - TOP_HUD, PANEL_BG);
         DrawLine(TECH_W - 1, TOP_HUD, TECH_W - 1, H, PANEL_LINE);
@@ -1040,11 +1232,11 @@ int main(int argc, char** argv) {
                 int mid_y = TOP_HUD + (H - TOP_HUD) / 2;
                 DrawLine(4, mid_y, TECH_W - 5, mid_y, { 50, 50, 50, 255 });
                 int cur = s.current_player();
-                draw_tech_tree(s.get_player(0).get_techs(), 0, TOP_HUD, mid_y, "P0", cur == 0 ? hover_tech : -1, tech_zoom);
-                draw_tech_tree(s.get_player(1).get_techs(), 1, mid_y,  H,      "P1", cur == 1 ? hover_tech : -1, tech_zoom);
+                draw_tech_tree(s.get_player(0).techs_mask(), 0, TOP_HUD, mid_y, "P0", cur == 0 ? hover_tech : -1, tech_zoom);
+                draw_tech_tree(s.get_player(1).techs_mask(), 1, mid_y,  H,      "P1", cur == 1 ? hover_tech : -1, tech_zoom);
             } else {
                 int pv = (view == ViewMode::P1) ? 1 : (view == ViewMode::Current) ? s.current_player() : 0;
-                draw_tech_tree(s.get_player(pv).get_techs(), pv, TOP_HUD, H, nullptr, hover_tech, tech_zoom);
+                draw_tech_tree(s.get_player(pv).techs_mask(), pv, TOP_HUD, H, nullptr, hover_tech, tech_zoom);
             }
         }
 
@@ -1056,9 +1248,24 @@ int main(int argc, char** argv) {
         DrawText(TextFormat("Turn %d", s.get_turn()),       PAD + 4, 8,  22, WHITE);
         DrawText(TextFormat("P%d to move", s.current_player()), PAD + 4, 34, 18, LIGHTGRAY);
 
-        // Stars — large, player-coloured (centre)
-        DrawText(TextFormat("P0  %d *", s.get_stars(0)), W / 2 - 110, 10, 28, { 100, 160, 255, 255 });
-        DrawText(TextFormat("P1  %d *", s.get_stars(1)), W / 2 + 10,  10, 28, { 255, 100, 100, 255 });
+        // Stars — large, player-coloured (centre). Suffix shows income per turn.
+        int spt[2] = {0, 0};
+        for (int i = 0; i < s.map_tiles(); i++) {
+            const Tile& tt = s.tile_at(i);
+            if (!tt.has_city()) continue;
+            const City& cc = s.get_city(tt.city_id());
+            int o = cc.owner();
+            if (o == 0 || o == 1) spt[o] += cc.stars_per_turn();
+        }
+        const char* p0_str = TextFormat("P0  %d *", s.get_stars(0));
+        const char* p1_str = TextFormat("P1  %d *", s.get_stars(1));
+        const char* p0_spt = TextFormat("+%d", spt[0]);
+        const char* p1_spt = TextFormat("+%d", spt[1]);
+        int p0_x = W / 2 - 110, p1_x = W / 2 + 10;
+        DrawText(p0_str, p0_x, 6, 28, { 100, 160, 255, 255 });
+        DrawText(p1_str, p1_x, 6, 28, { 255, 100, 100, 255 });
+        DrawText(p0_spt, p0_x + (MeasureText(p0_str, 28) - MeasureText(p0_spt, 14)) / 2, 36, 14, { 100, 160, 255, 200 });
+        DrawText(p1_spt, p1_x + (MeasureText(p1_str, 28) - MeasureText(p1_spt, 14)) / 2, 36, 14, { 255, 100, 100, 200 });
 
         // View mode badge (right side)
         {
@@ -1093,14 +1300,26 @@ int main(int argc, char** argv) {
         DrawText("LEGAL ACTIONS", SB + 8, TOP_HUD + 10, 16, GRAY);
         DrawLine(SB + 4, TOP_HUD + 30, SB + SIDEBAR - 4, TOP_HUD + 30, { 60, 60, 60, 255 });
 
-        int  applied    = -1;
+        int  applied    = click_applied;  // map-click Move/Attack takes precedence; sidebar can also set this
         bool reset      = false;
         bool regenerate = false;
+
+        // Spacebar = End Turn (only in live play; in replay mode Space steps forward)
+        if (!replay_mode && IsKeyPressed(KEY_SPACE)) {
+            for (int i = 0; i < action_count; i++) {
+                if (actions[i].type == ActionType::EndTurn && actions[i].affordable) {
+                    applied = i;
+                    break;
+                }
+            }
+        }
+
         // Replay step controls
         if (replay_mode) {
             auto jump_to = [&](int step) {
                 step = step < 0 ? 0 : step > (int)replay_states.size() - 1 ? (int)replay_states.size() - 1 : step;
                 if (step != replay_step) {
+                    clear_visuals();
                     replay_step = step;
                     s = replay_states[replay_step];
                     refresh_borders();
@@ -1155,7 +1374,7 @@ int main(int argc, char** argv) {
                 DrawRectangleRec(row, bg);
 
                 char label[64]; action_label(a, label, sizeof(label));
-                char cost[16];  action_cost(a, cost, sizeof(cost));
+                char cost[16];  action_cost(a, cost, sizeof(cost), s.owned_cities(s.current_player()));
                 Color text_col = afford ? WHITE : Color{ 100, 100, 100, 255 };
                 Color cost_col = afford ? Color{ 255, 210, 60, 255 } : Color{ 100, 90, 50, 255 };
                 DrawText(label, SB + 10, ry + 5, 13, text_col);
@@ -1193,6 +1412,7 @@ int main(int argc, char** argv) {
 
         // Apply after the loop so we don't mutate actions[] mid-render
         if (regenerate) {
+            clear_visuals();
             initial = new_map();
             TILE = MAP_CANVAS / initial.map_size();
             s = initial;
@@ -1201,14 +1421,17 @@ int main(int argc, char** argv) {
             sidebar_scroll = 0;
             selected_tile  = -1;
             action_log.clear();
+            action_log_debug.clear();
             log_scroll = 0;
         } else if (reset) {
+            clear_visuals();
             if (replay_mode) {
                 replay_step = 0;
                 s = replay_states[0];
             } else {
                 s = initial;
                 action_log.clear();
+                action_log_debug.clear();
             }
             init_colourers();
             s.legal_actions(actions, action_count);
@@ -1218,6 +1441,26 @@ int main(int argc, char** argv) {
         }
         if (applied >= 0 && !replay_mode) {
             action_log.push_back(format_action_str(actions[applied], s.current_player(), s.get_turn(), s.map_size()));
+            action_log_debug.push_back(false);
+
+            // Wipe any leftover visual-only state before the new action.
+            clear_visuals();
+
+            // If this is the Explorer upgrade, simulate it on a copy first to capture
+            // the path the explorer will walk, so we can draw arrows along it.
+            const Action& ap = actions[applied];
+            if (ap.type == ActionType::UpgradeCity
+                && ap.param == (int)CityUpgradeType::L1_EXPLORER) {
+                GameState preview = s;
+                int path[16]; int plen = 0;
+                preview.explore(preview.get_city(ap.from).tile_index(),
+                                s.current_player(), path, &plen);
+                if (plen > 1) {
+                    std::vector<int> t(path, path + plen);
+                    explorer_trails.push_back(std::move(t));
+                }
+            }
+
             s = s.apply_action(actions[applied]);
             refresh_borders();
             s.legal_actions(actions, action_count);
@@ -1227,6 +1470,18 @@ int main(int argc, char** argv) {
         // Sync log to current replay step
         if (replay_mode) {
             action_log.assign(replay_log.begin(), replay_log.begin() + std::min(replay_step, (int)replay_log.size()));
+            action_log_debug.assign(action_log.size(), false);
+        }
+
+        // Pull any new Logger::print entries into the log panel as grey rows.
+        while (last_logger_count < Logger::count) {
+            int back_idx = Logger::count - 1 - last_logger_count;  // 0 = newest
+            const char* msg = Logger::get(back_idx);
+            if (msg) {
+                action_log.emplace_back(msg);
+                action_log_debug.push_back(true);
+            }
+            last_logger_count++;
         }
 
 
@@ -1244,7 +1499,7 @@ int main(int argc, char** argv) {
             }
             if (ht.has_unit()) {
                 const Unit& u = s.get_unit(ht.unit_id());
-                static const char* unames[] = { "?", "Warrior", "Archer", "Rider" };
+                static const char* unames[] = { "?", "Warrior", "Archer", "Rider", "Defender" };
                 snprintf(line2, sizeof(line2), "%s (P%d %dHP)",
                     unames[(int)u.type()], u.owner(), u.hp());
             } else {
@@ -1312,8 +1567,11 @@ int main(int argc, char** argv) {
                 int ey = 28 + LOG_PAD + i * ROW_H;
                 if (i % 2 == 0)
                     DrawRectangle(lx + 2, ey, LOG_W - 4, ROW_H - 1, { 25, 25, 25, 255 });
-                // Color by player
-                Color tc = (entry.size() > 1 && entry[1] == '0') ? COL_P0 : COL_P1;
+                bool is_debug = (entry_idx < (int)action_log_debug.size())
+                              && action_log_debug[entry_idx];
+                Color tc = is_debug
+                         ? Color{ 160, 160, 160, 255 }
+                         : ((entry.size() > 1 && entry[1] == '0') ? COL_P0 : COL_P1);
                 DrawText(entry.c_str(), lx + 6, ey + 2, 11, tc);
             }
             EndScissorMode();

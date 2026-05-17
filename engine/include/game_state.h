@@ -6,6 +6,7 @@
 #include "city.h"
 #include "types.h"
 #include "player.h"
+#include <vector>
 
 constexpr int MAX_PLAYERS = 2;
 
@@ -53,19 +54,28 @@ public:
     bool is_visible(int player, int tile)  const { return players[player].is_visible(tile); }
     bool is_explored(int player, int tile) const { return players[player].is_explored(tile); }
     void set_visible(int player, int tile)        { players[player].set_visible(tile); }
-    void set_explored(int player, int tile)       { players[player].set_explored(tile); }
+    void set_explored(int player, int tile);
     void clear_visible(int player)                { players[player].clear_visible(); }
 
     // Tech unlocks
     bool     has_tech(int player, TechType t)  const { return players[player].has_tech(t); }
     void     research_tech(int player, TechType t)   { players[player].research_tech(t); }
-    uint32_t get_techs(int player)             const { return players[player].get_techs(); }
+    std::vector<TechType> get_techs(int player) const { return players[player].get_techs(); }
+    uint32_t              techs_mask(int player) const { return players[player].techs_mask(); }
 
     // Stars
     int  get_stars(int player) const       { return players[player].stars; }
     void set_stars(int player, int amount) { players[player].stars = amount; }
 
     const Player& get_player(int player) const { return players[player]; }
+
+    // Number of cities currently owned by `player` (includes capital).
+    int owned_cities(int player) const {
+        int n = 0;
+        for (int i = 0; i < city_count; i++)
+            if (cities[i].owner() == player) n++;
+        return n;
+    }
 
     void print_map() const;
 
@@ -75,21 +85,37 @@ public:
 
     // Allocates a unit slot, initialises hp/movement from UnitDef, places on tile.
     // Returns slot index, or -1 if full.
-    int spawn_unit(UnitType type, int owner, int tile_index);
+    int spawn_unit(UnitType type, int owner, int tile_index, int city_id = -1);
 
     // Allocates a city slot, places on tile.
     // Returns slot index, or -1 if full.
     int spawn_city(int tile_index, int owner, bool is_capital);
-
+    float get_defense_bonus(Player& player, Tile& t);
     const Unit& get_unit(int id) const { return units[id]; }
     const City& get_city(int id) const { return cities[id]; }
 
     void      legal_actions(Action out[], int& out_count) const;
     GameState apply_action(Action a) const;
 
-    // Claims all unclaimed tiles within city_id's border radius.
-    // Already-claimed tiles are never stolen — first-claimer always wins.
+    // Per-action handlers — mutate *this in place. Called by apply_action on a copy.
+    void apply_end_turn();
+    void apply_research_tech(Action a);
+    void apply_train_unit(Action a);
+    void apply_harvest_resource(Action a);
+    void apply_debug_add_pop(Action a);
+    void apply_upgrade_city(Action a);
+    void apply_capture_city(Action a);
+    void apply_move(Action a);
+    void apply_attack(Action a);
+
+    void explore(int tile, int player,
+                 int* out_path = nullptr, int* out_count = nullptr);
     void claim_border_for_city(int city_id);
+
+    // Sanity-checks every cross-reference in the game state. Returns true if
+    // all invariants hold. On failure, prints the first violation to stderr.
+    // Cheap enough to run after every applied action in tests / debug builds.
+    bool check_invariants() const;
 
 private:
     Tile map[MAX_MAP_TILES];

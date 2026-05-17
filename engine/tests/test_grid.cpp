@@ -27,11 +27,16 @@ static void test_in_bounds() {
 }
 
 static void test_distance() {
-    assert(distance(0, 0, 0, 0) == 0);
-    assert(distance(0, 0, 1, 0) == 1);
-    assert(distance(0, 0, 0, 1) == 1);
-    assert(distance(0, 0, 3, 4) == 7);
-    assert(distance(5, 5, 2, 1) == 7);
+    assert(manhattan_distance(0, 0, 0, 0) == 0);
+    assert(manhattan_distance(0, 0, 1, 0) == 1);
+    assert(manhattan_distance(0, 0, 0, 1) == 1);
+    assert(manhattan_distance(0, 0, 3, 4) == 7);
+    assert(manhattan_distance(5, 5, 2, 1) == 7);
+
+    assert(chebyshev_distance(0, 0, 0, 0) == 0);
+    assert(chebyshev_distance(0, 0, 1, 0) == 1);
+    assert(chebyshev_distance(0, 0, 3, 4) == 4);
+    assert(chebyshev_distance(5, 5, 2, 1) == 4);
 }
 
 static void test_neighbors() {
