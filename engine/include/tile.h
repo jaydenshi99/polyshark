@@ -2,7 +2,7 @@
 
 #include "types.h"
 #include "building_def.h"
-
+#include "cassert"
 class Tile {
 public:
     TerrainType  terrain()   const { return _terrain; }

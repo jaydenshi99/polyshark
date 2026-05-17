@@ -52,7 +52,7 @@ def heuristic_value(state, player):
             if unit.is_alive and unit.owner == player:
                 my_units += 1
 
-    my_techs = bin(state.get_techs(player)).count('1')
+    my_techs = len(state.get_techs(player))
 
     score = (
         2.0 * my_income +

@@ -3,6 +3,7 @@
 #include "types.h"
 #include "grid.h"
 #include <cstdint>
+#include <vector>
 
 constexpr int FOG_WORDS = (MAX_MAP_TILES + 15) / 16;
 
@@ -21,5 +22,15 @@ struct Player {
 
     bool     has_tech(TechType t)  const { return (techs >> static_cast<int>(t)) & 1; }
     void     research_tech(TechType t)   { techs |= (1u << static_cast<int>(t)); }
-    uint32_t get_techs()           const { return techs; }
+    uint32_t techs_mask()          const { return techs; }
+    std::vector<TechType> get_techs() const {
+        std::vector<TechType> out;
+        uint32_t m = techs;
+        while (m) {
+            int i = __builtin_ctz(m);
+            out.push_back(static_cast<TechType>(i));
+            m &= m - 1;
+        }
+        return out;
+    }
 };

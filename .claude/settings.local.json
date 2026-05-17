@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake --build build)",
+      "Bash(cmake --build build --config Release)",
+      "Bash(taskkill /F /IM visualizer.exe)",
+      "Bash(./test_game_state.exe)",
+      "Bash(cmake --build engine/build)"
+    ]
+  }
+}

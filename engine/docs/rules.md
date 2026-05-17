@@ -26,7 +26,7 @@ A stripped-down Polytopia-inspired turn-based strategy game.
 - Units reveal all 8 surrounding tiles (3×3 centred on unit)
 - Mountains extend vision further (exact radius TBD)
 - Cities reveal surrounding 3×3 tiles
-- Explored tiles stay permanently revealed; enemy units hide when out of vision
+- Explored tiles stay permanently revealed; once a tile is uncovered it stays uncovered forever, and any unit on it is always visible to the explorer
 
 ---
 
@@ -186,7 +186,7 @@ Moving adjacent to an enemy unit costs all remaining movement.
 ## Implementation Notes
 
 ### Fog of War
-Two bitfields per player: `explored` (permanent) and `visible` (rebuilt each turn). A tile is hidden if not explored; an enemy unit on a visible tile is hidden if that tile is not currently visible.
+Per-player `explored` bitfield — once set, never cleared. A tile is only hidden if it's never been explored. Units on explored tiles are always shown, even when no friendly unit/city currently has line of sight on them. The `visible` bitfield exists as a transient marker but is not used to gate display or attack targeting.
 
 ### Tech Unlocks
 Each player's researched techs are stored as a `uint32_t` bitmask, one bit per tech. Checking a tech: `has_tech(player, TechType::Mining)`.

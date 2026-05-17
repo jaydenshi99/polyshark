@@ -152,7 +152,8 @@ def encode(state):
 
     # Global vector
     techs      = state.get_techs(me)
-    tech_bits  = [(techs >> i) & 1 for i in range(_N_TECHS)]
+    owned_idx  = {int(t) for t in techs}
+    tech_bits  = [1 if i in owned_idx else 0 for i in range(_N_TECHS)]
     global_vec = np.array([
         state.get_turn() / _MAX_TURN,
         state.get_stars(me) / _MAX_STARS,
