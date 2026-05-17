@@ -225,7 +225,7 @@ def train(n_generations=200):
     print(f"Device: {device}")
 
     model     = PolysharkNet().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-4)
     buffer    = ReplayBuffer()
     mcts      = MCTS(model, device=device, heuristic_fn=heuristic_value, heuristic_weight=1.0)
 
