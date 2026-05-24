@@ -11,6 +11,11 @@
 bool tile_passable(const Tile& t, bool has_climbing);
 void reveal_around(GameState& s, int player, int tile_index, int radius);
 void rebuild_visibility(GameState& s, int player);
+void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[], int out_parent[]);
+bool encode_path_bits(const int parent[], int src, int dst, int msz,
+                      uint32_t* out_bits, uint8_t* out_steps);
+void decode_path_bits(int start, uint32_t bits, uint8_t steps, int msz,
+                      int out_tiles[MAX_MOVE_PATH_STEPS + 1], int* out_count);
 
 void GameState::apply_end_turn() {
     GameState& s = *this;
@@ -196,11 +201,38 @@ void GameState::apply_move(Action a) {
     int dst = a.to;
     int uid = s.map[src].unit_id();
     Unit& u = s.units[uid];
+    int p   = u.owner();
+    int msz = s.map_size();
+
+    // Reveal fog along the path. If the action carries an encoded path, use it;
+    // otherwise (e.g. legacy replay action with path_steps == 0) recompute via BFS
+    // on the current state — deterministic, same result as the original emit.
+    uint32_t pbits  = a.path_bits;
+    uint8_t  psteps = a.path_steps;
+    if (psteps == 0 && src != dst) {
+        int8_t mp_at[MAX_MAP_TILES];
+        int    parent[MAX_MAP_TILES];
+        reachable_tiles(s, uid, mp_at, parent);
+        encode_path_bits(parent, src, dst, msz, &pbits, &psteps);
+    }
+    int path_tiles[MAX_MOVE_PATH_STEPS + 1];
+    int path_count = 0;
+    decode_path_bits(src, pbits, psteps, msz, path_tiles, &path_count);
+    for (int i = 0; i < path_count; i++) {
+        // Standard vision radius (mountain bonus is handled by rebuild_visibility
+        // when the unit settles at its destination).
+        reveal_around(s, p, path_tiles[i], 1);
+    }
+
     s.map[src].remove_unit();
     s.map[dst].place_unit(uid);
     u.set_tile(dst);
-    u.spend_movement(u.move_points() - a.param);
-    rebuild_visibility(s, u.owner());
+    // Single-move-per-turn rule: spend the entire remaining movement budget so a
+    // unit that used part of its movement (e.g. a Rider's 2-mp Rider that only hopped
+    // 1 tile) can't initiate another Move this turn. Note: Escape (Rider's post-attack
+    // ability) still resets move points via reset_turn — that's intentional.
+    u.spend_movement(u.move_points());
+    rebuild_visibility(s, p);
 }
 
 void GameState::apply_attack(Action a) {

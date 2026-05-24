@@ -21,7 +21,7 @@ static const UnitDef UNIT_DEFS[] = {
     // Warrior:   HP  ATK DEF MOV RNG COST  ABILITIES                                         TECH
     {             10,  2,  2,  1,  1,  2,   ABILITY_FORTIFY | ABILITY_DASH,    TechType::Count   },
     // Archer
-    {             10,  2,  1,  1,  2,  3,   ABILITY_RANGED  | ABILITY_FORTIFY, TechType::Archery },
+    {             10,  2,  1,  1,  2,  3,   ABILITY_RANGED  | ABILITY_FORTIFY | ABILITY_DASH, TechType::Archery },
     // Rider
     {             10,  2,  1,  2,  1,  3,   ABILITY_ESCAPE  | ABILITY_FORTIFY | ABILITY_DASH,
                                                                                 TechType::Riding  },

@@ -5,7 +5,8 @@
       "Bash(cmake --build build --config Release)",
       "Bash(taskkill /F /IM visualizer.exe)",
       "Bash(./test_game_state.exe)",
-      "Bash(cmake --build engine/build)"
+      "Bash(cmake --build engine/build)",
+      "Bash(./build/visualizer/visualizer)"
     ]
   }
 }
