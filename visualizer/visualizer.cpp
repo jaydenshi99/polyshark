@@ -398,7 +398,7 @@ static std::string format_action_str(const Action& a, int player, int turn, int 
         }
         case ActionType::EndTurn:           return p + "EndTurn";
         case ActionType::TrainUnit:
-            return p + "Train " + (a.param > 0 && a.param < 4 ? unit_names[a.param] : "?") + " @ " + coords(a.from);
+            return p + "Train " + (a.param > 0 && a.param < (int)UnitType::Count ? unit_names[a.param] : "?") + " @ " + coords(a.from);
         case ActionType::ResearchTech:
             return p + "Tech " + (a.param >= 0 && a.param < 8 ? tech_names[a.param] : "?");
         default: return p + "Action";
@@ -530,7 +530,7 @@ static void action_label(const Action& a, char* buf, int size) {
             break;
         case ActionType::TrainUnit: {
             static const char* unit_names[] = { "?", "Warrior", "Archer", "Rider", "Defender" };
-            const char* uname = (a.param > 0 && a.param < 4) ? unit_names[a.param] : "?";
+            const char* uname = (a.param > 0 && a.param < (int)UnitType::Count) ? unit_names[a.param] : "?";
             snprintf(buf, size, "%s", uname);
             break;
         }

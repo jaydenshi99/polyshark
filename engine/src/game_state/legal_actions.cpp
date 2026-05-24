@@ -128,7 +128,13 @@ void GameState::legal_actions(Action out[], int& out_count) const {
                 }
             }
 
-            if (!u.has_attacked()) {
+            // Attack-after-move rule: a unit that has already moved this turn can
+            // only attack if it has ABILITY_DASH (Warrior, Rider). Move spends the
+            // full movement budget (apply_move), so move_points < full_movement
+            // means the unit has moved this turn.
+            bool has_moved = (u.move_points() < udef.movement);
+            bool can_dash  = (udef.abilities & ABILITY_DASH) != 0;
+            if (!u.has_attacked() && (!has_moved || can_dash)) {
                 for (int j = 0; j < mtsz; j++) {
                     const Tile& dt = s.tile_at(j);
                     if (!dt.has_unit()) continue;
