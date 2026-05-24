@@ -274,14 +274,20 @@ void MapGen::clear_far_resources(GameState& s, int cap0, int cap1) {
             s.tile_at(i).set_resource(ResourceType::None);
 
     // Lighthouses (map corners) never hold a resource, even if within
-    // 2 tiles of a city.
+    // 2 tiles of a city. They also can't be mountains — a corner has to be
+    // walkable so the lighthouse vision can be reached/used.
     int corners[4] = {
         to_index(0,      0,      sz),
         to_index(sz - 1, 0,      sz),
         to_index(0,      sz - 1, sz),
         to_index(sz - 1, sz - 1, sz),
     };
-    for (int c : corners) s.tile_at(c).set_resource(ResourceType::None);
+    for (int c : corners) {
+        s.tile_at(c).set_resource(ResourceType::None);
+        if (s.tile_at(c).terrain() == TerrainType::Mountain) {
+            s.tile_at(c).set_terrain(TerrainType::Field);
+        }
+    }
 }
 
 void MapGen::reroll_inner(GameState& s, const int climate[], int cap0, int cap1) {

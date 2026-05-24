@@ -256,21 +256,23 @@ static inline void draw_terrain_sprite(Vector2 ctr, TerrainSprite ts) {
 // smaller default footprint (~50% of TILE_W) so the sprite sits on the tile
 // without dominating it.
 //
-// Forest is included here even though it's a TerrainType (not a ResourceType) —
-// rendering it as an overlay on grass keeps the base ground layer simple and
-// lets the trees sit naturally on top of the field.
-enum class ResourceSprite { Fruit = 0, Crop, Animal, Metal, Forest, Count };
+// Forest, Village, and Lighthouse are included here even though they're not
+// ResourceTypes — rendering them as overlays on the base ground layer keeps
+// the terrain pass simple and lets them sit naturally on top of the field.
+enum class ResourceSprite { Fruit = 0, Crop, Animal, Metal, Forest, Village, Lighthouse, Count };
 static Texture2D        resource_tex [(int)ResourceSprite::Count] = {};
 static TerrainAlphaBBox resource_bbox[(int)ResourceSprite::Count] = {};
 
 // Each entry tweaks placement (offsets in tile-fractions) and scale (multiplier
 // on the 50%-of-TILE_W base). Tune these to nudge sprites without re-exporting PNGs.
 static Transformer RESOURCE_TRANSFORMERS[(int)ResourceSprite::Count] = {
-    /* Fruit  */ { 0.00f, -0.4f,  0.7f },
-    /* Crop   */ { 0.00f, -0.2f,  1.4f },
-    /* Animal */ { 0.00f, -0.35f, 0.4f },
-    /* Metal  */ { 0.00f, -0.38f, 0.53f },
-    /* Forest */ { 0.02f, -0.1f,  1.5f },
+    /* Fruit      */ { 0.00f, -0.4f,  0.7f  },
+    /* Crop       */ { 0.00f, -0.2f,  1.4f  },
+    /* Animal     */ { 0.00f, -0.35f, 0.4f  },
+    /* Metal      */ { 0.00f, -0.38f, 0.53f },
+    /* Forest     */ { 0.02f, -0.1f,  1.5f  },
+    /* Village    */ { 0.00f, -0.3f,  0.9f  },
+    /* Lighthouse */ { 0.00f, -0.35f,  0.4f  },
 };
 
 static inline ResourceSprite resource_type_to_sprite(ResourceType r) {
@@ -1157,7 +1159,9 @@ int main(int argc, char** argv) {
     load_resource(ResourceSprite::Crop,   "visualizer/sprites/terrain/crop.png");
     load_resource(ResourceSprite::Animal, "visualizer/sprites/terrain/imperius/Imperius_game.png");
     load_resource(ResourceSprite::Metal,  "visualizer/sprites/terrain/metal.png");
-    load_resource(ResourceSprite::Forest, "visualizer/sprites/terrain/imperius/Imperius_forest.png");
+    load_resource(ResourceSprite::Forest,     "visualizer/sprites/terrain/imperius/Imperius_forest.png");
+    load_resource(ResourceSprite::Village,    "visualizer/sprites/terrain/village.png");
+    load_resource(ResourceSprite::Lighthouse, "visualizer/sprites/terrain/lighthouse.png");
 
     while (!WindowShouldClose()) {
 
@@ -1417,13 +1421,17 @@ int main(int argc, char** argv) {
                     draw_movement_ring(ctr, { 230, 80, 80, 130 });
                 }
 
-                // Tile decorations (forest overlay + resource overlay + captured-
-                // city flag) sit between the terrain pass and the unit so a unit
-                // standing on the tile correctly occludes them. Hidden under fog.
-                // Forest first, then resource (so e.g. Animal lands on top of Forest).
+                // Tile decorations (forest/village/lighthouse overlay + resource
+                // overlay + captured-city flag) sit between terrain and unit so a
+                // unit on the tile correctly occludes them. Hidden under fog.
+                // Terrain overlay first, then resource (so e.g. Animal lands on top).
                 if (!fogged) {
                     if (t.terrain() == TerrainType::Forest)
                         draw_resource_sprite(ctr, ResourceSprite::Forest);
+                    else if (t.terrain() == TerrainType::Village && !t.has_city())
+                        draw_resource_sprite(ctr, ResourceSprite::Village);
+                    if (is_lighthouse(idx, cur_msz))
+                        draw_resource_sprite(ctr, ResourceSprite::Lighthouse);
                     ResourceSprite rs = resource_type_to_sprite(t.resource());
                     if (rs != ResourceSprite::Count)
                         draw_resource_sprite(ctr, rs);
