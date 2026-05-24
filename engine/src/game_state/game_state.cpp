@@ -16,6 +16,18 @@ const int INVALID   = -1;
 
 // -------------------------------------------------------- movement helpers --
 
+// 8-neighbor direction tables. Indices 0..7 are also the 3-bit encoding used in
+// Action::path_bits. Order: N, NE, E, SE, S, SW, W, NW.
+const int MOVE_DX[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
+const int MOVE_DY[8] = { -1, -1, 0, 1, 1,  1,  0, -1 };
+
+// BFS visit order: cardinals first (N, E, S, W) then diagonals (NE, SE, SW, NW).
+// Only affects tie-breaking among equal-cost paths — preferring cardinal hops
+// gives the unit a more "horizontal/vertical first" feel on the iso grid. Keep
+// MOVE_DX/MOVE_DY indexing intact so the 3-bit path_bits encoding stays
+// backward-compatible with existing replay files.
+static const int BFS_DIR_ORDER[8] = { 0, 2, 4, 6, 1, 3, 5, 7 };
+
 bool tile_passable(const Tile& t, bool has_climbing) {
     if (t.terrain() == TerrainType::Water) return false;
     if (t.terrain() == TerrainType::Mountain && !has_climbing) return false;
@@ -47,7 +59,11 @@ bool adjacent_to_enemy(const GameState& s, int tile, int my_player) {
     return false;
 }
 
-void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[]) {
+// reachable_tiles with optional parent-pointer output. If `out_parent` is non-null,
+// out_parent[tile] is the tile we stepped from to reach `tile` along the cheapest
+// path (== -1 if unreached, == src for the source tile itself). Enables path
+// reconstruction by walking parents back from any reachable tile to the source.
+void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[], int out_parent[]) {
     const int msz  = s.map_size();
     const int mtsz = s.map_tiles();
     const Unit& u  = s.get_unit(unit_id);
@@ -55,6 +71,9 @@ void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[]) {
     bool climbing  = s.has_tech(p, TechType::Climbing);
 
     memset(out_mp, -1, mtsz);
+    if (out_parent) {
+        for (int i = 0; i < mtsz; i++) out_parent[i] = -1;
+    }
 
     struct Node { int tile; int8_t mp; };
     Node queue[MAX_MAP_TILES * 4];
@@ -62,10 +81,8 @@ void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[]) {
 
     int src = u.tile_index();
     out_mp[src] = (int8_t)u.move_points();
+    if (out_parent) out_parent[src] = src;
     queue[tail++] = { src, (int8_t)u.move_points() };
-
-    const int DX[] = { 0, 1, 1, 1, 0, -1, -1, -1 };
-    const int DY[] = { -1, -1, 0, 1, 1,  1,  0, -1 };
 
     while (head < tail) {
         int    tile = queue[head].tile;
@@ -77,8 +94,9 @@ void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[]) {
         int x, y;
         to_coords(tile, x, y, msz);
 
-        for (int d = 0; d < 8; d++) {
-            int nx = x + DX[d], ny = y + DY[d];
+        for (int oi = 0; oi < 8; oi++) {
+            int d = BFS_DIR_ORDER[oi];
+            int nx = x + MOVE_DX[d], ny = y + MOVE_DY[d];
             if (!in_bounds(nx, ny, msz)) continue;
             int ntile = to_index(nx, ny, msz);
             if (!s.is_explored(p, ntile)) continue;  // can't step into fog
@@ -97,10 +115,76 @@ void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[]) {
 
             if (new_mp > out_mp[ntile]) {
                 out_mp[ntile] = new_mp;
+                if (out_parent) out_parent[ntile] = tile;
                 queue[tail++] = { ntile, new_mp };
             }
         }
     }
+}
+
+// Backwards-compat overload — callers that don't need parent pointers.
+void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[]) {
+    reachable_tiles(s, unit_id, out_mp, nullptr);
+}
+
+// Encode the path from src..dst (using `parent` from reachable_tiles) into a packed
+// uint32 of 3-bit direction steps. Returns true on success. On failure (unreachable
+// or path longer than MAX_MOVE_PATH_STEPS) sets both outputs to 0 and returns false.
+bool encode_path_bits(const int parent[], int src, int dst, int msz,
+                      uint32_t* out_bits, uint8_t* out_steps) {
+    *out_bits  = 0;
+    *out_steps = 0;
+    if (src == dst) return true;             // zero-step "path"
+    if (parent[dst] < 0) return false;       // unreachable
+
+    // Walk back from dst to src, recording each step's child-tile (we'll need (parent → child)
+    // to derive direction). Collect in reverse, then encode in forward order.
+    int back[MAX_MOVE_PATH_STEPS + 1];
+    int n = 0;
+    int cur = dst;
+    while (cur != src) {
+        if (n >= MAX_MOVE_PATH_STEPS) return false;  // path too long
+        back[n++] = cur;
+        cur = parent[cur];
+        if (cur < 0) return false;
+    }
+    // back[n-1..0] = first..last hop's destination; src is the implicit start.
+    int prev = src;
+    for (int i = 0; i < n; i++) {
+        int child = back[n - 1 - i];
+        int px, py, cx, cy;
+        to_coords(prev,  px, py, msz);
+        to_coords(child, cx, cy, msz);
+        int dx = cx - px, dy = cy - py;
+        int dir = -1;
+        for (int d = 0; d < 8; d++)
+            if (MOVE_DX[d] == dx && MOVE_DY[d] == dy) { dir = d; break; }
+        if (dir < 0) return false;
+        *out_bits |= ((uint32_t)dir & 0x7u) << (3 * i);
+        prev = child;
+    }
+    *out_steps = (uint8_t)n;
+    return true;
+}
+
+// Decode a packed path back into a sequence of tile indices, starting from `start`.
+// Writes [start, step0_tile, step1_tile, ..., last_step_tile] into out_tiles, and
+// the number of tiles written (steps + 1) into *out_count.
+void decode_path_bits(int start, uint32_t bits, uint8_t steps, int msz,
+                      int out_tiles[MAX_MOVE_PATH_STEPS + 1], int* out_count) {
+    int cur = start;
+    int n = 0;
+    out_tiles[n++] = cur;
+    for (int i = 0; i < steps; i++) {
+        int dir = (int)((bits >> (3 * i)) & 0x7u);
+        int x, y;
+        to_coords(cur, x, y, msz);
+        int nx = x + MOVE_DX[dir], ny = y + MOVE_DY[dir];
+        if (!in_bounds(nx, ny, msz)) break;
+        cur = to_index(nx, ny, msz);
+        out_tiles[n++] = cur;
+    }
+    *out_count = n;
 }
 
 void reveal_around(GameState& s, int player, int tile_index, int radius) {

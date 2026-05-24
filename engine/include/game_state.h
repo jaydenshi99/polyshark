@@ -23,12 +23,20 @@ enum class ActionType {
     EndTurn,
 };
 
+constexpr int MAX_MOVE_PATH_STEPS = 6;
+
 struct Action {
     ActionType type;
     int from;        // tile index (where relevant)
     int to;          // tile index (where relevant)
     int param;       // unit type, tech id, improvement type, etc.
     bool affordable; // false = shown but unplayable (insufficient stars)
+    // Move actions only: cheapest BFS path packed as 3-bit direction steps from
+    // `from` to `to`. path_bits low-to-high — bits[3*i..3*i+2] = i-th step's
+    // direction index into the 8-neighbor MOVE_DX/MOVE_DY tables. path_steps is
+    // the number of hops (== tile count - 1). Other action types leave path_steps = 0.
+    uint32_t path_bits;
+    uint8_t  path_steps;
 };
 
 enum class GameStateType {
@@ -136,3 +144,13 @@ private:
 
 void      serialize(const GameState& s, uint8_t* out_buf, int& out_size);
 GameState deserialize(const uint8_t* buf, int size);
+
+// Movement-path helpers (defined in game_state.cpp). Exposed so the visualizer can
+// reconstruct the cheapest path for animation purposes and so replays without
+// embedded paths (older replay files) can still populate them at load time.
+void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[]);
+void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[], int out_parent[]);
+bool encode_path_bits(const int parent[], int src, int dst, int msz,
+                      uint32_t* out_bits, uint8_t* out_steps);
+void decode_path_bits(int start, uint32_t bits, uint8_t steps, int msz,
+                      int out_tiles[MAX_MOVE_PATH_STEPS + 1], int* out_count);

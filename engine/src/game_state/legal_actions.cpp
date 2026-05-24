@@ -6,6 +6,9 @@
 
 // Helpers defined in game_state.cpp
 void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[]);
+void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[], int out_parent[]);
+bool encode_path_bits(const int parent[], int src, int dst, int msz,
+                      uint32_t* out_bits, uint8_t* out_steps);
 
 GameStateType GameState::phase() const {
     for (int i = 0; i < city_count; i++)
@@ -112,11 +115,16 @@ void GameState::legal_actions(Action out[], int& out_count) const {
 
             if (u.move_points() > 0) {
                 int8_t mp_at[MAX_MAP_TILES];
-                reachable_tiles(s, t.unit_id(), mp_at);
+                int    parent[MAX_MAP_TILES];
+                reachable_tiles(s, t.unit_id(), mp_at, parent);
+                const int msz = s.map_size();
                 for (int j = 0; j < mtsz; j++) {
                     if (j == i) continue;
                     if (mp_at[j] < 0) continue;
-                    out[out_count++] = { ActionType::Move, i, j, mp_at[j], true };
+                    uint32_t pbits = 0;
+                    uint8_t  psteps = 0;
+                    encode_path_bits(parent, i, j, msz, &pbits, &psteps);
+                    out[out_count++] = { ActionType::Move, i, j, mp_at[j], true, pbits, psteps };
                 }
             }
 
