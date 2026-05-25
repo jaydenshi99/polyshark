@@ -18,8 +18,8 @@ const int INVALID   = -1;
 
 // 8-neighbor direction tables. Indices 0..7 are also the 3-bit encoding used in
 // Action::path_bits. Order: N, NE, E, SE, S, SW, W, NW.
-const int MOVE_DX[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
-const int MOVE_DY[8] = { -1, -1, 0, 1, 1,  1,  0, -1 };
+extern const int MOVE_DX[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
+extern const int MOVE_DY[8] = { -1, -1, 0, 1, 1,  1,  0, -1 };
 
 // BFS visit order: cardinals first (N, E, S, W) then diagonals (NE, SE, SW, NW).
 // Only affects tie-breaking among equal-cost paths — preferring cardinal hops
@@ -103,7 +103,10 @@ void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[], int out_p
             const Tile& nt = s.tile_at(ntile);
 
             if (!tile_passable(nt, climbing)) continue;
-            if (nt.has_unit()) continue;
+            // Allies are passable as transit nodes; only enemy-occupied tiles
+            // block the BFS outright. Ally tiles are stripped from the
+            // destination set after the loop so callers see them as unlandable.
+            if (nt.has_unit() && s.get_unit(nt.unit_id()).owner() != p) continue;
 
             int cost = tile_entry_cost(nt);
             if (cost > mp) continue;
@@ -119,6 +122,19 @@ void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[], int out_p
                 queue[tail++] = { ntile, new_mp };
             }
         }
+    }
+
+    // Strip ally-occupied tiles from the destination set. They were kept in
+    // the BFS so paths could route through them, but they're not landable.
+    // (out_parent is left intact so path reconstruction through allies still
+    // works.) Skip src — the source tile contains the moving unit itself and
+    // is filtered out by callers anyway.
+    for (int i = 0; i < mtsz; i++) {
+        if (i == src) continue;
+        if (out_mp[i] < 0) continue;
+        const Tile& ti = s.tile_at(i);
+        if (ti.has_unit() && s.get_unit(ti.unit_id()).owner() == p)
+            out_mp[i] = -1;
     }
 }
 
@@ -244,6 +260,12 @@ void GameState::set_explored(int player, int tile) {
 
 int GameState::spawn_unit(UnitType type, int owner, int tile_index, int city_id) {
     if (unit_count >= MAX_MAP_TILES) return INVALID;
+    // If the destination tile already has a unit, push it out before placing.
+    // This is the entry point for super-unit / Ruin / Polytaur-style spawns;
+    // ordinary city training never reaches here (legal_actions guards on
+    // !tile.has_unit()).
+    if (map[tile_index].has_unit())
+        push_unit_from(map[tile_index].unit_id(), tile_index, owner);
     int id = unit_count++;
     Unit& u = units[id];
     const UnitDef& def = unit_def(type);
