@@ -91,6 +91,7 @@ MapGenResult MapGen::generate() {
     place_villages(s, cap0, cap1);
     reroll_inner(s, result.climate, cap0, cap1);
     clear_far_resources(s, cap0, cap1);
+    ensure_min_fruit(s, cap0, cap1, 2);
 
     // TODO: ruins
 
@@ -286,6 +287,49 @@ void MapGen::clear_far_resources(GameState& s, int cap0, int cap1) {
         s.tile_at(c).set_resource(ResourceType::None);
         if (s.tile_at(c).terrain() == TerrainType::Mountain) {
             s.tile_at(c).set_terrain(TerrainType::Field);
+        }
+    }
+}
+
+// Guarantees each player's starting capital has at least `target` Fruit tiles
+// inside its 3x3 border. Per player: count current fruit in the 8 neighbour
+// tiles; if short, overwrite random non-fruit border tiles with Field+Fruit.
+// Skips capitals and villages so we don't clobber other city tiles.
+void MapGen::ensure_min_fruit(GameState& s, int cap0, int cap1, int target) {
+    const int sz = _p.map_size;
+    int caps[2] = { cap0, cap1 };
+
+    for (int p = 0; p < 2; p++) {
+        int cx, cy; to_coords(caps[p], cx, cy, sz);
+
+        int fruit_count = 0;
+        std::vector<int> candidates;
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                if (dx == 0 && dy == 0) continue;
+                int nx = cx + dx, ny = cy + dy;
+                if (!in_bounds(nx, ny, sz)) continue;
+                int idx = to_index(nx, ny, sz);
+                if (s.tile_at(idx).resource() == ResourceType::Fruit) {
+                    fruit_count++;
+                    continue;
+                }
+                if (idx == cap0 || idx == cap1) continue;
+                if (s.tile_at(idx).terrain() == TerrainType::Village) continue;
+                candidates.push_back(idx);
+            }
+
+        if (fruit_count >= target) continue;
+
+        for (int i = (int)candidates.size() - 1; i > 0; i--)
+            std::swap(candidates[i], candidates[randi(0, i)]);
+
+        int need = target - fruit_count;
+        int take = need < (int)candidates.size() ? need : (int)candidates.size();
+        for (int i = 0; i < take; i++) {
+            int idx = candidates[i];
+            s.tile_at(idx).set_terrain(TerrainType::Field);
+            s.tile_at(idx).set_resource(ResourceType::Fruit);
         }
     }
 }
