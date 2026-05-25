@@ -18,6 +18,26 @@
 // 5:3 diamond (matches grass sprite 840x507); recomputed each map gen to fill MAP_CANVAS.
 static int            TILE_W   = 56;
 static int            TILE_H   = 34;
+
+// Global UI font. Loaded after InitWindow; falls back to raylib default if missing.
+// Toggle with F at runtime.
+static Font g_font           = {};
+static bool g_use_custom_font = false;
+
+static inline bool g_font_active() { return g_use_custom_font && g_font.texture.id != 0; }
+
+static inline void DrawTextC(const char* text, int x, int y, int size, Color color) {
+    if (g_font_active())
+        DrawTextEx(g_font, text, { (float)x, (float)y }, (float)size, 0.0f, color);
+    else
+        DrawText(text, x, y, size, color);
+}
+
+static inline int MeasureTextC(const char* text, int size) {
+    if (g_font_active())
+        return (int)MeasureTextEx(g_font, text, (float)size, 0.0f).x;
+    return MeasureText(text, size);
+}
 static constexpr int PAD      = 4;
 static constexpr int LABEL    = 20;
 static constexpr int TOP_HUD  = 64;
@@ -26,8 +46,10 @@ static constexpr int TECH_W   = 210;
 static constexpr int MAP_OFF  = TECH_W;
 static constexpr int MAP_CANVAS = 674;
 static constexpr int MAP_PX     = MAP_CANVAS + PAD * 2 + LABEL;
-static constexpr int LOG_W      = 260;
-static constexpr int TECH_H     = 150;
+static constexpr int LOG_W      = 200;
+static constexpr int TECH_H     = 0;
+static constexpr float TECH_PANEL_SIZE = 320.0f;  // square side of the expanded tech tree panel
+static constexpr float TECH_ICON_R     = 18.0f;   // radius of the collapsed bottom-left icon
 static constexpr int W          = TECH_W + MAP_PX + SIDEBAR + LOG_W;
 // CONTENT_H = main content bottom; H = full window incl. bottom tech strip.
 static constexpr int CONTENT_H  = TOP_HUD + MAP_CANVAS + PAD * 2 + LABEL;
@@ -87,15 +109,27 @@ struct Transformer {
 // Per-unit-type sprite tweak.
 static const Transformer UNIT_TRANSFORMERS[(int)UnitType::Count] = {
     /* None     */ { 0.00f,  0.00f, 0.75f },
-    /* Warrior  */ { -0.03f, -0.04f, 0.75f },
-    /* Archer   */ { 0.05f, -0.05f, 0.76f },
-    /* Rider    */ { 0.00f, -0.08f, 0.65f },
-    /* Defender */ { 0.00f, -0.08f, 0.78f },
-    /* Giant    */ { 0.00f, -0.10f, 0.95f },
+    /* Warrior  */ { -0.03f, -0.04f, 0.70f },
+    /* Archer   */ { 0.05f, -0.05f, 0.73f },
+    /* Rider    */ { 0.00f, -0.08f, 0.62f },
+    /* Defender */ { 0.00f, -0.08f, 0.73f },
+    /* Giant    */ { 0.00f, -0.15f, 0.76f },
 };
 
 // HP number above the diamond top; scale multiplies 11pt base.
-static const Transformer HP_TRANSFORMER = { -0.22f, 0.24f, 1.00f };
+static const Transformer HP_TRANSFORMER = { -0.22f, 0.24f, 0.9f };
+
+// Defense shield(s) shown next to HP when a fortified unit has a defense
+// multiplier > 1.0. scale sets the base shield width in pixels; x/y_offset
+// nudge the whole shield strip relative to its anchor (right of the HP text).
+static const Transformer SHIELD_TRANSFORMER = { -0.11f, 0.03f, 12.0f };
+static const Transformer SECOND_SHIELD_TRANSFORMER = { -0.28f, 0.03f, 15.5f };
+
+// Top HUD star icons (both the big stars next to player totals and the small
+// stars next to per-player SPT). x/y_offset here are SCREEN PIXELS (unlike the
+// tile-fraction Transformers above); scale multiplies the base icon height.
+static Transformer TOP_HUD_STAR_TRANSFORMER = { 0.0f, -5.5f, 1.00f };
+static Transformer BOTTOM_HUD_STAR_TRANSFORMER = { 0.0f, -2.0f, 1.00f };
 
 // Transformer + opacity multiplier for ring visuals.
 struct RingTransformer {
@@ -310,9 +344,68 @@ static inline void draw_city_sprite(Vector2 ctr, int level) {
         { 0, 0 }, 0.0f, WHITE);
 }
 
+// --- Star icon ----------------------------------------------------------------
+// Loaded from sprites/star.png. Used wherever the UI previously printed a '*'
+// for stars (top HUD totals, per-city SPT, per-player SPT subtext).
+static Texture2D        g_star_tex  = {};
+static TerrainAlphaBBox g_star_bbox = {};
+
+// Width of the rendered star icon when its alpha-bbox height equals target_h.
+static inline float star_icon_width(float target_h) {
+    if (g_star_tex.id == 0) return 0.0f;
+    int bbox_h = g_star_bbox.max_y - g_star_bbox.min_y;
+    int bbox_w = g_star_bbox.max_x - g_star_bbox.min_x;
+    if (bbox_h <= 0 || bbox_w <= 0) return 0.0f;
+    return (float)bbox_w * (target_h / (float)bbox_h);
+}
+
+// Draws the star centered at (cx, cy) so its alpha-bbox has height target_h.
+static inline void draw_star_icon(float cx, float cy, float target_h, Color tint = WHITE) {
+    if (g_star_tex.id == 0) return;
+    const TerrainAlphaBBox& bb = g_star_bbox;
+    int bbox_h = bb.max_y - bb.min_y;
+    int bbox_w = bb.max_x - bb.min_x;
+    if (bbox_h <= 0 || bbox_w <= 0) return;
+    float scale = target_h / (float)bbox_h;
+    float dst_w = (float)g_star_tex.width  * scale;
+    float dst_h = (float)g_star_tex.height * scale;
+    float bb_cx = (bb.min_x + bb.max_x) * 0.5f;
+    float bb_cy = (bb.min_y + bb.max_y) * 0.5f;
+    float dx = cx - bb_cx * scale;
+    float dy = cy - bb_cy * scale;
+    DrawTexturePro(g_star_tex,
+        { 0, 0, (float)g_star_tex.width, (float)g_star_tex.height },
+        { dx, dy, dst_w, dst_h },
+        { 0, 0 }, 0.0f, tint);
+}
+
+// --- City names ---------------------------------------------------------------
+// Tile index -> name via a stable hash; same map regen = same names.
+static const char* CITY_NAMES[] = {
+    "Epic", "Iris", "Jaiden", "Steven", "Tina", "WinchestrAve", "McartnyAve",
+     "Chatswood", "Lindfield", "North Ryde", "Icado", "Dopilus"
+};
+static inline const char* city_name_for(int tile_index) {
+    constexpr int N = (int)(sizeof(CITY_NAMES) / sizeof(CITY_NAMES[0]));
+    uint32_t h = (uint32_t)tile_index;
+    h = ((h >> 16) ^ h) * 0x45d9f3bu;
+    h = ((h >> 16) ^ h) * 0x45d9f3bu;
+    h = (h >> 16) ^ h;
+    return CITY_NAMES[h % N];
+}
+
 // Pop-bar tile-anchor tweak. x/y_offset in tile-fractions (same convention as
 // the other Transformer constants), scale multiplies the base bar size.
-static Transformer POP_BAR_TRANSFORMER = { 0.00f, 0.22f, 0.6f };
+static Transformer POP_BAR_TRANSFORMER = { 0.00f, 0.30f, 0.6f };
+
+// Bar-length multiplier indexed by city capacity (= level + 1). Tiny capacities
+// shrink the bar so a 2-cell level-1 city doesn't look as wide as a 5-cell city.
+static inline float pop_bar_length_factor(int capacity) {
+    if (capacity <= 2) return 2.0f / 3.0f;
+    if (capacity == 3) return 0.8f;
+    if (capacity == 4) return 0.9f;
+    return 1.0f;
+}
 
 // Light-grey population bar. Divided into `capacity` (= level + 1) subcells.
 // Filled width = pop / capacity. One black dot per existing unit fills
@@ -322,17 +415,16 @@ static inline void draw_pop_bar(Vector2 ctr, int pop, int capacity,
                                 int units_owned, int owner) {
     if (capacity <= 0) return;
     const Transformer& xf = POP_BAR_TRANSFORMER;
-    const float W = TILE_W * 0.70f * xf.scale;
-    const float H = TILE_H * 0.14f * xf.scale;
+    const float W = TILE_W * 0.9f * xf.scale * pop_bar_length_factor(capacity);
+    const float H = TILE_H * 0.2f * xf.scale;
     const float X = ctr.x + xf.x_offset * TILE_W - W * 0.5f;
     const float Y = ctr.y + xf.y_offset * TILE_H - H * 0.5f;
 
     const Color BG_COL      = { 210, 210, 210, 230 };
     const Color OUTLINE_COL = {  90,  90,  90, 230 };
     const Color DIVIDER_COL = {  70,  70,  70, 220 };
-    const Color FILL_COL    = (owner == 0)
-        ? Color{ 110, 170, 250, 240 }
-        : Color{ 230,  70,  70, 240 };
+    (void)owner;
+    const Color FILL_COL    = { 60, 170, 255, 240 };
 
     Rectangle bg = { X, Y, W, H };
     DrawRectangleRec(bg, BG_COL);
@@ -354,15 +446,127 @@ static inline void draw_pop_bar(Vector2 ctr, int pop, int capacity,
     }
 
     int dots = units_owned < capacity ? units_owned : capacity;
-    float dot_r = H * 0.28f;
-    if (dot_r < 1.5f) dot_r = 1.5f;
+    // Integer side + integer top-left so the square rasterizes evenly on every
+    // pixel; floats give one extra row/column on some dots and look rectangular.
+    int side = (int)(H * 0.30f + 0.5f);
+    if (side < 2) side = 2;
     for (int i = 0; i < dots; i++) {
         float dot_cx = X + (W * (i + 0.5f)) / (float)capacity;
         float dot_cy = Y + H * 0.5f;
-        DrawCircleV({ dot_cx, dot_cy }, dot_r, BLACK);
+        int left = (int)(dot_cx - side * 0.5f + 0.5f);
+        int top  = (int)(dot_cy - side * 0.5f + 0.5f);
+        DrawRectangle(left, top, side, side, BLACK);
     }
 
     DrawRectangleLinesEx(bg, line_thick, OUTLINE_COL);
+}
+
+// Per-city label rendered below the pop bar: blue translucent banner with
+// "Name [star]+SPT" in white. Called from a dedicated post-units pass so the
+// banner sits in front of everything (including units on the city tile).
+static inline void draw_city_label(Vector2 ctr, const char* name, int spt) {
+    constexpr int   FS              = 6;
+    constexpr float GAP_NAME_STAR   = 2.0f;
+    constexpr float GAP_STAR_NUM    = 0.7f;
+    constexpr float BANNER_PAD_X    = 4.0f;
+    constexpr float BANNER_PAD_Y    = 3.5f;
+    const     Color BANNER_COL      = {  30,  90, 200, 170 };
+    const     Color TEXT_COL        = WHITE;
+
+    char spt_buf[16];
+    snprintf(spt_buf, sizeof(spt_buf), "%d", spt);
+    int name_w = MeasureTextC(name,    FS);
+    int spt_w  = MeasureTextC(spt_buf, FS);
+
+    float star_h = (float)FS * 0.9f;
+    float star_w = star_icon_width(star_h);
+
+    float total_w = (float)name_w + GAP_NAME_STAR + star_w + GAP_STAR_NUM + (float)spt_w;
+    float cx = ctr.x;
+    // Place the banner just above the pop bar's top edge. Derived from
+    // POP_BAR_TRANSFORMER so any future bar tweak shifts the label in step.
+    constexpr float LABEL_GAP_TO_BAR = 2.0f;
+    const float pop_bar_h     = (float)TILE_H * 0.14f * POP_BAR_TRANSFORMER.scale;
+    const float pop_bar_top_y = ctr.y + POP_BAR_TRANSFORMER.y_offset * (float)TILE_H
+                              - pop_bar_h * 0.5f;
+    const float label_half_h  = (float)FS * 0.5f + BANNER_PAD_Y;
+    float cy = pop_bar_top_y - LABEL_GAP_TO_BAR - label_half_h;
+
+    Rectangle banner = {
+        cx - total_w * 0.5f - BANNER_PAD_X,
+        cy - (float)FS * 0.5f - BANNER_PAD_Y,
+        total_w + BANNER_PAD_X * 2.0f,
+        (float)FS + BANNER_PAD_Y * 2.0f
+    };
+    DrawRectangleRec(banner, BANNER_COL);
+
+    float x  = cx - total_w * 0.5f;
+    int   ty = (int)(cy - (float)FS * 0.5f);
+
+    DrawTextC(name, (int)x, ty, FS, TEXT_COL);
+    x += (float)name_w + GAP_NAME_STAR;
+
+    if (star_w > 0.0f) {
+        draw_star_icon(x + star_w * 0.5f, cy, star_h);
+        x += star_w + GAP_STAR_NUM;
+    }
+
+    DrawTextC(spt_buf, (int)x, ty, FS, TEXT_COL);
+}
+
+// Mirrors GameState::get_defense_bonus, but const-friendly so it can be called
+// from the render loop. Returns 1.0/1.5/2.0; 2.0 = fortify on tech-defended
+// terrain AND city walls.
+static inline float defense_bonus_for_render(const GameState& s, const Tile& t) {
+    if (!t.has_unit()) return 1.0f;
+    const Unit& u = s.get_unit(t.unit_id());
+    if (!u.has_ability(ABILITY_FORTIFY)) return 1.0f;
+    TerrainType terrain = t.terrain();
+    const Player& p = s.get_player(u.owner());
+    float total = 1.0f;
+    for (TechType tech : p.get_techs()) {
+        const auto& terrains = tech_def(tech).defense_terrains;
+        if (std::find(terrains.begin(), terrains.end(), terrain) != terrains.end()) {
+            total = 1.5f;
+            break;
+        }
+    }
+    if (t.has_city()) {
+        total += 0.5f;
+        if (s.get_city(t.city_id()).has_walls()) total += 0.5f;
+    }
+    return total;
+}
+
+// Pentagon shield outline (flat top, V bottom). `size` = width in pixels;
+// height auto-scales. Caller stamps it twice — black at +1/+1, then white on
+// top — to get the same drop-shadow look as the HP text.
+static inline void draw_shield(float cx, float cy, float size, Color outline) {
+    // DrawLineV uses GL_LINES → true 1-pixel strokes (DrawLineEx draws a quad
+    // that smears slightly thicker than 1 px). Endpoints are snapped to whole
+    // pixels SYMMETRICALLY around the integer-snapped centre — otherwise a
+    // float cx that lands between pixels (e.g. 10.3) rounds lx and rx in
+    // opposite directions and one leg of the V ends up a pixel longer.
+    int icx     = (int)floorf(cx + 0.5f);
+    int half_w  = (int)floorf(size * 0.5f + 0.5f);
+    int half_h  = (int)floorf(size * 0.6f + 0.5f);     // h = size * 1.2
+    // mid_y pushed down so the V is shallower (was size*0.18). Triangle height
+    int mid_off = (int)floorf(size * 0.24f + 0.5f);
+    int top_y   = (int)floorf(cy + 0.5f) - half_h;
+    int mid_y   = (int)floorf(cy + 0.5f) + mid_off;
+    int bot_y   = (int)floorf(cy + 0.5f) + half_h;
+    int ilx     = icx - half_w;
+    int irx     = icx + half_w;
+    // Edges and diagonals are drawn so mirrored pairs share the same start
+    // direction — GL_LINES rasterization (diamond-exit rule) drops the end
+    // pixel, so a `right: mid→apex` paired with `left: apex→mid` ends up one
+    // pixel asymmetric. Both diagonals now start at the apex.
+    auto P = [](int x, int y) -> Vector2 { return { (float)x, (float)y }; };
+    DrawLineV(P(ilx, top_y), P(irx, top_y), outline);   // top edge
+    DrawLineV(P(irx, top_y), P(irx, mid_y), outline);   // right edge
+    DrawLineV(P(ilx, top_y), P(ilx, mid_y), outline);   // left  edge (same dir as right)
+    DrawLineV(P(icx, bot_y), P(irx, mid_y), outline);   // right diag (apex → mid)
+    DrawLineV(P(icx, bot_y), P(ilx, mid_y), outline);   // left  diag (apex → mid)
 }
 
 static inline void draw_diamond(Vector2 ctr, Color fill) {
@@ -592,6 +796,7 @@ static std::string format_action_str(const Action& a, int player, int turn, int 
             return p + "Upgrade: " + (a.param >= 0 && a.param < 8 ? unames[a.param] : "?");
         }
         case ActionType::EndTurn:           return p + "EndTurn";
+        case ActionType::Recover:           return p + "Recover " + coords(a.from);
         case ActionType::TrainUnit:
             return p + "Train " + (a.param > 0 && a.param < (int)UnitType::Count ? unit_names[a.param] : "?") + " @ " + coords(a.from);
         case ActionType::ResearchTech:
@@ -674,7 +879,7 @@ static void action_cost(const Action& a, char* buf, int size, int owned_cities) 
     }
 }
 
-enum class ActionCategory { None, Train, Move, Attack, Capture, Harvest, Research, Upgrade, Debug, EndTurn };
+enum class ActionCategory { None, Train, Move, Attack, Capture, Harvest, Recover, Research, Upgrade, Debug, EndTurn };
 
 static ActionCategory action_category(const Action& a) {
     switch (a.type) {
@@ -683,6 +888,7 @@ static ActionCategory action_category(const Action& a) {
         case ActionType::Attack:          return ActionCategory::Attack;
         case ActionType::CaptureCity:     return ActionCategory::Capture;
         case ActionType::HarvestResource: return ActionCategory::Harvest;
+        case ActionType::Recover:         return ActionCategory::Recover;
         case ActionType::ResearchTech:    return ActionCategory::Research;
         case ActionType::UpgradeCity:     return ActionCategory::Upgrade;
         case ActionType::DebugAddPop:     return ActionCategory::Debug;
@@ -698,6 +904,7 @@ static const char* category_name(ActionCategory c) {
         case ActionCategory::Attack:  return "Attack";
         case ActionCategory::Capture: return "Capture";
         case ActionCategory::Harvest: return "Harvest";
+        case ActionCategory::Recover: return "Recover";
         case ActionCategory::Research:return "Research";
         case ActionCategory::Upgrade: return "Upgrade City";
         case ActionCategory::Debug:   return "Debug";
@@ -741,6 +948,10 @@ static void action_label(const Action& a, char* buf, int size) {
         }
         case ActionType::DebugAddPop:
             snprintf(buf, size, "+%d pop city %d", a.param, a.from);
+            break;
+        case ActionType::Recover:
+            to_coords(a.from, fx, fy);
+            snprintf(buf, size, "Recover (%d,%d)", fx, fy);
             break;
         case ActionType::UpgradeCity: {
             static const char* upgrade_names[] = {
@@ -814,32 +1025,100 @@ static int build_sidebar_layout(const Action* actions, int count,
 }
 
 
-// Tech tree layout. Tiers: 0=Origin, 1=Hunting/Org/Riding/Climbing, 2=Archery/Mining.
+// Radial tech tree — three concentric rings around a central Origin.
+//   Tier 1: 5 slots on a ring at radius T1_DIST. Angles start at top (90°)
+//           and step −72° clockwise: Riding, Organisation, Climbing,
+//           Fishing (placeholder, not in engine), Hunting.
+//   Tier 2: 10 slots on a ring at radius T2_DIST. Angles start at 18° and
+//           step +36° counter-clockwise. Existing tier-2 techs sit on the
+//           slot aligned with their parent's ray.
+//   Tier 3: 10 slots on a ring at radius T3_DIST, same angles as tier 2.
+//           No engine techs yet; all slots render as faded placeholders.
+// All distances are in unit-square [0,1] coords (math: x→right, y→up) and
+// scale with `size` at draw time, so the layout is resolution-independent.
 struct TechNode {
-    TechType type;
-    int      tier;   // 0,1,2
-    float    slot;   // fractional column within tier (0-based)
-    int      parent; // index into NODES, or -1
+    TechType type;     // TechType::None ⇒ empty placeholder slot
+    int      parent;   // index into NODES, or -1 (no edge drawn)
+    float    ux, uy;
 };
 
-static const TechNode NODES[] = {
-    // idx  type                      tier  slot  parent
-    { TechType::Origin,       0,  0.0f,  -1 },  // 0
-    { TechType::Hunting,      1,  0.0f,   0 },  // 1
-    { TechType::Organisation, 1,  1.0f,   0 },  // 2
-    { TechType::Riding,       1,  2.0f,   0 },  // 3
-    { TechType::Climbing,     1,  3.0f,   0 },  // 4
-    { TechType::Archery,      2,  0.5f,   1 },  // 5  child of Hunting
-    { TechType::Farming,      2,  1.5f,   2 },  // 6  child of Organisation
-    { TechType::Mining,       2,  3.5f,   4 },  // 7  child of Climbing
-};
-static constexpr int NODE_COUNT = 8;
+namespace {
+    constexpr float T1_DIST = 0.15f;
+    constexpr float T2_DIST = 0.30f;
+    constexpr float T3_DIST = 0.45f;
 
-// Tiers stack top→bottom (Origin on top); slots spread left→right per tier.
-// hover_tech: -1 for none. scale: >1 zooms in.
+    // Hardcoded cos/sin tables (constexpr trig isn't portable).
+    // Tier 1 angles: 90°, 18°, −54°, −126°, −198° (top then clockwise)
+    constexpr float T1_COS[5] = { 0.00000f,  0.95106f,  0.58779f, -0.58779f, -0.95106f };
+    constexpr float T1_SIN[5] = { 1.00000f,  0.30902f, -0.80902f, -0.80902f,  0.30902f };
+    // Tier 2 & 3 angles: 18°, 54°, 90°, 126°, 162°, 198°, 234°, 270°, 306°, 342°
+    constexpr float TN_COS[10] = {
+        0.95106f,  0.58779f,  0.00000f, -0.58779f, -0.95106f,
+       -0.95106f, -0.58779f,  0.00000f,  0.58779f,  0.95106f
+    };
+    constexpr float TN_SIN[10] = {
+        0.30902f,  0.80902f,  1.00000f,  0.80902f,  0.30902f,
+       -0.30902f, -0.80902f, -1.00000f, -0.80902f, -0.30902f
+    };
+
+    inline constexpr float t1_ux(int i) { return 0.5f + T1_DIST * T1_COS[i]; }
+    inline constexpr float t1_uy(int i) { return 0.5f + T1_DIST * T1_SIN[i]; }
+    inline constexpr float t2_ux(int i) { return 0.5f + T2_DIST * TN_COS[i]; }
+    inline constexpr float t2_uy(int i) { return 0.5f + T2_DIST * TN_SIN[i]; }
+    inline constexpr float t3_ux(int i) { return 0.5f + T3_DIST * TN_COS[i]; }
+    inline constexpr float t3_uy(int i) { return 0.5f + T3_DIST * TN_SIN[i]; }
+
+    constexpr int NODE_COUNT = 26;  // 1 origin + 5 tier-1 + 10 tier-2 + 10 tier-3
+
+    // Stable parent indices into NODES[] for edge lookup.
+    constexpr int N_RIDING       = 1;
+    constexpr int N_ORGANISATION = 2;
+    constexpr int N_CLIMBING     = 3;
+    constexpr int N_HUNTING      = 5;
+}
+
+static const TechNode NODES[NODE_COUNT] = {
+    // Origin (centre)
+    { TechType::Origin,        -1,             0.5f,     0.5f     },  // 0
+
+    // Tier 1: top, then clockwise
+    { TechType::Riding,         0,             t1_ux(0), t1_uy(0) },  // 1  90°  top
+    { TechType::Organisation,   0,             t1_ux(1), t1_uy(1) },  // 2  18°  upper-right
+    { TechType::Climbing,       0,             t1_ux(2), t1_uy(2) },  // 3 −54°  lower-right
+    { TechType::None,           0,             t1_ux(3), t1_uy(3) },  // 4 −126° Fishing (placeholder)
+    { TechType::Hunting,        0,             t1_ux(4), t1_uy(4) },  // 5 −198° upper-left
+
+    // Tier 2: 10-slot ring; bound techs aligned with parent's ray when possible
+    { TechType::Farming,        N_ORGANISATION, t2_ux(0), t2_uy(0) },  // 6  18°
+    { TechType::Strategy,       N_ORGANISATION, t2_ux(1), t2_uy(1) },  // 7  54°
+    { TechType::None,          -1,              t2_ux(2), t2_uy(2) },  // 8  90°
+    { TechType::None,          -1,              t2_ux(3), t2_uy(3) },  // 9  126°
+    { TechType::Archery,        N_HUNTING,      t2_ux(4), t2_uy(4) },  // 10 162°
+    { TechType::None,          -1,              t2_ux(5), t2_uy(5) },  // 11 198°
+    { TechType::None,          -1,              t2_ux(6), t2_uy(6) },  // 12 234°
+    { TechType::None,          -1,              t2_ux(7), t2_uy(7) },  // 13 270°
+    { TechType::Mining,         N_CLIMBING,     t2_ux(8), t2_uy(8) },  // 14 306°
+    { TechType::None,          -1,              t2_ux(9), t2_uy(9) },  // 15 342°
+
+    // Tier 3: 10-slot ring at T3_DIST, all empty placeholders
+    { TechType::None,          -1,              t3_ux(0), t3_uy(0) },  // 16 18°
+    { TechType::None,          -1,              t3_ux(1), t3_uy(1) },  // 17 54°
+    { TechType::None,          -1,              t3_ux(2), t3_uy(2) },  // 18 90°
+    { TechType::None,          -1,              t3_ux(3), t3_uy(3) },  // 19 126°
+    { TechType::None,          -1,              t3_ux(4), t3_uy(4) },  // 20 162°
+    { TechType::None,          -1,              t3_ux(5), t3_uy(5) },  // 21 198°
+    { TechType::None,          -1,              t3_ux(6), t3_uy(6) },  // 22 234°
+    { TechType::None,          -1,              t3_ux(7), t3_uy(7) },  // 23 270°
+    { TechType::None,          -1,              t3_ux(8), t3_uy(8) },  // 24 306°
+    { TechType::None,          -1,              t3_ux(9), t3_uy(9) },  // 25 342°
+};
+
+// Draws the tech tree inside a square anchored at (bl_x, bl_y) (screen-space
+// bottom-left corner). All sizes (node radius, font, edge thickness) scale
+// with `size` so the layout is fully resolution-independent.
 static void draw_tech_tree(uint32_t owned_techs, int player_idx,
-                           int rx, int ry, int rw, int rh, const char* label,
-                           int hover_tech = -1, float scale = 1.0f)
+                           float bl_x, float bl_y, float size,
+                           int hover_tech = -1)
 {
     const Color owned_col  = (player_idx == 0) ? COL_P0 : COL_P1;
     const Color avail_col  = { 130, 130, 130, 255 };
@@ -847,85 +1126,62 @@ static void draw_tech_tree(uint32_t owned_techs, int player_idx,
     const Color edge_col   = {  70,  70,  70, 255 };
     const Color hover_col  = { 255, 220,  60, 255 };
 
-    constexpr int   TIERS   = 3;
-    constexpr int   FONT_SZ = 9;
-    const float     NODE_R  = 11.0f * scale;
+    const float node_r        = size * 0.035f;
+    const float placeholder_r = node_r * 0.65f;
+    const float edge_thk      = std::max(1.0f, size * 0.010f);
+    const int   font_sz       = (int)std::max(8.0f, size * 0.040f);
 
-    int header_h = (label != nullptr) ? 16 : 0;
-
-    if (label) {
-        int lw = MeasureText(label, FONT_SZ + 2);
-        DrawText(label, rx + rw / 2 - lw / 2, ry + 2, FONT_SZ + 2, owned_col);
-    }
-
-    // Reserve label_room at bottom so last tier's tech name doesn't clip.
-    float content_y  = (float)ry + header_h;
-    float content_h  = (float)rh - header_h;
-    float label_room = NODE_R + FONT_SZ + 4;
-
-    // Largest slot (Mining=3.5) sets the horizontal range.
-    float max_slot = 0.0f;
-    for (int i = 0; i < NODE_COUNT; i++)
-        if (NODES[i].slot > max_slot) max_slot = NODES[i].slot;
-
-    // Tiers stack top→bottom across content_h.
-    float v_top    = content_y + NODE_R;
-    float v_bot    = content_y + content_h - label_room;
-    float v_range  = v_bot - v_top;
-    auto tier_y = [&](int tier) -> float {
-        if (TIERS <= 1) return v_top;
-        return v_top + (tier / (float)(TIERS - 1)) * v_range;
-    };
-
-    // Slots 0..max_slot spread across width; H_MARGIN insets past node radius.
-    const float H_MARGIN = NODE_R + 32.0f;
-    float h_left  = rx + H_MARGIN;
-    float h_right = rx + rw - H_MARGIN;
-    float h_range = h_right - h_left;
-    auto node_x = [&](float slot, int tier) -> float {
-        if (tier == 0) return rx + rw * 0.5f;
-        return h_left + (max_slot > 0 ? slot / max_slot : 0.0f) * h_range;
+    auto to_screen = [&](float ux, float uy) -> Vector2 {
+        return { bl_x + ux * size, bl_y - uy * size };
     };
 
     uint32_t avail = available_techs(owned_techs);
 
-    // Edges first so nodes draw on top.
+    // Edges first so nodes draw on top. Only drawn for bound techs.
     for (int i = 0; i < NODE_COUNT; i++) {
         if (NODES[i].parent < 0) continue;
-        int p = NODES[i].parent;
-        float x1 = node_x(NODES[p].slot, NODES[p].tier);
-        float y1 = tier_y(NODES[p].tier);
-        float x2 = node_x(NODES[i].slot, NODES[i].tier);
-        float y2 = tier_y(NODES[i].tier);
+        if (NODES[i].type == TechType::None) continue;
+        Vector2 p1 = to_screen(NODES[NODES[i].parent].ux, NODES[NODES[i].parent].uy);
+        Vector2 p2 = to_screen(NODES[i].ux, NODES[i].uy);
         bool  is_hover_edge = (hover_tech == static_cast<int>(NODES[i].type));
         Color ec = is_hover_edge ? hover_col : edge_col;
-        float thick = is_hover_edge ? 2.5f : 1.5f;
-        DrawLineEx({x1, y1}, {x2, y2}, thick, ec);
+        float thick = is_hover_edge ? edge_thk * 1.7f : edge_thk;
+        DrawLineEx(p1, p2, thick, ec);
     }
 
     // Nodes
+    const Color placeholder_col = { 45, 45, 45, 220 };
     for (int i = 0; i < NODE_COUNT; i++) {
-        float nx = node_x(NODES[i].slot, NODES[i].tier);
-        float ny = tier_y(NODES[i].tier);
-        bool  is_owned  = (owned_techs >> static_cast<int>(NODES[i].type)) & 1;
-        bool  is_avail  = (avail       >> static_cast<int>(NODES[i].type)) & 1;
-        bool  is_hov    = (hover_tech  == static_cast<int>(NODES[i].type));
+        Vector2 p = to_screen(NODES[i].ux, NODES[i].uy);
+
+        // Empty slots render as small faded dots so the ring structure is visible.
+        if (NODES[i].type == TechType::None) {
+            DrawCircleV(p, placeholder_r, placeholder_col);
+            continue;
+        }
+
+        bool is_owned = (owned_techs >> static_cast<int>(NODES[i].type)) & 1;
+        bool is_avail = (avail       >> static_cast<int>(NODES[i].type)) & 1;
+        bool is_hov   = (hover_tech  == static_cast<int>(NODES[i].type));
 
         Color fill = is_hov    ? hover_col
                    : is_owned  ? owned_col
                    : is_avail  ? avail_col
                    : locked_col;
-        DrawCircleV({nx, ny}, NODE_R, fill);
+        // Outline = larger filled circle behind the fill (DrawCircleLines
+        // rounds to int and misaligns from the float-radius fill at small sizes).
         Color outline = is_hov ? WHITE : Color{ 0, 0, 0, 180 };
-        DrawCircleLines((int)nx, (int)ny, (int)NODE_R, outline);
+        float outline_thk = std::max(1.0f, node_r * 0.12f);
+        DrawCircleV(p, node_r + outline_thk, outline);
+        DrawCircleV(p, node_r, fill);
 
         if (NODES[i].type != TechType::Origin) {
             const char* name = tech_def(NODES[i].type).name;
-            int tw = MeasureText(name, FONT_SZ);
+            int tw = MeasureTextC(name, font_sz);
             Color tc = (is_owned || is_hov) ? WHITE
                      : is_avail ? Color{200,200,200,255}
                      : Color{100,100,100,255};
-            DrawText(name, (int)(nx - tw * 0.5f), (int)(ny + NODE_R + 2), FONT_SZ, tc);
+            DrawTextC(name, (int)(p.x - tw * 0.5f), (int)(p.y + node_r + 2), font_sz, tc);
         }
     }
 }
@@ -1145,13 +1401,20 @@ int main(int argc, char** argv) {
     Action actions[256];
     int    action_count   = 0;
     int    sidebar_scroll = 0;
-    float  tech_zoom      = 1.0f;
+    bool   tech_open      = false;   // sticky toggle from clicking the icon
     s.legal_actions(actions, action_count);
 
     // HiDPI: render at physical pixel density so Retina doesn't upscale and blur.
     SetConfigFlags(FLAG_WINDOW_HIGHDPI);
     InitWindow(W, H, "Polyshark");
     SetTargetFPS(60);
+
+    // Load San Francisco at a large atlas size; raylib scales down per-draw.
+    g_font = LoadFontEx("/System/Library/Fonts/SFNS.ttf", 64, nullptr, 0);
+    if (g_font.texture.id != 0)
+        SetTextureFilter(g_font.texture, TEXTURE_FILTER_BILINEAR);
+    else
+        fprintf(stderr, "Failed to load SFNS.ttf; using raylib default font.\n");
 
     // Unit sprites [owner][UnitType]. Missing files fall back to circle+letter.
     Texture2D unit_tex[2][(int)UnitType::Count] = {};
@@ -1204,10 +1467,12 @@ int main(int argc, char** argv) {
     load_sprite(0, UnitType::Archer,   "visualizer/sprites/units/blue/archer_blue.png");
     load_sprite(0, UnitType::Rider,    "visualizer/sprites/units/blue/rider_blue.png");
     load_sprite(0, UnitType::Defender, "visualizer/sprites/units/blue/defender_blue.png");
+    load_sprite(0, UnitType::Giant,    "visualizer/sprites/units/blue/giant_blue.png");
     load_sprite(1, UnitType::Warrior,  "visualizer/sprites/units/red/warrior_red.png");
     load_sprite(1, UnitType::Archer,   "visualizer/sprites/units/red/archer_red.png");
     load_sprite(1, UnitType::Rider,    "visualizer/sprites/units/red/rider_red.png");
     load_sprite(1, UnitType::Defender, "visualizer/sprites/units/red/defender_red.png");
+    load_sprite(1, UnitType::Giant,    "visualizer/sprites/units/red/giant_red.png");
 
     auto load_terrain = [&](TerrainSprite ts, const char* path) {
         if (!FileExists(path)) { fprintf(stderr, "missing sprite: %s\n", path); return; }
@@ -1307,6 +1572,36 @@ int main(int argc, char** argv) {
         load_city(lvl, path);
     }
 
+    // Star icon — used by top HUD and per-city SPT labels.
+    {
+        const char* path = "visualizer/sprites/star.png";
+        if (!FileExists(path)) {
+            fprintf(stderr, "missing sprite: %s\n", path);
+        } else if (Image img = LoadImage(path); img.data != nullptr) {
+            Color* px = LoadImageColors(img);
+            int min_x = img.width, max_x = -1, min_y = img.height, max_y = -1;
+            for (int y = 0; y < img.height; y++) {
+                for (int x = 0; x < img.width; x++) {
+                    if (px[y * img.width + x].a > 16) {
+                        if (x < min_x) min_x = x;
+                        if (x > max_x) max_x = x;
+                        if (y < min_y) min_y = y;
+                        if (y > max_y) max_y = y;
+                    }
+                }
+            }
+            UnloadImageColors(px);
+            Texture2D t = LoadTextureFromImage(img);
+            UnloadImage(img);
+            if (t.id != 0) {
+                GenTextureMipmaps(&t);
+                SetTextureFilter(t, TEXTURE_FILTER_ANISOTROPIC_16X);
+                g_star_tex  = t;
+                g_star_bbox = { min_x, max_x + 1, min_y, max_y + 1 };
+            }
+        }
+    }
+
     while (!WindowShouldClose()) {
 
         if (IsKeyPressed(KEY_TAB)) {
@@ -1315,6 +1610,8 @@ int main(int argc, char** argv) {
                    (view == ViewMode::P1)      ? ViewMode::Current : ViewMode::Omni;
         }
 
+        if (IsKeyPressed(KEY_F)) g_use_custom_font = !g_use_custom_font;
+
         // Build sidebar layout (headers + action rows)
         static SidebarRow layout[512];
         int layout_count = build_sidebar_layout(actions, action_count, layout, 512);
@@ -1322,16 +1619,6 @@ int main(int argc, char** argv) {
         // Compute hovered action before drawing so map tiles can react to it
         Vector2 mouse   = GetMousePosition();
         bool    clicked = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
-
-        // Scroll wheel zooms tech tree when cursor is over the bottom strip panel
-        if (mouse.y >= CONTENT_H && mouse.x >= W / 6 && mouse.x < W - W / 6) {
-            float wheel = GetMouseWheelMove();
-            if (wheel != 0.0f) {
-                tech_zoom *= (wheel > 0 ? 1.15f : 1.0f / 1.15f);
-                if (tech_zoom < 0.4f) tech_zoom = 0.4f;
-                if (tech_zoom > 3.0f) tech_zoom = 3.0f;
-            }
-        }
 
         // Scroll wheel scrolls the sidebar actions list
         int SB_CONTENT_TOP = SIDEBAR_TOP;
@@ -1574,13 +1861,6 @@ int main(int argc, char** argv) {
                     draw_tile_borders(idx, ctr, self_border_owner);
                 }
 
-                // Move-dest: cyan ring. Attack-dest: same ring in red.
-                if (is_move_dest(idx)) {
-                    draw_movement_ring(ctr, { 80, 220, 255, 130 });
-                } else if (is_attack_dest(idx)) {
-                    draw_movement_ring(ctr, { 230, 80, 80, 130 });
-                }
-
                 // Overlays between terrain and unit so units occlude them.
                 if (!fogged) {
                     if (t.terrain() == TerrainType::Forest)
@@ -1596,6 +1876,14 @@ int main(int argc, char** argv) {
                         const City& c = render_state.get_city(t.city_id());
                         draw_city_sprite(ctr, c.level());
                     }
+                }
+
+                // Move-dest: cyan ring. Attack-dest: same ring in red.
+                // Drawn after city sprite so the ring sits in front of cities.
+                if (is_move_dest(idx)) {
+                    draw_movement_ring(ctr, { 80, 220, 255, 130 });
+                } else if (is_attack_dest(idx)) {
+                    draw_movement_ring(ctr, { 230, 80, 80, 130 });
                 }
 
                 // Hover highlight on top of terrain/overlays. Units draw in the
@@ -1753,20 +2041,63 @@ int main(int argc, char** argv) {
                     DrawCircle((int)cxf, (int)cyf, TILE_W / 7, uc);
                     static const char* unit_icon[] = { "?", "W", "A", "R", "D", "G" };
                     const char* icon = unit_icon[(int)u.type()];
-                    DrawText(icon, (int)cxf - MeasureText(icon, 9) / 2, (int)cyf - 4, 9, WHITE);
+                    DrawTextC(icon, (int)cxf - MeasureTextC(icon, 9) / 2, (int)cyf - 4, 9, WHITE);
                 }
                 // HP number above diamond top; placement via HP_TRANSFORMER.
                 const char* hp_str = TextFormat("%d", u.hp());
                 int hp_fs = (int)(11.0f * HP_TRANSFORMER.scale + 0.5f);
                 if (hp_fs < 1) hp_fs = 1;
-                int hp_w = MeasureText(hp_str, hp_fs);
+                int hp_w = MeasureTextC(hp_str, hp_fs);
                 int hp_x = (int)cxf - hp_w / 2
                          + (int)(HP_TRANSFORMER.x_offset * TILE_W);
                 int hp_y = (int)(cyf - TILE_H * 0.5f) - 12
                          + (int)(HP_TRANSFORMER.y_offset * TILE_H);
-                DrawText(hp_str, hp_x + 1, hp_y + 1, hp_fs, BLACK);
-                DrawText(hp_str, hp_x,     hp_y,     hp_fs, WHITE);
+                DrawTextC(hp_str, hp_x + 1, hp_y + 1, hp_fs, BLACK);
+                DrawTextC(hp_str, hp_x,     hp_y,     hp_fs, WHITE);
+
+                // Defense shield(s) to the right of HP. count = (bonus-1.0)/0.5,
+                // so 1.5x = 1 shield, 2.0x (walls + tech-defended terrain) = 2.
+                float def_bonus = defense_bonus_for_render(render_state, t);
+                int shields = (int)((def_bonus - 1.0f) / 0.5f + 0.001f);
+                if (shields > 0) {
+                    // Pen advances horizontally; each shield is positioned by
+                    // its own transformer so the 2nd can be tuned independently.
+                    float pen_x = (float)(hp_x + hp_w) + 2.0f;
+                    for (int si = 0; si < shields; si++) {
+                        const Transformer& sxf = (si == 1)
+                            ? SECOND_SHIELD_TRANSFORMER
+                            : SHIELD_TRANSFORMER;
+                        float s_w = sxf.scale;
+                        float gap = s_w * 0.25f;
+                        float sx  = pen_x + sxf.x_offset * (float)TILE_W + s_w * 0.5f;
+                        float sy  = (float)hp_y + (float)hp_fs * 0.5f
+                                  + sxf.y_offset * (float)TILE_H;
+                        // Text-shadow look: black drop-shadow at +1/+1, white on top.
+                        draw_shield(sx + 1.0f, sy + 1.0f, s_w, BLACK);
+                        draw_shield(sx,        sy,        s_w, WHITE);
+                        pen_x += s_w + gap;
+                    }
+                }
             }
+        }
+
+        // City-label pass: blue banner + name + SPT. Runs AFTER units so it is
+        // the only thing layered in front of unit sprites; mirrors the pop-bar
+        // pass's fog/anim handling so labels and pop bars stay in sync.
+        for (int i = 0; i < cur_msz * cur_msz; i++) {
+            const GameState& render_state_cl =
+                (ranged_anim.active && i == ranged_anim.to_tile)
+                    ? ranged_anim.pre_state : s;
+            const Tile& tt = render_state_cl.tile_at(i);
+            if (!tt.has_city()) continue;
+            const GameState& fog_state_cl =
+                move_anim.active ? move_anim.pre_state : s;
+            bool fogged_cl = (view != ViewMode::Omni) && !fog_state_cl.is_explored(vp, i);
+            if (fogged_cl) continue;
+            int r_cl = i / cur_msz, c_cl = i % cur_msz;
+            Vector2 ctr_cl = tile_center(r_cl, c_cl, cur_msz);
+            const City& c = render_state_cl.get_city(tt.city_id());
+            draw_city_label(ctr_cl, city_name_for(c.tile_index()), c.stars_per_turn());
         }
 
         // Axis labels: bottom-right edge labels columns (r=0), bottom-left labels rows (c=0).
@@ -1779,17 +2110,17 @@ int main(int argc, char** argv) {
                 char buf[8]; snprintf(buf, sizeof(buf), "%d", c);
                 int x = (int)(ctr.x + TILE_W * 0.32f);
                 int y = (int)(ctr.y + TILE_H * 0.35f);
-                DrawText(buf, x + 1, y + 1, AXIS_FONT_SZ, AXIS_SHADOW);
-                DrawText(buf, x,     y,     AXIS_FONT_SZ, AXIS_TEXT);
+                DrawTextC(buf, x + 1, y + 1, AXIS_FONT_SZ, AXIS_SHADOW);
+                DrawTextC(buf, x,     y,     AXIS_FONT_SZ, AXIS_TEXT);
             }
             for (int r = 0; r < cur_msz; r++) {
                 Vector2 ctr = tile_center(r, 0, cur_msz);
                 char buf[8]; snprintf(buf, sizeof(buf), "%d", r);
-                int tw = MeasureText(buf, AXIS_FONT_SZ);
+                int tw = MeasureTextC(buf, AXIS_FONT_SZ);
                 int x = (int)(ctr.x - TILE_W * 0.32f) - tw;
                 int y = (int)(ctr.y + TILE_H * 0.35f);
-                DrawText(buf, x + 1, y + 1, AXIS_FONT_SZ, AXIS_SHADOW);
-                DrawText(buf, x,     y,     AXIS_FONT_SZ, AXIS_TEXT);
+                DrawTextC(buf, x + 1, y + 1, AXIS_FONT_SZ, AXIS_SHADOW);
+                DrawTextC(buf, x,     y,     AXIS_FONT_SZ, AXIS_TEXT);
             }
         }
 
@@ -1817,33 +2148,71 @@ int main(int argc, char** argv) {
             }
         }
 
-        // --- Tech tree panel (bottom strip, centred 1/6..5/6 of W) ---
-        const int TECH_X       = W / 6;
-        const int TECH_X_END   = W - W / 6;
-        const int TECH_PANEL_W = TECH_X_END - TECH_X;
-        DrawRectangle(TECH_X, CONTENT_H, TECH_PANEL_W, TECH_H, PANEL_BG);
-        DrawLine(TECH_X,     CONTENT_H, TECH_X_END, CONTENT_H, PANEL_LINE);
-        DrawLine(TECH_X,     CONTENT_H, TECH_X,     H,         PANEL_LINE);
-        DrawLine(TECH_X_END, CONTENT_H, TECH_X_END, H,         PANEL_LINE);
+        // --- Collapsible tech tree (bottom-left). Hover or click to expand. ---
         {
+            const float icon_r     = TECH_ICON_R;
+            const float icon_cx    = PAD + icon_r + 4.0f;
+            const float icon_cy    = H   - PAD - icon_r - 4.0f;
+            const float panel_size = TECH_PANEL_SIZE;
+
+            // Panel sits above-and-right of the icon, sharing its bottom-left corner.
+            const float panel_left   = icon_cx - icon_r;
+            const float panel_bottom = icon_cy + icon_r;
+            const float panel_top    = panel_bottom - panel_size;
+            Rectangle panel_rect = { panel_left, panel_top, panel_size, panel_size };
+
             int hover_tech = -1;
             if (hovered_action >= 0 && actions[hovered_action].type == ActionType::ResearchTech)
                 hover_tech = actions[hovered_action].param;
-            if (view == ViewMode::Omni) {
-                int mid_x = TECH_X + TECH_PANEL_W / 2;
-                DrawLine(mid_x, CONTENT_H + 4, mid_x, H - 4, { 50, 50, 50, 255 });
-                int cur = s.current_player();
-                draw_tech_tree(s.get_player(0).techs_mask(), 0,
-                               TECH_X, CONTENT_H, mid_x - TECH_X,    TECH_H, "P0",
-                               cur == 0 ? hover_tech : -1, tech_zoom);
-                draw_tech_tree(s.get_player(1).techs_mask(), 1,
-                               mid_x,  CONTENT_H, TECH_X_END - mid_x, TECH_H, "P1",
-                               cur == 1 ? hover_tech : -1, tech_zoom);
-            } else {
-                int pv = (view == ViewMode::P1) ? 1 : (view == ViewMode::Current) ? s.current_player() : 0;
+
+            bool icon_hovered  = CheckCollisionPointCircle(mouse, { icon_cx, icon_cy }, icon_r);
+            bool panel_hovered = (tech_open || icon_hovered) && CheckCollisionPointRec(mouse, panel_rect);
+            bool expanded      = tech_open || icon_hovered || panel_hovered;
+
+            if (icon_hovered && clicked) {
+                tech_open = !tech_open;
+                clicked = false;  // consume click so map doesn't react
+            }
+
+            // Expanded panel — drawn first so the icon overlays its corner.
+            if (expanded) {
+                DrawRectangleRec(panel_rect, PANEL_BG);
+                DrawRectangleLinesEx(panel_rect, 1, PANEL_LINE);
+
+                // Tech tree's bottom-left is just inside the panel; size insets to fit.
+                float pad_in = panel_size * 0.10f;
+                float tree_bl_x = panel_left + pad_in;
+                float tree_bl_y = panel_bottom - pad_in;
+                float tree_size = panel_size - 2 * pad_in;
+
+                int pv = (view == ViewMode::Omni)    ? s.current_player()
+                       : (view == ViewMode::P1)      ? 1
+                       : (view == ViewMode::Current) ? s.current_player()
+                                                     : 0;
                 draw_tech_tree(s.get_player(pv).techs_mask(), pv,
-                               TECH_X, CONTENT_H, TECH_PANEL_W, TECH_H, nullptr,
-                               hover_tech, tech_zoom);
+                               tree_bl_x, tree_bl_y, tree_size, hover_tech);
+
+                // "P0 TECH" / "P1 TECH" header
+                Color hc = (pv == 0) ? COL_P0 : COL_P1;
+                const char* hdr = (pv == 0) ? "P0 TECH" : "P1 TECH";
+                int hsz = (int)std::max(10.0f, panel_size * 0.055f);
+                DrawTextC(hdr, (int)(panel_left + 8), (int)(panel_top + 6), hsz, hc);
+            }
+
+            // Icon — small collapsed circle with three radial hint-lines.
+            Color ic_fill = expanded ? PANEL_BG : Color{ 30, 30, 30, 255 };
+            Color ic_line = expanded ? ((s.current_player() == 0) ? COL_P0 : COL_P1)
+                                     : Color{ 130, 130, 130, 255 };
+            DrawCircleV({ icon_cx, icon_cy }, icon_r, ic_fill);
+            DrawCircleLines((int)icon_cx, (int)icon_cy, (int)icon_r, ic_line);
+            // Three short rays as a visual hint of the radial layout
+            float hint_r = icon_r * 0.65f;
+            for (int k = 0; k < 3; k++) {
+                float a = (k + 1) / 4.0f * (3.14159265f / 2.0f);  // 22.5°, 45°, 67.5°
+                DrawLineEx({ icon_cx - icon_r * 0.15f, icon_cy + icon_r * 0.15f },
+                           { icon_cx - icon_r * 0.15f + cosf(a) * hint_r,
+                             icon_cy + icon_r * 0.15f - sinf(a) * hint_r },
+                           1.5f, ic_line);
             }
         }
 
@@ -1852,8 +2221,8 @@ int main(int argc, char** argv) {
         DrawLine(0, TOP_HUD, W, TOP_HUD, PANEL_LINE);
 
         // Turn + active player (left side)
-        DrawText(TextFormat("Turn %d", s.get_turn()),       PAD + 4, 8,  22, WHITE);
-        DrawText(TextFormat("P%d to move", s.current_player()), PAD + 4, 34, 18, LIGHTGRAY);
+        DrawTextC(TextFormat("Turn %d", s.get_turn()),       PAD + 4, 8,  22, WHITE);
+        DrawTextC(TextFormat("P%d to move", s.current_player()), PAD + 4, 34, 18, LIGHTGRAY);
 
         // Stars — large, player-coloured (centre). Suffix shows income per turn.
         int spt[2] = {0, 0};
@@ -1864,15 +2233,54 @@ int main(int argc, char** argv) {
             int o = cc.owner();
             if (o == 0 || o == 1) spt[o] += cc.stars_per_turn();
         }
-        const char* p0_str = TextFormat("P0  %d *", s.get_stars(0));
-        const char* p1_str = TextFormat("P1  %d *", s.get_stars(1));
+        const char* p0_str = TextFormat("P0  %d", s.get_stars(0));
+        const char* p1_str = TextFormat("P1  %d", s.get_stars(1));
         const char* p0_spt = TextFormat("+%d", spt[0]);
         const char* p1_spt = TextFormat("+%d", spt[1]);
-        int p0_x = W / 2 - 110, p1_x = W / 2 + 10;
-        DrawText(p0_str, p0_x, 6, 28, { 100, 160, 255, 255 });
-        DrawText(p1_str, p1_x, 6, 28, { 255, 100, 100, 255 });
-        DrawText(p0_spt, p0_x + (MeasureText(p0_str, 28) - MeasureText(p0_spt, 14)) / 2, 36, 14, { 100, 160, 255, 200 });
-        DrawText(p1_spt, p1_x + (MeasureText(p1_str, 28) - MeasureText(p1_spt, 14)) / 2, 36, 14, { 255, 100, 100, 200 });
+        constexpr int   STAR_GAP   = 28;
+        constexpr int   MAP_CENTRE = MAP_OFF + MAP_PX / 2;
+        // Star heights/pads in pixels; TOP_HUD_STAR_TRANSFORMER drives the big
+        // stars on the main P0/P1 line, BOTTOM_HUD_STAR_TRANSFORMER drives the
+        // small stars on the "+income" line below.
+        constexpr float STAR_BIG_H_BASE = 22.0f;
+        constexpr float STAR_SML_H_BASE = 11.0f;
+        constexpr float STAR_PAD_BIG = 8.0f;
+        constexpr float STAR_PAD_SML = 3.0f;
+        const Transformer& tsx = TOP_HUD_STAR_TRANSFORMER;
+        const Transformer& bsx = BOTTOM_HUD_STAR_TRANSFORMER;
+        const float STAR_BIG_H = STAR_BIG_H_BASE * tsx.scale;
+        const float STAR_SML_H = STAR_SML_H_BASE * bsx.scale;
+        const float star_big_w = star_icon_width(STAR_BIG_H);
+        const float star_sml_w = star_icon_width(STAR_SML_H);
+        const int p0_text_w = MeasureTextC(p0_str, 28);
+        const int p1_text_w = MeasureTextC(p1_str, 28);
+        const int p0_w = p0_text_w + (int)(STAR_PAD_BIG + star_big_w);
+        const int p1_w = p1_text_w + (int)(STAR_PAD_BIG + star_big_w);
+        const int block = p0_w + STAR_GAP + p1_w;
+        const int p0_x  = MAP_CENTRE - block / 2;
+        const int p1_x  = p0_x + p0_w + STAR_GAP;
+        DrawTextC(p0_str, p0_x, 6, 28, { 100, 160, 255, 255 });
+        DrawTextC(p1_str, p1_x, 6, 28, { 255, 100, 100, 255 });
+        const float big_cy = 6.0f + 28.0f * 0.5f + 2.0f + tsx.y_offset;
+        draw_star_icon((float)p0_x + (float)p0_text_w + STAR_PAD_BIG + star_big_w * 0.5f + tsx.x_offset,
+                       big_cy, STAR_BIG_H);
+        draw_star_icon((float)p1_x + (float)p1_text_w + STAR_PAD_BIG + star_big_w * 0.5f + tsx.x_offset,
+                       big_cy, STAR_BIG_H);
+
+        // SPT subtext + small star, centred under each player's block.
+        const int p0_spt_text_w = MeasureTextC(p0_spt, 14);
+        const int p1_spt_text_w = MeasureTextC(p1_spt, 14);
+        const float p0_spt_full_w = (float)p0_spt_text_w + STAR_PAD_SML + star_sml_w;
+        const float p1_spt_full_w = (float)p1_spt_text_w + STAR_PAD_SML + star_sml_w;
+        const float p0_spt_x = (float)p0_x + (float)p0_w * 0.5f - p0_spt_full_w * 0.5f;
+        const float p1_spt_x = (float)p1_x + (float)p1_w * 0.5f - p1_spt_full_w * 0.5f;
+        DrawTextC(p0_spt, (int)p0_spt_x, 38, 14, { 100, 160, 255, 200 });
+        DrawTextC(p1_spt, (int)p1_spt_x, 38, 14, { 255, 100, 100, 200 });
+        const float sml_cy = 38.0f + 14.0f * 0.5f + 1.0f + bsx.y_offset;
+        draw_star_icon(p0_spt_x + (float)p0_spt_text_w + STAR_PAD_SML + star_sml_w * 0.5f + bsx.x_offset,
+                       sml_cy, STAR_SML_H);
+        draw_star_icon(p1_spt_x + (float)p1_spt_text_w + STAR_PAD_SML + star_sml_w * 0.5f + bsx.x_offset,
+                       sml_cy, STAR_SML_H);
 
         // View mode badge (right side)
         {
@@ -1884,19 +2292,19 @@ int main(int argc, char** argv) {
                               (view == ViewMode::Current) ? ((s.current_player() == 0) ? COL_P0 : COL_P1)
                                                           : Color{ 90, 90, 90, 255 };
             int font_sz = 18;
-            int tw = MeasureText(vname, font_sz);
+            int tw = MeasureTextC(vname, font_sz);
             int right_edge = MAP_OFF + MAP_PX + SIDEBAR;  // left edge of log panel
             int bx = right_edge - tw - 24, by = 10, bw = tw + 16, bh = 28;
             DrawRectangleRounded({ (float)bx, (float)by, (float)bw, (float)bh }, 0.4f, 6, badge_col);
-            DrawText(vname, bx + 8, by + 5, font_sz, WHITE);
-            DrawText("[Tab]", right_edge - MeasureText("[Tab]", 13) - 8, by + bh + 4, 13, GRAY);
+            DrawTextC(vname, bx + 8, by + 5, font_sz, WHITE);
+            DrawTextC("[Tab]", right_edge - MeasureTextC("[Tab]", 13) - 8, by + bh + 4, 13, GRAY);
 
             if (replay_mode) {
                 const char* rtxt = TextFormat("REPLAY  %d / %d", replay_step, (int)replay_states.size() - 1);
-                int rtw = MeasureText(rtxt, 16);
+                int rtw = MeasureTextC(rtxt, 16);
                 DrawRectangleRounded({ (float)(bx - rtw - 28), (float)by, (float)(rtw + 16), (float)bh }, 0.4f, 6, Color{ 40, 120, 80, 255 });
-                DrawText(rtxt, bx - rtw - 20, by + 5, 16, WHITE);
-                DrawText("[← →] step   [R] reset", bx - rtw - 20, by + bh + 4, 11, GRAY);
+                DrawTextC(rtxt, bx - rtw - 20, by + 5, 16, WHITE);
+                DrawTextC("[← →] step   [R] reset", bx - rtw - 20, by + bh + 4, 11, GRAY);
             }
         }
 
@@ -1904,7 +2312,7 @@ int main(int argc, char** argv) {
         int SB = MAP_OFF + MAP_PX;  // sidebar left edge
         DrawRectangle(SB, TOP_HUD, SIDEBAR, CONTENT_H - TOP_HUD, SIDEBAR_BG);
         DrawLine(SB, TOP_HUD, SB, CONTENT_H, PANEL_LINE);
-        DrawText("LEGAL ACTIONS", SB + 8, TOP_HUD + 10, 16, GRAY);
+        DrawTextC("LEGAL ACTIONS", SB + 8, TOP_HUD + 10, 16, GRAY);
         DrawLine(SB + 4, TOP_HUD + 30, SB + SIDEBAR - 4, TOP_HUD + 30, { 60, 60, 60, 255 });
 
         int  applied    = click_applied;  // map-click Move/Attack takes precedence; sidebar can also set this
@@ -1965,11 +2373,11 @@ int main(int argc, char** argv) {
                 Rectangle row = { (float)SB + 4, (float)ry, (float)SIDEBAR - 8, (float)HEADER_H - 2 };
                 bool hov = CheckCollisionPointRec(mouse, row);
                 DrawRectangleRec(row, hov ? Color{ 65, 110, 65, 255 } : Color{ 35, 60, 35, 255 });
-                DrawText("End Turn", SB + 8, ry + 2, 12, hov ? WHITE : Color{ 160, 200, 160, 255 });
+                DrawTextC("End Turn", SB + 8, ry + 2, 12, hov ? WHITE : Color{ 160, 200, 160, 255 });
                 if (hov && clicked) applied = lr.action_idx;
             } else if (lr.is_header) {
                 DrawRectangle(SB + 4, ry, SIDEBAR - 8, HEADER_H - 2, { 25, 25, 25, 255 });
-                DrawText(category_name(lr.category), SB + 8, ry + 2, 12, { 160, 160, 160, 255 });
+                DrawTextC(category_name(lr.category), SB + 8, ry + 2, 12, { 160, 160, 160, 255 });
             } else {
                 const Action& a   = actions[lr.action_idx];
                 bool hovered      = (hovered_action == lr.action_idx);
@@ -1984,10 +2392,10 @@ int main(int argc, char** argv) {
                 char cost[16];  action_cost(a, cost, sizeof(cost), s.owned_cities(s.current_player()));
                 Color text_col = afford ? WHITE : Color{ 100, 100, 100, 255 };
                 Color cost_col = afford ? Color{ 255, 210, 60, 255 } : Color{ 100, 90, 50, 255 };
-                DrawText(label, SB + 10, ry + 5, 13, text_col);
+                DrawTextC(label, SB + 10, ry + 5, 13, text_col);
                 if (cost[0]) {
-                    int cw = MeasureText(cost, 12);
-                    DrawText(cost, SB + SIDEBAR - 10 - cw, ry + 6, 12, cost_col);
+                    int cw = MeasureTextC(cost, 12);
+                    DrawTextC(cost, SB + SIDEBAR - 10 - cw, ry + 6, 12, cost_col);
                 }
 
                 if (hovered && clicked && afford)
@@ -2001,8 +2409,8 @@ int main(int argc, char** argv) {
             Rectangle regen_btn = { (float)SB + 4, (float)CONTENT_H - 72, (float)SIDEBAR - 8, 28 };
             bool hovered = CheckCollisionPointRec(mouse, regen_btn);
             DrawRectangleRec(regen_btn, hovered ? Color{ 30, 130, 80, 255 } : Color{ 20, 80, 50, 255 });
-            int tw = MeasureText("REGEN MAP", 14);
-            DrawText("REGEN MAP", SB + SIDEBAR / 2 - tw / 2, CONTENT_H - 64, 14, WHITE);
+            int tw = MeasureTextC("REGEN MAP", 14);
+            DrawTextC("REGEN MAP", SB + SIDEBAR / 2 - tw / 2, CONTENT_H - 64, 14, WHITE);
             if (hovered && clicked)
                 regenerate = true;
         }
@@ -2012,7 +2420,7 @@ int main(int argc, char** argv) {
             Rectangle reset_btn = { (float)SB + 4, (float)CONTENT_H - 36, (float)SIDEBAR - 8, 28 };
             bool hovered = CheckCollisionPointRec(mouse, reset_btn);
             DrawRectangleRec(reset_btn, hovered ? Color{ 140, 50, 50, 255 } : Color{ 90, 30, 30, 255 });
-            DrawText("RESET", SB + SIDEBAR / 2 - 24, CONTENT_H - 30, 18, WHITE);
+            DrawTextC("RESET", SB + SIDEBAR / 2 - 24, CONTENT_H - 30, 18, WHITE);
             if (hovered && clicked)
                 reset = true;
         }
@@ -2162,7 +2570,7 @@ int main(int argc, char** argv) {
             int lx = TECH_W + MAP_PX + SIDEBAR;
             DrawRectangle(lx, 0, LOG_W, CONTENT_H, { 18, 18, 18, 255 });
             DrawLine(lx, 0, lx, CONTENT_H, PANEL_LINE);
-            DrawText("ACTION LOG", lx + 8, 8, 14, GRAY);
+            DrawTextC("ACTION LOG", lx + 8, 8, 14, GRAY);
             DrawLine(lx + 4, 28, lx + LOG_W - 4, 28, { 50, 50, 50, 255 });
 
             int visible_rows = (CONTENT_H - 28 - LOG_PAD) / ROW_H;
@@ -2193,7 +2601,7 @@ int main(int argc, char** argv) {
                 Color tc = is_debug
                          ? Color{ 160, 160, 160, 255 }
                          : ((entry.size() > 1 && entry[1] == '0') ? COL_P0 : COL_P1);
-                DrawText(entry.c_str(), lx + 6, ey + 2, 11, tc);
+                DrawTextC(entry.c_str(), lx + 6, ey + 2, 11, tc);
             }
             EndScissorMode();
 
@@ -2216,8 +2624,8 @@ int main(int argc, char** argv) {
             DrawRectangle(handle_x - 2, scrub_y, 4, SCRUB_H, WHITE);
 
             const char* label = TextFormat("%d / %d", replay_step, total);
-            int lw = MeasureText(label, 12);
-            DrawText(label, W / 2 - lw / 2, scrub_y + 3, 12, { 200, 200, 200, 255 });
+            int lw = MeasureTextC(label, 12);
+            DrawTextC(label, W / 2 - lw / 2, scrub_y + 3, 12, { 200, 200, 200, 255 });
         }
 
         EndDrawing();
@@ -2230,6 +2638,8 @@ int main(int argc, char** argv) {
         if (terrain_tex[i].id != 0) UnloadTexture(terrain_tex[i]);
     for (int i = 0; i < CITY_SPRITE_LEVELS; i++)
         if (city_tex[i].id != 0) UnloadTexture(city_tex[i]);
+    if (g_star_tex.id != 0) UnloadTexture(g_star_tex);
+    if (g_font.texture.id != 0) UnloadFont(g_font);
     CloseWindow();
     return 0;
 }

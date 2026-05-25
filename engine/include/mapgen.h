@@ -61,5 +61,6 @@ private:
     void place_villages  (GameState& s, int cap0, int cap1);
     void reroll_inner    (GameState& s, const int climate[], int cap0, int cap1);
     void clear_far_resources(GameState& s, int cap0, int cap1);
+    void ensure_min_fruit   (GameState& s, int cap0, int cap1, int target);
     void init_players    (GameState& s, int cap0, int cap1);
 };

@@ -605,7 +605,10 @@ float GameState::get_defense_bonus(Player& p, Tile& t) {
         }
     }
 
-    if (t.has_city()) total_defense += 0.5f;
+    if (t.has_city()) {
+        total_defense += 0.5f;
+        if (this->cities[t.city_id()].has_walls()) total_defense += 0.5f;
+    }
     return total_defense;
 }
 

@@ -5,7 +5,7 @@ namespace cfg {
 
 // ----- Map / generation -----------------------------------------------------
 namespace map {
-    constexpr int      DEFAULT_SIZE          = 8;     // side length of the square map
+    constexpr int      DEFAULT_SIZE          = 9;     // side length of the square map
     constexpr int      VILLAGE_MIN_SPACING   = 3;      // Chebyshev distance between villages
     constexpr uint8_t  VILLAGE_EDGE_EXCLUDE  = 0b00001011; // bits = forbidden edge distances
     constexpr uint64_t DEFAULT_SEED          = 0;      // 0 = nondeterministic

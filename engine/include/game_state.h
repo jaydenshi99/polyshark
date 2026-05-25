@@ -20,6 +20,7 @@ enum class ActionType {
     HarvestResource,  // from=city tile, to=resource tile, param=ResourceType
     UpgradeCity,      // from=city_id, param=CityUpgradeType — must be taken before EndTurn when pending
     DebugAddPop,      // from=city_id — adds 1 population; always available when not blocked
+    Recover,          // from=unit tile — heals the unit and marks its turn spent
     EndTurn,
 };
 
@@ -123,6 +124,7 @@ public:
     void apply_capture_city(Action a);
     void apply_move(Action a);
     void apply_attack(Action a);
+    void apply_recover(Action a);
 
     void explore(int tile, int player,
                  int* out_path = nullptr, int* out_count = nullptr);
