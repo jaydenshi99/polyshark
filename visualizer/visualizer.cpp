@@ -1053,12 +1053,12 @@ namespace {
     constexpr float T1_SIN[5] = { 1.00000f,  0.30902f, -0.80902f, -0.80902f,  0.30902f };
     // Tier 2 & 3 angles: 18°, 54°, 90°, 126°, 162°, 198°, 234°, 270°, 306°, 342°
     constexpr float TN_COS[10] = {
-        0.95106f,  0.58779f,  0.00000f, -0.58779f, -0.95106f,
-       -0.95106f, -0.58779f,  0.00000f,  0.58779f,  0.95106f
+        0.30902f,  0.80902f,  1.0f, 0.80902f, 0.30902f,
+       -0.30902f,  -0.80902f,  -1.0f, -0.80902f, -0.30902f,
     };
     constexpr float TN_SIN[10] = {
-        0.30902f,  0.80902f,  1.00000f,  0.80902f,  0.30902f,
-       -0.30902f, -0.80902f, -1.00000f, -0.80902f, -0.30902f
+        0.95106f,  0.58779f,  0.0f,  -0.58779f,  -0.95106f,
+       -0.95106f,  -0.58779f,  0.0f,  0.58779f,  0.95106f,
     };
 
     inline constexpr float t1_ux(int i) { return 0.5f + T1_DIST * T1_COS[i]; }
@@ -1089,16 +1089,16 @@ static const TechNode NODES[NODE_COUNT] = {
     { TechType::Hunting,        0,             t1_ux(4), t1_uy(4) },  // 5 −198° upper-left
 
     // Tier 2: 10-slot ring; bound techs aligned with parent's ray when possible
-    { TechType::Farming,        N_ORGANISATION, t2_ux(0), t2_uy(0) },  // 6  18°
-    { TechType::Strategy,       N_ORGANISATION, t2_ux(1), t2_uy(1) },  // 7  54°
-    { TechType::None,          -1,              t2_ux(2), t2_uy(2) },  // 8  90°
-    { TechType::None,          -1,              t2_ux(3), t2_uy(3) },  // 9  126°
-    { TechType::Archery,        N_HUNTING,      t2_ux(4), t2_uy(4) },  // 10 162°
-    { TechType::None,          -1,              t2_ux(5), t2_uy(5) },  // 11 198°
-    { TechType::None,          -1,              t2_ux(6), t2_uy(6) },  // 12 234°
-    { TechType::None,          -1,              t2_ux(7), t2_uy(7) },  // 13 270°
-    { TechType::Mining,         N_CLIMBING,     t2_ux(8), t2_uy(8) },  // 14 306°
-    { TechType::None,          -1,              t2_ux(9), t2_uy(9) },  // 15 342°
+    { TechType::None,          0,               t2_ux(0), t2_uy(0) }, 
+    { TechType::Farming,       N_ORGANISATION,  t2_ux(1), t2_uy(1) }, 
+    { TechType::Strategy,      N_ORGANISATION,  t2_ux(2), t2_uy(2) },  
+    { TechType::Mining,        N_CLIMBING,      t2_ux(3), t2_uy(3) }, 
+    { TechType::None,          -1,              t2_ux(4), t2_uy(4) }, 
+    { TechType::None,          -1,              t2_ux(5), t2_uy(5) },  
+    { TechType::None,          -1,              t2_ux(6), t2_uy(6) }, 
+    { TechType::Archery,        N_HUNTING,      t2_ux(7), t2_uy(7) }, 
+    { TechType::None,           -1,              t2_ux(8), t2_uy(8) },
+    { TechType::None,          -1,              t2_ux(9), t2_uy(9) },
 
     // Tier 3: 10-slot ring at T3_DIST, all empty placeholders
     { TechType::None,          -1,              t3_ux(0), t3_uy(0) },  // 16 18°
