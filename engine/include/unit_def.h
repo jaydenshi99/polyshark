@@ -11,7 +11,8 @@ struct UnitDef {
     int      range;
     int      cost;
     uint32_t abilities;
-    TechType required_tech;  // TechType::Count = no tech required
+    TechType required_tech;  // TechType::Count = trainable by anyone;
+                             // TechType::None  = no tech can unlock it (super-unit only).
 };
 
 // Indexed by UnitType — must stay in sync with UnitType enum order
@@ -25,8 +26,11 @@ static const UnitDef UNIT_DEFS[] = {
     // Rider
     {             10,  2,  1,  2,  1,  3,   ABILITY_ESCAPE  | ABILITY_FORTIFY | ABILITY_DASH,
                                                                                 TechType::Riding  },
+    // Defender
     {             15,  1,  3,  1,  1,  3,   ABILITY_FORTIFY,
-                                                                                TechType::Strategy  },
+                                                                                TechType::Strategy },
+    // Giant 
+    {             40,  5,  4,  1,  1,  0,   ABILITY_STATIC,                    TechType::None    },
 };
 
 inline const UnitDef& unit_def(UnitType t) {

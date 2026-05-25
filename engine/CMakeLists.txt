@@ -14,6 +14,7 @@ add_library(engine
     src/game_state/legal_actions.cpp
     src/game_state/apply_action.cpp
     src/game_state/damage_calculator.cpp
+    src/game_state/forced_spawn.cpp
     src/mapgen.cpp
 )
 

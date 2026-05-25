@@ -11,6 +11,10 @@ void City::set_workshop(bool value) {
 }
 
 void City::try_levelup() {
+    // Don't stack level-ups: while an upgrade choice is unresolved, bank any
+    // extra population. apply_upgrade_city re-invokes try_levelup() after
+    // clear_pending_upgrade(), so each level surfaces its own choice in order.
+    if (_pending_upgrade) return;
     if (_population >= _level + 1) {
         _population -= _level + 1;
         _level++;

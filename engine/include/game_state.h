@@ -92,8 +92,16 @@ public:
     const Tile& tile_at(int index) const { return map[index]; }
 
     // Allocates a unit slot, initialises hp/movement from UnitDef, places on tile.
-    // Returns slot index, or -1 if full.
+    // Returns slot index, or -1 if full. If `tile_index` already has a unit,
+    // that occupant is force-pushed via push_unit_from (super-unit / Ruin /
+    // Polytaur-style spawns; see Polytopia rules).
     int spawn_unit(UnitType type, int owner, int tile_index, int city_id = -1);
+
+    // Forced-spawn push: the existing unit on `spawn_tile` is shoved one tile
+    // along a rule-derived direction (see forced_spawn.cpp). If every fallback
+    // tile is blocked, the unit is removed from the game entirely — no kill
+    // credit, no attack credit.
+    void push_unit_from(int unit_id, int spawn_tile, int spawning_player);
 
     // Allocates a city slot, places on tile.
     // Returns slot index, or -1 if full.

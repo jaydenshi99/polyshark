@@ -22,7 +22,7 @@ void Unit::mark_attacked() {
 
 void Unit::add_kill() {
     _kills++;
-    if (_kills >= cfg::combat::KILLS_FOR_PROMOTION)
+    if (_kills >= cfg::combat::KILLS_FOR_PROMOTION && !has_ability(ABILITY_STATIC))
         _promotion_ready = true;
 }
 

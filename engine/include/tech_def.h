@@ -38,6 +38,7 @@ static const TechDef TECH_DEFS[] = {
     { "Archery",       2,     0,                                       { ResourceType::None },     { TerrainType::Forest   } },
     { "Mining",        2,     0,                                       { ResourceType::Metal },    { TerrainType::None     } },
     { "Strategy",      2,     0,                                       { ResourceType::None },     { TerrainType::None     } },
+    { "(none)",        0,     0,                                       { ResourceType::None },     { TerrainType::None     } },
 };
 
 static_assert(

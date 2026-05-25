@@ -25,6 +25,7 @@ enum class UnitType {
     Archer,
     Rider,
     Defender,
+    Giant,
     Count,
 };
 
@@ -33,6 +34,7 @@ constexpr uint32_t ABILITY_FORTIFY  = 1 << 0;  // ×1.5 defence on forest/mounta
 constexpr uint32_t ABILITY_DASH     = 1 << 1;  // can move after non-attack action
 constexpr uint32_t ABILITY_ESCAPE   = 1 << 2;  // can move again after attacking
 constexpr uint32_t ABILITY_RANGED   = 1 << 3;  // attacks at 2-tile range, doesn't advance
+constexpr uint32_t ABILITY_STATIC   = 1 << 4;  // can never gain veteran promotion
 
 
 // City upgrade choices presented to the player on each level-up.
@@ -63,5 +65,6 @@ enum class TechType {
     Archery,      // requires Hunting
     Mining,       // unlocks Metal harvesting; requires Climbing
     Strategy,
+    None,         // sentinel — nothing can unlock it (used for super-unit gating)
     Count,
 };

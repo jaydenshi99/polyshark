@@ -19,6 +19,10 @@ public:
     bool     promotion_ready() const { return _promotion_ready; }
     int      city_id()         const { return _city_id; }
     void     set_city_id(int city_id) { _city_id = city_id; }
+    // Most recent direction (0..7 in MOVE_DX/MOVE_DY) the unit moved or, for
+    // ranged units, attacked. -1 = never acted. Used by forced-spawn pushes.
+    int      last_dir()        const { return _last_dir; }
+    void     set_last_dir(int8_t d)   { _last_dir = d; }
 
     bool is_alive() const { return _hp > 0; }
     void take_damage(int amount);
@@ -52,4 +56,5 @@ private:
     int      _city_id         = -1;  // city that trained this unit; 
     bool     _has_attacked    = false;
     bool     _promotion_ready = false;
+    int8_t   _last_dir        = -1;
 };

@@ -8,6 +8,8 @@
 #include "cassert"
 
 // Helpers defined in game_state.cpp
+extern const int MOVE_DX[8];
+extern const int MOVE_DY[8];
 bool tile_passable(const Tile& t, bool has_climbing);
 void reveal_around(GameState& s, int player, int tile_index, int radius);
 void rebuild_visibility(GameState& s, int player);
@@ -132,7 +134,11 @@ void GameState::apply_upgrade_city(Action a) {
             break;
         case CityUpgradeType::L3_POPULATION_GROWTH: c.add_population(cfg::city::L3_POP_GROWTH_REWARD);  break;
         case CityUpgradeType::L4_PARK:              break;
-        case CityUpgradeType::L4_SUPERUNIT:         break;
+        case CityUpgradeType::L4_SUPERUNIT: {
+            int uid = s.spawn_unit(UnitType::Giant, p, c.tile_index(), a.from);
+            if (uid >= 0) s.units[uid].end_turn_actions();
+            break;
+        }
         default:                                    break;
     }
 }
@@ -227,6 +233,12 @@ void GameState::apply_move(Action a) {
     s.map[src].remove_unit();
     s.map[dst].place_unit(uid);
     u.set_tile(dst);
+    // Record the final-hop direction (last 3-bit dir in path_bits) for
+    // forced-spawn pushes. psteps > 0 here since src != dst.
+    if (psteps > 0) {
+        int last_hop = (int)((pbits >> (3 * (psteps - 1))) & 0x7u);
+        u.set_last_dir((int8_t)last_hop);
+    }
     // Single-move-per-turn rule: spend the entire remaining movement budget so a
     // unit that used part of its movement (e.g. a Rider's 2-mp Rider that only hopped
     // 1 tile) can't initiate another Move this turn. Note: Escape (Rider's post-attack
@@ -248,6 +260,18 @@ void GameState::apply_attack(Action a) {
     bool opponent_sees_attacker = s.is_visible(defender.owner(), atk_tile);
     // Advance into the slain tile only if it was a melee attack (distance 1).
     bool melee_attack = !attacker.has_ability(ABILITY_RANGED);
+    // Attack direction (atk → def), reduced to one of the 8 cardinal/diagonal
+    // unit-vectors via sign. Used to update _last_dir on ranged shots and on
+    // melee kill-advances (both effectively give the unit a "facing" for
+    // forced-spawn push rules).
+    int sz = s.map_size();
+    int adx = (def_tile % sz) - (atk_tile % sz);
+    int ady = (def_tile / sz) - (atk_tile / sz);
+    int attack_dir = -1;
+    int asx = (adx > 0) - (adx < 0);
+    int asy = (ady > 0) - (ady < 0);
+    for (int d = 0; d < 8; d++)
+        if (MOVE_DX[d] == asx && MOVE_DY[d] == asy) { attack_dir = d; break; }
     float def_bonus = s.get_defense_bonus(s.players[defender.owner()], s.map[def_tile]);
     DamageCalculator::Result cr = DamageCalculator::resolve(
         attacker, defender, s.map[def_tile], def_bonus, dist, opponent_sees_attacker);
@@ -269,10 +293,16 @@ void GameState::apply_attack(Action a) {
                 s.map[attacker.tile_index()].remove_unit();
                 s.map[def_tile].place_unit(atk_uid);
                 attacker.set_tile(def_tile);
+                // Kill-advance is effectively a move — record the direction.
+                if (attack_dir >= 0) attacker.set_last_dir((int8_t)attack_dir);
             }
         }
     }
     attacker.mark_attacked();
+    // Ranged attackers don't move but still register a "last direction" so
+    // forced-spawn rule 3 (push ranged units along their last action) can use it.
+    if (!melee_attack && !cr.attacker_dies && attack_dir >= 0)
+        attacker.set_last_dir((int8_t)attack_dir);
     if (cr.attacker_dies) {
         if (attacker.city_id() >= 0)
             s.cities[attacker.city_id()].remove_unit();

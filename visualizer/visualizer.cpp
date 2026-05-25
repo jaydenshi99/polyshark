@@ -15,26 +15,21 @@
 #include <vector>
 #include <string>
 
-// Isometric tiles: each tile is a diamond with TILE_W (full width) and TILE_H (full height).
-// Aspect ratio matches the grass terrain sprite (840x507 ≈ 5:3 = 1.667). Both values are
-// recomputed each map gen so the diamond grid stretches to fill MAP_CANVAS horizontally.
-static int            TILE_W   = 56;   // diamond full width  (recomputed; do not make constexpr)
-static int            TILE_H   = 34;   // diamond full height (recomputed; ~ TILE_W * 3/5)
+// 5:3 diamond (matches grass sprite 840x507); recomputed each map gen to fill MAP_CANVAS.
+static int            TILE_W   = 56;
+static int            TILE_H   = 34;
 static constexpr int PAD      = 4;
-static constexpr int LABEL    = 20;   // (legacy padding; iso layout doesn't draw axis labels)
-static constexpr int TOP_HUD  = 64;   // info bar across the top
-static constexpr int SIDEBAR  = 230;
-static constexpr int TECH_W   = 210;  // width of empty buffer column on the left (was tech tree)
-static constexpr int MAP_OFF  = TECH_W;  // map x-offset
-// Fixed canvas: constant pixel budget. TILE_W/TILE_H scale to fill this regardless of map_size.
-static constexpr int MAP_CANVAS = 616;
+static constexpr int LABEL    = 20;
+static constexpr int TOP_HUD  = 64;
+static constexpr int SIDEBAR  = 172;
+static constexpr int TECH_W   = 210;
+static constexpr int MAP_OFF  = TECH_W;
+static constexpr int MAP_CANVAS = 674;
 static constexpr int MAP_PX     = MAP_CANVAS + PAD * 2 + LABEL;
 static constexpr int LOG_W      = 260;
-static constexpr int TECH_H     = 150;  // bottom tech tree strip height
+static constexpr int TECH_H     = 150;
 static constexpr int W          = TECH_W + MAP_PX + SIDEBAR + LOG_W;
-// CONTENT_H = bottom of the main content area (map / sidebar / log).
-// H = full window height including the bottom tech strip. Existing panels anchor to
-// CONTENT_H so they don't extend into the tech strip; only the strip itself uses H.
+// CONTENT_H = main content bottom; H = full window incl. bottom tech strip.
 static constexpr int CONTENT_H  = TOP_HUD + MAP_CANVAS + PAD * 2 + LABEL;
 static constexpr int H          = CONTENT_H + TECH_H;
 
@@ -47,18 +42,8 @@ static constexpr Color SIDEBAR_BG = {  38,  38,  38, 255 };
 static constexpr Color COL_P0     = {  80, 140, 220, 255 };
 static constexpr Color COL_P1     = { 220,  80,  80, 255 };
 
-// Isometric layout (diamond grid).
-//   Grid axes:
-//     (r=0,  c=0)  → BOTTOM of the diamond
-//     (r=N,  c=N)  → TOP
-//     (r=0,  c=N)  → RIGHT
-//     (r=N,  c=0)  → LEFT
-//   Tile (r, c) center in screen space:
-//     cx = origin_x + (c - r) * TILE_W/2
-//     cy = origin_y - (c + r) * TILE_H/2
-//   The grid spans from the LEFT edge of the window (reclaiming the former empty
-//   buffer column above) out to the right edge of MAP_CANVAS. It's centred vertically
-//   between TOP_HUD and CONTENT_H, with (0,0) at the bottom of the centred grid.
+// Iso diamond grid. Axes: (0,0)=BOTTOM, (N,N)=TOP, (0,N)=RIGHT, (N,0)=LEFT.
+// Tile center: cx = origin_x + (c-r)*TILE_W/2, cy = origin_y - (c+r)*TILE_H/2.
 static inline int iso_grid_left()    { return 0; }
 static inline int iso_grid_right()   { return MAP_OFF + PAD + LABEL + MAP_CANVAS; }
 static inline int iso_grid_width()   { return iso_grid_right() - iso_grid_left(); }
@@ -76,10 +61,7 @@ static inline Vector2 tile_center(int r, int c, int msz) {
     return { cx, cy };
 }
 
-// Inverse of tile_center. Returns (r, c) of the tile containing (mx, my) via out
-// params, or (-1, -1) if the point is outside the grid. Uses the fact that each
-// tile's Voronoi region is exactly its diamond shape, so rounding the continuous
-// (r, c) coordinates picks the right tile.
+// Inverse of tile_center; (-1,-1) if outside. Rounding continuous (r,c) picks the right diamond.
 static inline void tile_from_screen(float mx, float my, int msz, int& out_r, int& out_c) {
     float origin_x = (float)iso_grid_left() + iso_grid_width() * 0.5f;
     float grid_h   = (float)msz * (float)TILE_H;
@@ -95,40 +77,27 @@ static inline void tile_from_screen(float mx, float my, int msz, int& out_r, int
     out_r = rr; out_c = cc;
 }
 
-// --- Per-unit-type visual tweaks ------------------------------------------------
-// Layered ON TOP of the auto-bbox centering done at sprite-load time. Use this table
-// to nudge a unit's resting position or shrink/grow it on the tile without changing
-// the source PNGs. Offsets are in TILE-FRACTIONS (so they scale with map size):
-//   x_offset =  0.10  → shift right by 10% of TILE_W
-//   y_offset = -0.05  → shift up    by  5% of TILE_H
-//   scale    =  1.15  → 15% larger than the default auto-scale (1.0 = no change)
-// Generic tile-relative tweak. Anything drawn on a tile (sprite, icon, label,
-// badge) that needs to be tweakable gets a Transformer instance. Convention:
-// any new tile-anchored element should declare its own Transformer constant so
-// it stays tweakable without touching draw code.
+// Tile-relative tweak; offsets in tile-fractions (0.10 → 10% of TILE_W), scale multiplies auto-scale.
 struct Transformer {
     float x_offset;
     float y_offset;
     float scale;
 };
 
-// Per-unit-type sprite transformer. Layered on top of the auto-bbox centering done
-// at sprite-load time.
+// Per-unit-type sprite tweak.
 static const Transformer UNIT_TRANSFORMERS[(int)UnitType::Count] = {
     /* None     */ { 0.00f,  0.00f, 0.75f },
     /* Warrior  */ { -0.03f, -0.04f, 0.75f },
     /* Archer   */ { 0.05f, -0.05f, 0.76f },
     /* Rider    */ { 0.00f, -0.08f, 0.65f },
     /* Defender */ { 0.00f, -0.08f, 0.78f },
+    /* Giant    */ { 0.00f, -0.10f, 0.95f },
 };
 
-// HP number transformer (shared by all units). Anchored at the top of the diamond
-// by default; scale multiplies the 11pt base font.
+// HP number above the diamond top; scale multiplies 11pt base.
 static const Transformer HP_TRANSFORMER = { -0.22f, 0.24f, 1.00f };
 
-// RingTransformer — like Transformer, plus an opacity multiplier (0..1) applied to
-// the ring's color alpha at draw time. Rings tend to need their visual weight tuned
-// independently, so this gives a single dial per-ring.
+// Transformer + opacity multiplier for ring visuals.
 struct RingTransformer {
     float x_offset;
     float y_offset;
@@ -136,17 +105,11 @@ struct RingTransformer {
     float opacity;
 };
 
-// "Ready" ring — cyan/yellow ellipse under units that haven't moved this turn.
-// Base ring radius is 35% of TILE_W / TILE_H; scale multiplies that.
+// "Ready" ring under units that can still act; base radius 35% of tile.
 static const RingTransformer READY_RING_TRANSFORMER = { 0.00f, 0.14f, 0.6f, 1.00f };
 
-// Movement-ring object — shown on every tile a selected unit can move to. Three
-// concentric bands, all fractions of TILE_W (the helper squishes them vertically
-// by TILE_H/TILE_W so they lie flat on the iso ground):
-//   1. solid inner ellipse                          (cyan)
-//   2. white donut between r=white_inner..white_outer
-//   3. outer cyan donut between r=donut_inner..donut_outer
-// The Transformer shifts/scales the whole composite.
+// Move-dest ring: solid inner ellipse + white donut + outer cyan donut.
+// All radii in fractions of TILE_W; squished by TILE_H/TILE_W for iso ground.
 struct MovementRing {
     float inner_solid_r;   // solid inner ellipse radius
     float white_inner_r;   // white donut: inner edge
@@ -164,7 +127,7 @@ static const MovementRing MOVEMENT_RING = {
     /* transform     */ { 0.00f, 0.00f, 1.00f, 1.00f },
 };
 
-// Multiplies a colour's alpha by `mul` (clamped to [0, 255]).
+// Multiplies a colour's alpha by `mul` (clamped to [0,255]).
 static inline Color color_alpha_mul(Color c, float mul) {
     int a = (int)(c.a * mul + 0.5f);
     if (a < 0)   a = 0;
@@ -184,13 +147,12 @@ static inline void draw_movement_ring(Vector2 ctr, Color color) {
     Color cyan_col  = color_alpha_mul(color, rt.opacity);
     Color white_col = color_alpha_mul(Color{ 255, 255, 255, 180 }, rt.opacity);
 
-    // Solid inner ellipse (axis-aligned, so we can use raylib's primitive directly).
+    // Inner ellipse.
     float ir_w = m.inner_solid_r * (float)TILE_W * scale;
     float ir_h = ir_w * aspect;
     DrawEllipse((int)cx, (int)cy, ir_w, ir_h, cyan_col);
 
-    // White accent donut + outer cyan donut. DrawRing only produces circular rings,
-    // so we squish the matrix vertically to flatten both into iso-shaped ellipses.
+    // Donuts: squish matrix vertically since DrawRing is circular.
     rlPushMatrix();
     rlTranslatef(cx, cy, 0);
     rlScalef(1.0f, aspect, 1.0f);
@@ -206,17 +168,13 @@ static inline void draw_movement_ring(Vector2 ctr, Color color) {
 }
 
 // --- Terrain sprites -----------------------------------------------------------
-// Each non-water tile gets a terrain sprite drawn anchored to the diamond bottom.
-// Mountains (taller than the tile diamond) extend above; back-to-front iteration
-// guarantees a closer mountain overdraws tiles behind it.
+// Anchored to diamond bottom; mountains extend above and rely on back-to-front draw.
 enum class TerrainSprite { Grass = 0, Mountain, Count };
 struct TerrainAlphaBBox { int min_x, max_x, min_y, max_y; };
 static Texture2D       terrain_tex [(int)TerrainSprite::Count] = {};
 static TerrainAlphaBBox terrain_bbox[(int)TerrainSprite::Count] = {};
 
-// Per-sprite tweak — same Transformer convention as units/rings. Default = the
-// alpha bbox is scaled so its width == TILE_W and its bottom sits at the diamond
-// bottom-centre.
+// Per-sprite tweak; bbox width auto-scales to TILE_W with bottom at diamond bottom-centre.
 static Transformer TERRAIN_TRANSFORMERS[(int)TerrainSprite::Count] = {
     /* Grass    */ { 0.00f, 0.00f, 1.00f },
     /* Mountain */ { 0.00f, 0.00f, 1.00f },
@@ -251,20 +209,12 @@ static inline void draw_terrain_sprite(Vector2 ctr, TerrainSprite ts) {
 }
 
 // --- Resource sprites ----------------------------------------------------------
-// Overlays drawn on top of the terrain pass for tiles that hold a harvestable
-// resource. Same alpha-bbox + bottom-anchor approach as terrain, just with a
-// smaller default footprint (~50% of TILE_W) so the sprite sits on the tile
-// without dominating it.
-//
-// Forest, Village, and Lighthouse are included here even though they're not
-// ResourceTypes — rendering them as overlays on the base ground layer keeps
-// the terrain pass simple and lets them sit naturally on top of the field.
+// Tile overlays; ~50% of TILE_W. Forest/Village/Lighthouse live here too (not ResourceTypes).
 enum class ResourceSprite { Fruit = 0, Crop, Animal, Metal, Forest, Village, Lighthouse, Count };
 static Texture2D        resource_tex [(int)ResourceSprite::Count] = {};
 static TerrainAlphaBBox resource_bbox[(int)ResourceSprite::Count] = {};
 
-// Each entry tweaks placement (offsets in tile-fractions) and scale (multiplier
-// on the 50%-of-TILE_W base). Tune these to nudge sprites without re-exporting PNGs.
+// Offsets in tile-fractions; scale multiplies the 50%-of-TILE_W base.
 static Transformer RESOURCE_TRANSFORMERS[(int)ResourceSprite::Count] = {
     /* Fruit      */ { 0.00f, -0.4f,  0.7f  },
     /* Crop       */ { 0.00f, -0.2f,  1.4f  },
@@ -313,50 +263,106 @@ static inline void draw_resource_sprite(Vector2 ctr, ResourceSprite rs) {
         { 0, 0 }, 0.0f, WHITE);
 }
 
-// --- Captured-city marker ------------------------------------------------------
-// Simple flag-on-pole indicator drawn on any tile that hosts an established city
-// (Tile::has_city() — uncaptured villages are TerrainType::Village without a
-// city object). The flag is filled in the owner's player colour.
-//   pole_h_frac : pole height as fraction of TILE_H
-//   flag_w_frac : flag width  as fraction of TILE_W
-//   flag_h_frac : flag height as fraction of TILE_H
-//   pole_thick  : pole thickness in pixels (before transformer scale)
-struct CityMarkerSpec {
-    float pole_h_frac;
-    float flag_w_frac;
-    float flag_h_frac;
-    float pole_thick;
-};
-static Transformer          CITY_MARKER_TRANSFORMER = { 0.00f, -0.05f, 1.00f };
-static const CityMarkerSpec CITY_MARKER_SPEC = {
-    /* pole_h_frac */ 0.60f,
-    /* flag_w_frac */ 0.18f,
-    /* flag_h_frac */ 0.22f,
-    /* pole_thick  */ 2.0f,
+// --- City sprites --------------------------------------------------------------
+// Per-level sprite (lvl1..lvl9). Clamps to lvl9 for higher levels.
+static constexpr int CITY_SPRITE_LEVELS = 9;
+static Texture2D        city_tex [CITY_SPRITE_LEVELS] = {};
+static TerrainAlphaBBox city_bbox[CITY_SPRITE_LEVELS] = {};
+// Per-level transformer — tune each city sprite's offset/scale independently.
+static Transformer      CITY_SPRITE_TRANSFORMERS[CITY_SPRITE_LEVELS] = {
+    /* lvl1 */ { 0.00f, -0.24f, 0.42f },
+    /* lvl2 */ { 0.00f, -0.2f, 0.50f },
+    /* lvl3 */ { 0.00f, -0.16f, 0.60f },
+    /* lvl4 */ { 0.00f, -0.1f, 0.65f },
+    /* lvl5 */ { 0.00f, -0.08f, 0.82f },
+    /* lvl6 */ { 0.00f, -0.08f, 0.86f },
+    /* lvl7 */ { 0.00f, -0.08f, 0.9f },
+    /* lvl8 */ { 0.00f, -0.08f, 0.95f },
+    /* lvl9 */ { 0.00f, -0.08f, 1.0f },
 };
 
-static inline void draw_city_marker(Vector2 ctr, int owner) {
-    const Transformer&    xf = CITY_MARKER_TRANSFORMER;
-    const CityMarkerSpec& sp = CITY_MARKER_SPEC;
-    float scale = xf.scale;
+static inline void draw_city_sprite(Vector2 ctr, int level) {
+    int idx = level - 1;
+    if (idx < 0) idx = 0;
+    if (idx >= CITY_SPRITE_LEVELS) idx = CITY_SPRITE_LEVELS - 1;
+    const Texture2D& tex = city_tex[idx];
+    if (tex.id == 0) return;
+    const TerrainAlphaBBox& bb = city_bbox[idx];
+    const Transformer&      xf = CITY_SPRITE_TRANSFORMERS[idx];
 
+    int bbox_w = bb.max_x - bb.min_x;
+    if (bbox_w <= 0) return;
+
+    float scale = (float)TILE_W * xf.scale / (float)bbox_w;
+    float dst_w = tex.width  * scale;
+    float dst_h = tex.height * scale;
+
+    float bbox_cx_src  = (bb.min_x + bb.max_x) * 0.5f;
+    float bbox_bot_src = (float)bb.max_y;
     float anchor_x = ctr.x + xf.x_offset * (float)TILE_W;
     float anchor_y = ctr.y + xf.y_offset * (float)TILE_H + (float)TILE_H * 0.5f;
-    float pole_h = (float)TILE_H * sp.pole_h_frac * scale;
-    float flag_w = (float)TILE_W * sp.flag_w_frac * scale;
-    float flag_h = (float)TILE_H * sp.flag_h_frac * scale;
-    float pole_top = anchor_y - pole_h;
+    float dst_x = anchor_x - bbox_cx_src  * scale;
+    float dst_y = anchor_y - bbox_bot_src * scale;
 
-    DrawLineEx({ anchor_x, anchor_y }, { anchor_x, pole_top },
-               sp.pole_thick * scale, { 40, 30, 20, 240 });
+    DrawTexturePro(tex,
+        { 0, 0, (float)tex.width, (float)tex.height },
+        { dst_x, dst_y, dst_w, dst_h },
+        { 0, 0 }, 0.0f, WHITE);
+}
 
-    Color flag_col = (owner == 0) ? COL_P0 : COL_P1;
-    Vector2 v1 = { anchor_x,          pole_top };
-    Vector2 v2 = { anchor_x + flag_w, pole_top + flag_h * 0.5f };
-    Vector2 v3 = { anchor_x,          pole_top + flag_h };
-    DrawTriangle(v1, v2, v3, flag_col);
-    Vector2 outline[] = { v1, v2, v3, v1 };
-    DrawLineStrip(outline, 4, BLACK);
+// Pop-bar tile-anchor tweak. x/y_offset in tile-fractions (same convention as
+// the other Transformer constants), scale multiplies the base bar size.
+static Transformer POP_BAR_TRANSFORMER = { 0.00f, 0.22f, 0.6f };
+
+// Light-grey population bar. Divided into `capacity` (= level + 1) subcells.
+// Filled width = pop / capacity. One black dot per existing unit fills
+// successive subcells from the left. All dimensions/positions derive from
+// POP_BAR_TRANSFORMER so a single tweak scales every element together.
+static inline void draw_pop_bar(Vector2 ctr, int pop, int capacity,
+                                int units_owned, int owner) {
+    if (capacity <= 0) return;
+    const Transformer& xf = POP_BAR_TRANSFORMER;
+    const float W = TILE_W * 0.70f * xf.scale;
+    const float H = TILE_H * 0.14f * xf.scale;
+    const float X = ctr.x + xf.x_offset * TILE_W - W * 0.5f;
+    const float Y = ctr.y + xf.y_offset * TILE_H - H * 0.5f;
+
+    const Color BG_COL      = { 210, 210, 210, 230 };
+    const Color OUTLINE_COL = {  90,  90,  90, 230 };
+    const Color DIVIDER_COL = {  70,  70,  70, 220 };
+    const Color FILL_COL    = (owner == 0)
+        ? Color{ 110, 170, 250, 240 }
+        : Color{ 230,  70,  70, 240 };
+
+    Rectangle bg = { X, Y, W, H };
+    DrawRectangleRec(bg, BG_COL);
+
+    // Fill shares the EXACT same X/Y/H as the bg, only its width shrinks. Both
+    // go through DrawRectangleRec with the same Rectangle semantics, so the
+    // top/bottom edges align pixel-perfectly with no anti-alias mismatch.
+    if (pop > 0) {
+        float frac = (float)pop / (float)capacity;
+        if (frac > 1.0f) frac = 1.0f;
+        Rectangle filled = { X, Y, W * frac, H };
+        DrawRectangleRec(filled, FILL_COL);
+    }
+
+    const float line_thick = H * 0.10f > 1.0f ? H * 0.10f : 1.0f;
+    for (int seg = 1; seg < capacity; seg++) {
+        float lx = X + (W * seg) / (float)capacity;
+        DrawLineEx({ lx, Y }, { lx, Y + H }, line_thick, DIVIDER_COL);
+    }
+
+    int dots = units_owned < capacity ? units_owned : capacity;
+    float dot_r = H * 0.28f;
+    if (dot_r < 1.5f) dot_r = 1.5f;
+    for (int i = 0; i < dots; i++) {
+        float dot_cx = X + (W * (i + 0.5f)) / (float)capacity;
+        float dot_cy = Y + H * 0.5f;
+        DrawCircleV({ dot_cx, dot_cy }, dot_r, BLACK);
+    }
+
+    DrawRectangleLinesEx(bg, line_thick, OUTLINE_COL);
 }
 
 static inline void draw_diamond(Vector2 ctr, Color fill) {
@@ -380,11 +386,198 @@ static inline void draw_diamond_outline(Vector2 ctr, Color outline, float thick)
     DrawLineEx(left,  top,   thick, outline);
 }
 
+// --- City borders --------------------------------------------------------------
+// Per-tile per-direction per-owner draw flags rebuilt each frame from
+// Tile::border_city_id(). Two friendly cities meeting along an edge cancel each
+// other on that edge (same owner, different city); enemy-vs-friendly edges keep
+// both stripes and overlap visually. Both sides of each edge set their own flag
+// so the near-tile in the back-to-front pass redraws over any terrain occlusion.
+//   dir 0: neighbor (r-1, c) — screen lower-right → BR diamond edge
+//   dir 1: neighbor (r+1, c) — screen upper-left  → TL diamond edge
+//   dir 2: neighbor (r, c-1) — screen lower-left  → BL diamond edge
+//   dir 3: neighbor (r, c+1) — screen upper-right → TR diamond edge
+// Opposite dir = d ^ 1 (0↔1, 2↔3).
+static bool border_draw_flags[MAX_MAP_TILES * 4][2] = {};
+static const int BORDER_DR[4] = { -1, +1,  0,  0 };
+static const int BORDER_DC[4] = {  0,  0, -1, +1 };
+
+static void compute_border_flags(const GameState& s, const GameState& fog_state,
+                                 int vp, bool omni) {
+    const int msz  = s.map_size();
+    const int mtsz = s.map_tiles();
+    for (int i = 0; i < mtsz * 4; i++) {
+        border_draw_flags[i][0] = false;
+        border_draw_flags[i][1] = false;
+    }
+    for (int idx = 0; idx < mtsz; idx++) {
+        const Tile& t = s.tile_at(idx);
+        int cid = t.border_city_id();
+        if (cid < 0) continue;
+        int owner = s.get_city(cid).owner();
+        int r = idx / msz, c = idx % msz;
+        bool self_fogged = !omni && !fog_state.is_explored(vp, idx);
+        for (int d = 0; d < 4; d++) {
+            int nr = r + BORDER_DR[d], nc = c + BORDER_DC[d];
+            bool oob = (nr < 0 || nr >= msz || nc < 0 || nc >= msz);
+            int n_idx   = oob ? -1 : (nr * msz + nc);
+            int n_cid   = -1;
+            int n_owner = -1;
+            if (!oob) {
+                const Tile& nt = s.tile_at(n_idx);
+                n_cid = nt.border_city_id();
+                if (n_cid >= 0) n_owner = s.get_city(n_cid).owner();
+            }
+            if (n_cid == cid)     continue;       // same territory
+            if (n_owner == owner) continue;       // friendly border cancels
+            // Hide edges that are entirely in fog: an edge only shows when at
+            // least one of its two tiles is explored (OOB counts as fogged).
+            bool n_fogged = oob || (!omni && !fog_state.is_explored(vp, n_idx));
+            if (self_fogged && n_fogged) continue;
+            // Enemy borders on the same edge: both colours draw. Per-tile
+            // render order (in draw_tile_borders) gives the front tile's
+            // colour layer priority — its own stripe ends up on top.
+            border_draw_flags[idx * 4 + d][owner] = true;
+            if (n_idx >= 0)
+                border_draw_flags[n_idx * 4 + (d ^ 1)][owner] = true;
+        }
+    }
+}
+
+// Parallelogram stripes along the diamond edge: top/bottom parallel to the
+// edge tangent, left/right vertical. Both stripe half-length and gaps between
+// stripes are sampled from per-edge uniform distributions; the RNG is seeded
+// by the edge endpoints so the pattern stays stable across frames.
+// `right_edge`: true for "/" edges (BR + TL), false for "\" edges (BL + TR).
+// Right/left orientations get distinct colours to read as facing direction.
+static inline void draw_border_stripes(Vector2 a, Vector2 b, int owner, bool right_edge) {
+    float ex = b.x - a.x, ey = b.y - a.y;
+    float L = sqrtf(ex * ex + ey * ey);
+    if (L < 1.0f) return;
+    float tx = ex / L, ty = ey / L;
+    // Four colours total: rich saturated blue / red for "/" edges, darker
+    // toned variants for "\" edges. Owner picks blue (P0) vs red (P1).
+    Color col = right_edge
+        ? (owner == 0 ? Color{  20,  70, 235, 235 } : Color{ 235,  70,  70, 235 })
+        : (owner == 0 ? Color{  15,  40, 130, 235 } : Color{ 150,  35,  35, 235 });
+    const float STRIPE_HALF_H   = TILE_H * 0.06f;    // vertical half-thickness
+    const float STRIPE_Y_OFFSET = -TILE_H * 0.06f;   // push stripes upward
+    const float HL_MIN          = TILE_H * 0.03f;    // half-length min
+    const float HL_MAX          = TILE_H * 0.07f;    // half-length max
+    const float GAP_MIN         = TILE_H * 0.04f;     // gap range halved
+    const float GAP_MAX         = TILE_H * 0.05f;
+
+    // Per-edge deterministic xorshift32 seeded by endpoint coords + owner.
+    uint32_t seed = (uint32_t)((int)(a.x * 31.0f) * 73856093u)
+                  ^ (uint32_t)((int)(a.y * 31.0f) * 19349663u)
+                  ^ (uint32_t)((int)(b.x * 31.0f) * 83492791u)
+                  ^ (uint32_t)((int)(b.y * 31.0f) * 50331653u)
+                  ^ (uint32_t)(owner * 2654435761u);
+    if (seed == 0) seed = 0xA53B7C1Du;
+    auto next_u01 = [&]() {
+        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+        return (seed & 0xFFFFFFu) / (float)0xFFFFFFu;
+    };
+    auto uniform = [&](float lo, float hi) { return lo + next_u01() * (hi - lo); };
+
+    // Walk along the edge laying down stripes + gaps. If the next stripe would
+    // overflow past L it gets truncated to fit; we still draw a smaller stripe
+    // up to the vertex rather than skipping it.
+    float s = uniform(GAP_MIN, GAP_MAX) * 0.5f;
+    while (s < L) {
+        float half_len = uniform(HL_MIN, HL_MAX);
+        float full_len = 2.0f * half_len;
+        float end = s + full_len;
+        if (end > L) end = L;
+        float length = end - s;
+        if (length < 0.5f) break;
+        float center = (s + end) * 0.5f;
+        float half_local = length * 0.5f;
+        float center_t = center / L;
+        float px = a.x + ex * center_t;
+        float py = a.y + ey * center_t + STRIPE_Y_OFFSET;
+        Vector2 A = { px - tx * half_local, py - ty * half_local - STRIPE_HALF_H };
+        Vector2 B = { px - tx * half_local, py - ty * half_local + STRIPE_HALF_H };
+        Vector2 C = { px + tx * half_local, py + ty * half_local + STRIPE_HALF_H };
+        Vector2 D = { px + tx * half_local, py + ty * half_local - STRIPE_HALF_H };
+        DrawTriangle(A, B, C, col);
+        DrawTriangle(A, C, D, col);
+        s = end + uniform(GAP_MIN, GAP_MAX);
+    }
+}
+
+// Solid lighter-tone parallelogram spanning the full edge. Used to highlight a
+// selected city's territory boundary — same vertical-sided shape as the stripe
+// parallelograms, but one continuous block per edge rather than dashed.
+static inline void draw_temp_border(Vector2 a, Vector2 b, int owner) {
+    // Normalize left-to-right so the A,B,C / A,C,D triangulation is always CCW
+    // on screen; raylib's DrawTriangle culls CW. For BL edges (a=vbot, b=vleft)
+    // b.x < a.x, which produces CW winding and an invisible parallelogram.
+    if (b.x < a.x) { Vector2 t = a; a = b; b = t; }
+    float ex = b.x - a.x, ey = b.y - a.y;
+    float L = sqrtf(ex * ex + ey * ey);
+    if (L < 1.0f) return;
+    float tx = ex / L, ty = ey / L;
+    Color col = (owner == 0)
+        ? Color{ 130, 190, 255, 180 }
+        : Color{ 255, 160, 160, 180 };
+    const float HALF_H   = TILE_H * 0.06f;
+    const float Y_OFFSET = -TILE_H * 0.06f;
+    float mid_x = (a.x + b.x) * 0.5f;
+    float mid_y = (a.y + b.y) * 0.5f + Y_OFFSET;
+    float half_len = L * 0.5f;
+    Vector2 A = { mid_x - tx * half_len, mid_y - ty * half_len - HALF_H };
+    Vector2 B = { mid_x - tx * half_len, mid_y - ty * half_len + HALF_H };
+    Vector2 C = { mid_x + tx * half_len, mid_y + ty * half_len + HALF_H };
+    Vector2 D = { mid_x + tx * half_len, mid_y + ty * half_len - HALF_H };
+    DrawTriangle(A, B, C, col);
+    DrawTriangle(A, C, D, col);
+}
+
+// Direction-mask helpers: bit d (= 0..3) is BR/TL/BL/TR respectively.
+//   BORDER_DIRS_ALL    — all 4 edges (default).
+//   BORDER_DIRS_BACK   — TL + TR only (upper-back edges, occluded by mountain).
+//   BORDER_DIRS_FRONT  — BR + BL only (lower-front edges, sit in front of mountain).
+static constexpr int BORDER_DIRS_ALL   = 0xF;
+static constexpr int BORDER_DIRS_BACK  = (1 << 1) | (1 << 3);
+static constexpr int BORDER_DIRS_FRONT = (1 << 0) | (1 << 2);
+
+// `self_owner`: this tile's own border owner (0 or 1), or -1 if the tile has
+// no border city. The tile's own colour is drawn LAST so it sits on top;
+// combined with the back-to-front pass, this gives the front tile's stripe
+// layer priority on edges with conflicting enemy borders.
+// `dir_mask` selects which of the 4 directions to render (bit per dir).
+static inline void draw_tile_borders(int idx, Vector2 ctr, int self_owner,
+                                     int dir_mask = BORDER_DIRS_ALL) {
+    Vector2 vtop   = { ctr.x,                  ctr.y - TILE_H * 0.5f };
+    Vector2 vright = { ctr.x + TILE_W * 0.5f,  ctr.y                 };
+    Vector2 vbot   = { ctr.x,                  ctr.y + TILE_H * 0.5f };
+    Vector2 vleft  = { ctr.x - TILE_W * 0.5f,  ctr.y                 };
+    Vector2 edges[4][2] = {
+        { vbot,  vright },  // dir 0: BR
+        { vleft, vtop   },  // dir 1: TL
+        { vbot,  vleft  },  // dir 2: BL
+        { vtop,  vright },  // dir 3: TR
+    };
+    int order[2] = { 0, 1 };
+    if (self_owner == 0) { order[0] = 1; order[1] = 0; }
+    for (int d = 0; d < 4; d++) {
+        if (!(dir_mask & (1 << d))) continue;
+        // d 0 (BR) and 1 (TL) are the "/" diagonals — "right" edges.
+        // d 2 (BL) and 3 (TR) are the "\" diagonals — "left" edges.
+        bool right_edge = (d < 2);
+        for (int i = 0; i < 2; i++) {
+            int p = order[i];
+            if (border_draw_flags[idx * 4 + d][p])
+                draw_border_stripes(edges[d][0], edges[d][1], p, right_edge);
+        }
+    }
+}
+
 static std::string format_action_str(const Action& a, int player, int turn, int sz) {
     auto coords = [sz](int idx) {
         char buf[12]; snprintf(buf, sizeof(buf), "(%d,%d)", idx / sz, idx % sz); return std::string(buf);
     };
-    static const char* unit_names[] = {"?","Warrior","Archer","Rider","Defender"};
+    static const char* unit_names[] = {"?","Warrior","Archer","Rider","Defender","Giant"};
     static const char* tech_names[] = {"Origin","Hunting","Org","Farming","Riding","Climb","Archery","Mining"};
     char prefix[24]; snprintf(prefix, sizeof(prefix), "P%d T%d: ", player, turn);
     std::string p = prefix;
@@ -407,10 +600,7 @@ static std::string format_action_str(const Action& a, int player, int turn, int 
     }
 }
 
-// ---------------------------------------------------------------------------
-// Colourer — assigns each city a distinct-but-similar colour and tracks which
-// tiles fall inside that city's territory.
-// ---------------------------------------------------------------------------
+// Colourer — assigns each city a distinct shade in the owner's colour family.
 struct Colourer {
     static constexpr int PALETTE_SIZE = 8;
 
@@ -531,7 +721,7 @@ static void action_label(const Action& a, char* buf, int size) {
             snprintf(buf, size, "(%d,%d) -> (%d,%d)", fx, fy, tx, ty);
             break;
         case ActionType::TrainUnit: {
-            static const char* unit_names[] = { "?", "Warrior", "Archer", "Rider", "Defender" };
+            static const char* unit_names[] = { "?", "Warrior", "Archer", "Rider", "Defender", "Giant" };
             const char* uname = (a.param > 0 && a.param < (int)UnitType::Count) ? unit_names[a.param] : "?";
             snprintf(buf, size, "%s", uname);
             break;
@@ -624,11 +814,7 @@ static int build_sidebar_layout(const Action* actions, int count,
 }
 
 
-// ---------------------------------------------------------------------------
-// Tech tree layout
-// Tiers:    0=Origin  1=Hunting,Organisation,Riding,Climbing  2=Archery,Mining
-// Positions hard-coded to match the TECH_DEFS order.
-// ---------------------------------------------------------------------------
+// Tech tree layout. Tiers: 0=Origin, 1=Hunting/Org/Riding/Climbing, 2=Archery/Mining.
 struct TechNode {
     TechType type;
     int      tier;   // 0,1,2
@@ -649,10 +835,8 @@ static const TechNode NODES[] = {
 };
 static constexpr int NODE_COUNT = 8;
 
-// hover_tech: -1 = none, else TechType int being hovered for research
-// scale: zoom factor (1.0 = default); >1 = zoomed in, nodes spread farther apart
-// Draws the tech tree into the rect (rx, ry, rw, rh). Tiers stack top → bottom (Origin
-// on top); slot positions spread left → right within each tier row.
+// Tiers stack top→bottom (Origin on top); slots spread left→right per tier.
+// hover_tech: -1 for none. scale: >1 zooms in.
 static void draw_tech_tree(uint32_t owned_techs, int player_idx,
                            int rx, int ry, int rw, int rh, const char* label,
                            int hover_tech = -1, float scale = 1.0f)
@@ -674,20 +858,17 @@ static void draw_tech_tree(uint32_t owned_techs, int player_idx,
         DrawText(label, rx + rw / 2 - lw / 2, ry + 2, FONT_SZ + 2, owned_col);
     }
 
-    // Content area (below header). The node label sits just below each node, so we
-    // reserve `label_room` of vertical margin at the bottom so the last tier's name fits.
+    // Reserve label_room at bottom so last tier's tech name doesn't clip.
     float content_y  = (float)ry + header_h;
     float content_h  = (float)rh - header_h;
     float label_room = NODE_R + FONT_SZ + 4;
 
-    // Find the largest slot value used so we can map slots into the available width.
-    // (Mining sits at slot 3.5 — the layout must accommodate that.)
+    // Largest slot (Mining=3.5) sets the horizontal range.
     float max_slot = 0.0f;
     for (int i = 0; i < NODE_COUNT; i++)
         if (NODES[i].slot > max_slot) max_slot = NODES[i].slot;
 
-    // Vertical: tiers stack from top to bottom across content_h, leaving label_room
-    // at the bottom so the last tier's tech name doesn't get clipped.
+    // Tiers stack top→bottom across content_h.
     float v_top    = content_y + NODE_R;
     float v_bot    = content_y + content_h - label_room;
     float v_range  = v_bot - v_top;
@@ -696,8 +877,7 @@ static void draw_tech_tree(uint32_t owned_techs, int player_idx,
         return v_top + (tier / (float)(TIERS - 1)) * v_range;
     };
 
-    // Horizontal: slots 0..max_slot spread across content width. We inset extra padding
-    // beyond the node radius so the outermost techs don't crowd the panel border.
+    // Slots 0..max_slot spread across width; H_MARGIN insets past node radius.
     const float H_MARGIN = NODE_R + 32.0f;
     float h_left  = rx + H_MARGIN;
     float h_right = rx + rw - H_MARGIN;
@@ -760,77 +940,28 @@ int main(int argc, char** argv) {
         MapGenResult r = MapGen(p).generate();
         int mtsz = r.state.map_tiles();
         for (int i = 0; i < mtsz; i++) climate[i] = r.climate[i];
-
-        // Debug roster: spawn one of every unit type next to each player's capital so
-        // the visualizer shows all 4 unit types side-by-side for transformer tweaking.
-        // Comment out this block once you don't need the comparison spawn anymore.
-        int msz = r.state.map_size();
-        const UnitType TYPES[]  = { UnitType::Warrior, UnitType::Archer,
-                                    UnitType::Rider,   UnitType::Defender };
-        const int OFF[8][2]     = {
-            {-1,-1},{0,-1},{1,-1},
-            {-1, 0},       {1, 0},
-            {-1, 1},{0, 1},{1, 1}
-        };
-        for (int player = 0; player < 2; player++) {
-            int cap_tile = -1;
-            for (int i = 0; i < msz * msz; i++) {
-                const Tile& t = r.state.tile_at(i);
-                if (!t.has_city()) continue;
-                const City& c = r.state.get_city(t.city_id());
-                if (c.owner() == player && c.is_capital()) { cap_tile = i; break; }
-            }
-            if (cap_tile < 0) continue;
-            int cx = cap_tile % msz, cy = cap_tile / msz;
-            int placed = 0;
-            for (int o = 0; o < 8 && placed < (int)(sizeof(TYPES)/sizeof(TYPES[0])); o++) {
-                int nx = cx + OFF[o][0], ny = cy + OFF[o][1];
-                if (nx < 0 || ny < 0 || nx >= msz || ny >= msz) continue;
-                int ntile = to_index(nx, ny, msz);
-                const Tile& nt = r.state.tile_at(ntile);
-                if (nt.has_unit()) continue;
-                TerrainType ter = nt.terrain();
-                if (ter == TerrainType::Water || ter == TerrainType::Mountain) continue;
-                r.state.spawn_unit(TYPES[placed], player, ntile);
-                placed++;
-            }
-        }
         return r.state;
     };
     GameState initial = new_map();
     TILE_W = iso_grid_width() / initial.map_size();
-    TILE_H = (TILE_W * 3) / 5;  // 5:3 ratio matches the grass terrain sprite
+    TILE_H = (TILE_W * 3) / 5;
     GameState s = initial;
 
-    // Per-unit facing for the live-play visualizer (purely visual; not in GameState).
-    // Indexed by unit slot id. false = facing right (PNG default), true = flipped.
-    // Reset on every map regen/reset. Slot reuse on unit respawn may briefly inherit
-    // the dead unit's facing — that's tolerable for a visual cue.
+    // Per-unit facing (visual only); false = facing right, true = flipped. Reset on regen.
     bool unit_facing_left[MAX_MAP_TILES] = {};
     auto reset_facing = [&]() {
         for (auto& f : unit_facing_left) f = false;
     };
 
-    // Move animation — at most one active at a time. When a new Move is applied
-    // (or a replay step lands on a Move), we decode its path, record start time,
-    // and the unit's draw position is interpolated along the path tiles until the
-    // animation completes. A new Move cancels the previous animation: the unit
-    // snaps to its current tile (which is the destination of the cancelled move).
-    // Animation duration scales sub-linearly with path length: each extra hop adds
-    // less time than the first so longer paths play faster per step.
-    //   1 hop  → 0.15s
-    //   2 hops → 0.15 + 0.08 = 0.23s
-    //   3 hops → 0.15 + 0.16 = 0.31s
-    //
-    // The same struct is reused for Attack animations:
-    //   - Kill+advance: attacker ends on the target tile, animated as a 1-hop move.
-    //   - Lunge: attacker stays put. `lunge=true` triggers a triangle-wave offset
-    //     toward `path_tiles[1]` (the target) and back to `path_tiles[0]`.
+    // Single in-flight move/attack anim. Duration = FIRST_HOP + EXTRA_HOP * (hops - 1).
+    //   1 hop → 0.20s, 2 hops → 0.26s, 3 hops → 0.32s.
+    // Reused for Attack: kill+advance = 1-hop move, lunge = triangle-wave offset.
     constexpr double MOVE_ANIM_FIRST_HOP_SECS = 0.2;
     constexpr double MOVE_ANIM_EXTRA_HOP_SECS = 0.06;
     constexpr double ATTACK_LUNGE_SECS = 0.2;
-    constexpr float  ATTACK_LUNGE_FRAC = 0.35f;  // peak offset toward target, fraction of tile-to-tile vector
+    constexpr float  ATTACK_LUNGE_FRAC = 0.35f;
     constexpr double ATTACK_RANGED_SECS = 0.20;
+    // pre_state defers fog reveal (and contents in freshly-walked tiles) until anim ends.
     struct MoveAnimation {
         bool   active     = false;
         bool   lunge      = false;
@@ -839,13 +970,11 @@ int main(int argc, char** argv) {
         int    path_count = 0;
         double start_time = 0.0;
         double duration   = 0.0;
+        GameState pre_state;
     };
     MoveAnimation move_anim;
 
-    // Ranged-attack projectile animation. Independent of move_anim: the attacker
-    // doesn't move; instead a "ball" arcs from from_tile → to_tile, and during the
-    // flight we render the target tile from a pre-attack snapshot so the defender
-    // keeps full pre-HP (or stays visible if doomed) until the moment of impact.
+    // Ranged projectile arcs from→to; pre_state keeps the defender intact until impact.
     struct RangedAttackAnim {
         bool       active     = false;
         int        from_tile  = -1;
@@ -857,8 +986,7 @@ int main(int argc, char** argv) {
     RangedAttackAnim ranged_anim;
 
     auto start_move_anim = [&](const GameState& pre_state, const Action& a) {
-        // A new Move cancels any in-flight ranged projectile so the next frame
-        // shows the live state at the previous target tile.
+        // New Move cancels any in-flight ranged projectile.
         ranged_anim.active = false;
         if (a.type != ActionType::Move || a.path_steps == 0) {
             move_anim.active = false;
@@ -878,16 +1006,12 @@ int main(int argc, char** argv) {
         move_anim.duration   = MOVE_ANIM_FIRST_HOP_SECS
                              + MOVE_ANIM_EXTRA_HOP_SECS * (hops - 1);
         move_anim.lunge      = false;
+        move_anim.pre_state  = pre_state;
         move_anim.active     = true;
     };
 
-    // Attack animation. Three variants:
-    //   - Ranged: kick off the projectile arc + tile snapshot (see RangedAttackAnim).
-    //   - Melee kill+advance: attacker ends up on target tile → 1-hop move animation.
-    //   - Melee lunge: attacker stays put → triangle-wave offset toward target and back.
-    // If the attacker died (slot empty at both tiles post-attack), skip the melee
-    // path — no sprite left to animate. Ranged attackers don't die from attacking,
-    // so the ranged path doesn't need that check.
+    // Three variants: ranged (projectile arc), melee kill+advance (1-hop move),
+    // melee lunge (triangle wave). Skip melee if attacker died — no sprite to animate.
     auto start_attack_anim = [&](const GameState& pre_state,
                                  const GameState& post_state, const Action& a) {
         move_anim.active   = false;
@@ -922,17 +1046,15 @@ int main(int argc, char** argv) {
             move_anim.lunge    = true;
             move_anim.duration = ATTACK_LUNGE_SECS;
         }
+        move_anim.pre_state = pre_state;
         move_anim.active = true;
     };
 
-    // Action log (replay: all actions; live: accumulated).
-    // Parallel `_debug` vector marks entries that came from Logger::print
-    // — those render in grey instead of the player colour.
+    // Action log; parallel _debug marks Logger entries (rendered grey).
     std::vector<std::string> action_log;
     std::vector<bool>        action_log_debug;
     int last_logger_count = 0;
-    // Trails left by Explorer upgrades — each entry is the sequence of tile
-    // indices the explorer walked. Visualizer-only state.
+    // Explorer-upgrade walk paths (visualizer-only).
     std::vector<std::vector<int>> explorer_trails;
     int log_scroll = 0;
 
@@ -946,11 +1068,9 @@ int main(int argc, char** argv) {
     std::vector<Action>    replay_actions;  // one Action per applied step (paths populated for Move)
     std::vector<std::string> replay_log;   // one entry per action
     int replay_step = 0;
-    // Tracks the previous frame's replay_step so we can spot single-step advances
-    // (which trigger a move animation) vs jumps/rewinds (which cancel any animation).
+    // Previous frame's replay_step; single +1 advances animate, jumps don't.
     int last_replay_step = -1;
-    // Helper: legacy replay files don't store path_bits; recompute via BFS so the
-    // visualizer's animation code has the same path the engine derives at apply time.
+    // Legacy replays lack path_bits — recompute via BFS for the animator.
     auto populate_move_path = [&](Action& a, const GameState& pre) {
         if (a.type != ActionType::Move) return;
         int uid = pre.tile_at(a.from).unit_id();
@@ -1028,21 +1148,14 @@ int main(int argc, char** argv) {
     float  tech_zoom      = 1.0f;
     s.legal_actions(actions, action_count);
 
-    // HiDPI: render at the display's physical pixel density (Retina). Without this raylib
-    // renders at logical resolution and macOS upscales the framebuffer, making everything
-    // — text, shapes, sprites — look pixelated on Retina displays.
+    // HiDPI: render at physical pixel density so Retina doesn't upscale and blur.
     SetConfigFlags(FLAG_WINDOW_HIGHDPI);
     InitWindow(W, H, "Polyshark");
     SetTargetFPS(60);
 
-    // Unit sprites, per owner. [owner][UnitType]. Loaded after GL context exists.
-    // Paths are relative to the project root (the visualizer's expected launch directory).
-    // Missing files are tolerated — affected units fall back to a circle+letter.
+    // Unit sprites [owner][UnitType]. Missing files fall back to circle+letter.
     Texture2D unit_tex[2][(int)UnitType::Count] = {};
-    // Offset (in source-image pixels) of the figure's alpha-bbox center relative to image
-    // center. Positive y = figure sits below image center (transparent padding on top);
-    // positive x = figure sits right of center. Used to centre the visible character on
-    // the tile rather than the (often padded) image canvas.
+    // Figure's alpha-bbox center offset from image center (centers padded sprites).
     float unit_tex_xoff[2][(int)UnitType::Count] = {};
     float unit_tex_yoff[2][(int)UnitType::Count] = {};
     auto load_sprite = [&](int owner, UnitType ut, const char* path) {
@@ -1127,8 +1240,7 @@ int main(int argc, char** argv) {
     load_terrain(TerrainSprite::Grass,    "visualizer/sprites/terrain/grass.png");
     load_terrain(TerrainSprite::Mountain, "visualizer/sprites/terrain/mountain.png");
 
-    // Resource sprites share the same loader pattern as terrain — load the image,
-    // compute its alpha bbox, and stash texture + bbox in the resource arrays.
+    // Same loader pattern as terrain.
     auto load_resource = [&](ResourceSprite rs, const char* path) {
         if (!FileExists(path)) { fprintf(stderr, "missing sprite: %s\n", path); return; }
         Image img = LoadImage(path);
@@ -1162,6 +1274,38 @@ int main(int argc, char** argv) {
     load_resource(ResourceSprite::Forest,     "visualizer/sprites/terrain/imperius/Imperius_forest.png");
     load_resource(ResourceSprite::Village,    "visualizer/sprites/terrain/village.png");
     load_resource(ResourceSprite::Lighthouse, "visualizer/sprites/terrain/lighthouse.png");
+
+    auto load_city = [&](int level, const char* path) {
+        if (!FileExists(path)) { fprintf(stderr, "missing sprite: %s\n", path); return; }
+        Image img = LoadImage(path);
+        if (img.data == nullptr) return;
+        Color* px = LoadImageColors(img);
+        int min_x = img.width, max_x = -1, min_y = img.height, max_y = -1;
+        for (int y = 0; y < img.height; y++) {
+            for (int x = 0; x < img.width; x++) {
+                if (px[y * img.width + x].a > 16) {
+                    if (x < min_x) min_x = x;
+                    if (x > max_x) max_x = x;
+                    if (y < min_y) min_y = y;
+                    if (y > max_y) max_y = y;
+                }
+            }
+        }
+        UnloadImageColors(px);
+        Texture2D t = LoadTextureFromImage(img);
+        UnloadImage(img);
+        if (t.id != 0) {
+            GenTextureMipmaps(&t);
+            SetTextureFilter(t, TEXTURE_FILTER_ANISOTROPIC_16X);
+            city_tex [level - 1] = t;
+            city_bbox[level - 1] = { min_x, max_x + 1, min_y, max_y + 1 };
+        }
+    };
+    for (int lvl = 1; lvl <= CITY_SPRITE_LEVELS; lvl++) {
+        char path[64];
+        snprintf(path, sizeof(path), "visualizer/sprites/cities/lvl%d.png", lvl);
+        load_city(lvl, path);
+    }
 
     while (!WindowShouldClose()) {
 
@@ -1294,8 +1438,7 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Map tile click: a click on a highlighted destination applies that Move/Attack;
-        // otherwise toggle selection (same-tile click deselects).
+        // Map click: applies Move/Attack on a highlighted dest, else toggles selection.
         {
             int hover_r = -1, hover_c = -1;
             tile_from_screen(mouse.x, mouse.y, cur_msz, hover_r, hover_c);
@@ -1312,8 +1455,7 @@ int main(int argc, char** argv) {
 
                 if (matched >= 0) {
                     click_applied = matched;
-                    // Keep selection on the unit so the next click sees fresh
-                    // Move/Attack destinations from its new tile.
+                    // Keep selection on the moved unit for chained moves.
                     if (was_move) selected_tile = tidx;
                 } else {
                     selected_tile = (selected_tile == tidx) ? -1 : tidx;
@@ -1334,8 +1476,7 @@ int main(int argc, char** argv) {
             return false;
         };
 
-        // Replay step transitions: a single forward step animates the move; any other
-        // jump (scrub, rewind, multi-step) cancels in-flight animation and snaps.
+        // Single forward step animates; jumps/rewinds cancel.
         if (replay_mode) {
             if (last_replay_step >= 0 && replay_step == last_replay_step + 1
                 && (replay_step - 1) >= 0
@@ -1362,24 +1503,24 @@ int main(int argc, char** argv) {
             last_replay_step = replay_step;
         }
 
+        // Fog/view selection — also feeds compute_border_flags so edges that
+        // are completely in fog aren't drawn.
+        int vp = (view == ViewMode::P1)      ? 1 :
+                 (view == ViewMode::Current) ? s.current_player() : 0;
+        bool omni = (view == ViewMode::Omni);
+        const GameState& border_fog_state =
+            move_anim.active ? move_anim.pre_state : s;
+        compute_border_flags(s, border_fog_state, vp, omni);
+
         BeginDrawing();
         ClearBackground(BLACK);
 
         // --- Map (isometric diamond grid) ---
-        // Iteration phases:
-        //   1. Ground diamonds (any order — they don't overlap).
-        //   2. Per-tile decorations + units, drawn back-to-front in DESCENDING (r+c) so
-        //      bottom-of-screen units' sprites overlap the tiles behind them correctly.
-        // Most of the per-tile UI (terrain icons, cities, pop bars, borders, climate tint,
-        // axis labels, explorer trails) is intentionally stripped while we verify the iso
-        // layout. It will be reintroduced once terrain sprites land.
-        int vp = (view == ViewMode::P1)      ? 1 :
-                 (view == ViewMode::Current) ? s.current_player() : 0;
+        // Two back-to-front passes (DESCENDING r+c).
+        //   Pass 1 per tile: terrain → borders → rings → overlays → hover.
+        //   Pass 2: units + HP. Units always render on top so they're never
+        //   occluded by tall sprites (mountains/cities) on tiles in front.
 
-        // Single back-to-front pass (high r+c first, low r+c last). For each tile
-        // we draw terrain → rings → overlays → unit/HP → hover all in one go, so
-        // anything on a NEAR tile naturally overdraws anything from a FAR tile —
-        // mountains end up covering forests/animals/crops/units sitting behind them.
         const Color FOG_COL   = {  18,  18,  18, 255 };
         const Color WATER_COL = {  30,  80, 130, 255 };
         for (int sum = 2 * (cur_msz - 1); sum >= 0; sum--) {
@@ -1387,44 +1528,60 @@ int main(int argc, char** argv) {
                 int c = sum - r;
                 if (c < 0 || c >= cur_msz) continue;
                 int idx = to_index(c, r, cur_msz);
-                // While a ranged-attack projectile is in flight, render the target
-                // tile from the pre-attack snapshot so the defender stays visible
-                // (and at full pre-HP) until the moment of impact. All other tiles
-                // render from the live state as usual.
+                // Ranged in flight: target tile uses pre-attack snapshot until impact.
                 const GameState& render_state =
                     (ranged_anim.active && idx == ranged_anim.to_tile)
                         ? ranged_anim.pre_state : s;
                 const Tile& t = render_state.tile_at(idx);
-                bool fogged = (view != ViewMode::Omni) && !s.is_explored(vp, idx);
+                // Defer fog reveal until anim ends — freshly walked tiles stay dark.
+                const GameState& fog_state =
+                    move_anim.active ? move_anim.pre_state : s;
+                bool fogged = (view != ViewMode::Omni) && !fog_state.is_explored(vp, idx);
                 Vector2 ctr = tile_center(r, c, cur_msz);
 
-                // Terrain (or fog/water) first inside the tile.
+                // Terrain (or fog/water) first inside the tile. Fogged tiles
+                // still render their border stripes on top of the fog diamond
+                // so territory shape stays readable through fog.
                 if (fogged) {
                     draw_diamond(ctr, FOG_COL);
-                    continue;  // nothing else renders for fogged tiles
+                    int self_border_owner_fog = -1;
+                    if (t.border_city_id() >= 0)
+                        self_border_owner_fog = render_state.get_city(t.border_city_id()).owner();
+                    draw_tile_borders(idx, ctr, self_border_owner_fog);
+                    continue;
                 }
                 TerrainType ter = t.terrain();
                 if (ter == TerrainType::Water) {
                     draw_diamond(ctr, WATER_COL);
-                } else if (ter == TerrainType::Mountain) {
-                    draw_terrain_sprite(ctr, TerrainSprite::Mountain);
-                } else {
+                } else if (ter != TerrainType::Mountain) {
                     draw_terrain_sprite(ctr, TerrainSprite::Grass);
                 }
+                // Mountain sprite drawn AFTER borders so it occludes the
+                // upper-back borders that pass behind it.
 
-                // Move-destination: cyan movement_ring (inner solid + outer donut).
-                // Attack-destination: same composite ring in red.
+                int self_border_owner = -1;
+                if (t.border_city_id() >= 0)
+                    self_border_owner = render_state.get_city(t.border_city_id()).owner();
+                // For mountain tiles: TL/TR drawn first (mountain occludes them),
+                // mountain sprite, then BR/BL drawn on top so the front-facing
+                // borders stay visible even when there's no neighbour in front.
+                // Non-mountain tiles draw all 4 in one pass.
+                if (ter == TerrainType::Mountain) {
+                    draw_tile_borders(idx, ctr, self_border_owner, BORDER_DIRS_BACK);
+                    draw_terrain_sprite(ctr, TerrainSprite::Mountain);
+                    draw_tile_borders(idx, ctr, self_border_owner, BORDER_DIRS_FRONT);
+                } else {
+                    draw_tile_borders(idx, ctr, self_border_owner);
+                }
+
+                // Move-dest: cyan ring. Attack-dest: same ring in red.
                 if (is_move_dest(idx)) {
-                    // Same faint cyan as the ready ring under units that haven't moved.
                     draw_movement_ring(ctr, { 80, 220, 255, 130 });
                 } else if (is_attack_dest(idx)) {
                     draw_movement_ring(ctr, { 230, 80, 80, 130 });
                 }
 
-                // Tile decorations (forest/village/lighthouse overlay + resource
-                // overlay + captured-city flag) sit between terrain and unit so a
-                // unit on the tile correctly occludes them. Hidden under fog.
-                // Terrain overlay first, then resource (so e.g. Animal lands on top).
+                // Overlays between terrain and unit so units occlude them.
                 if (!fogged) {
                     if (t.terrain() == TerrainType::Forest)
                         draw_resource_sprite(ctr, ResourceSprite::Forest);
@@ -1436,156 +1593,13 @@ int main(int argc, char** argv) {
                     if (rs != ResourceSprite::Count)
                         draw_resource_sprite(ctr, rs);
                     if (t.has_city()) {
-                        int owner = render_state.get_city(t.city_id()).owner();
-                        draw_city_marker(ctr, owner);
+                        const City& c = render_state.get_city(t.city_id());
+                        draw_city_sprite(ctr, c.level());
                     }
                 }
 
-                if (!fogged && t.has_unit()) {
-                    const Unit& u = render_state.get_unit(t.unit_id());
-                    bool show = (view == ViewMode::Omni)
-                             || s.is_explored(vp, idx)
-                             || u.owner() == vp;
-                    if (show) {
-                        float cxf = ctr.x;
-                        float cyf = ctr.y;
-                        // Animation override: if this unit is currently animating, lerp
-                        // its draw position along the recorded path tiles instead of
-                        // rendering at its post-apply destination tile.
-                        if (move_anim.active && move_anim.unit_id == t.unit_id()) {
-                            double elapsed = GetTime() - move_anim.start_time;
-                            if (elapsed >= move_anim.duration) {
-                                move_anim.active = false;
-                            } else if (move_anim.duration > 0.0) {
-                                double p = elapsed / move_anim.duration;
-                                int ft = move_anim.path_tiles[0];
-                                int tt = move_anim.path_tiles[move_anim.lunge ? 1
-                                                                              : move_anim.path_count - 1];
-                                if (move_anim.lunge) {
-                                    // Triangle wave: 0 → 1 → 0 across the animation,
-                                    // scaled by ATTACK_LUNGE_FRAC so the attacker stops
-                                    // short of the target tile and snaps back.
-                                    double tri = 1.0 - fabs(2.0 * p - 1.0);
-                                    double offset = tri * (double)ATTACK_LUNGE_FRAC;
-                                    Vector2 fp = tile_center(ft / cur_msz, ft % cur_msz, cur_msz);
-                                    Vector2 tp = tile_center(tt / cur_msz, tt % cur_msz, cur_msz);
-                                    cxf = (float)(fp.x + (tp.x - fp.x) * offset);
-                                    cyf = (float)(fp.y + (tp.y - fp.y) * offset);
-                                } else {
-                                    // Smoothstep ease-in-out (3p² - 2p³) applied across the
-                                    // whole path so the unit accelerates from rest, glides
-                                    // through waypoints, and decelerates into the destination.
-                                    double eased = p * p * (3.0 - 2.0 * p);
-                                    int n_hops = move_anim.path_count - 1;
-                                    double seg_f = eased * n_hops;
-                                    int seg = (int)seg_f;
-                                    if (seg >= n_hops) seg = n_hops - 1;
-                                    double t_seg = seg_f - seg;
-                                    int hft = move_anim.path_tiles[seg];
-                                    int htt = move_anim.path_tiles[seg + 1];
-                                    Vector2 fp = tile_center(hft / cur_msz, hft % cur_msz, cur_msz);
-                                    Vector2 tp = tile_center(htt / cur_msz, htt % cur_msz, cur_msz);
-                                    cxf = (float)(fp.x + (tp.x - fp.x) * t_seg);
-                                    cyf = (float)(fp.y + (tp.y - fp.y) * t_seg);
-                                }
-                            }
-                        }
-                        Color uc = (u.owner() == 0) ? BLUE : RED;
-                        bool can_act = false;
-                        if (u.owner() == s.current_player()) {
-                            if (s.phase() != GameStateType::Idle) {
-                                can_act = (u.move_points() > 0 || !u.has_attacked());
-                            } else {
-                                for (int ai = 0; ai < action_count; ai++) {
-                                    const Action& aa = actions[ai];
-                                    if ((aa.type == ActionType::Move        && aa.from == idx)
-                                     || (aa.type == ActionType::Attack      && aa.from == idx)
-                                     || (aa.type == ActionType::CaptureCity && aa.to   == idx)) {
-                                        can_act = true; break;
-                                    }
-                                }
-                            }
-                        }
-                        // "Ready" ring under any current-player unit that still has a legal
-                        // Move or Attack from this tile. Scanning the legal-actions list
-                        // catches mid-turn cases the "haven't moved yet" check missed —
-                        // e.g. a freshly-revealed enemy entering range, or a unit that
-                        // moved into a position where it can now attack.
-                        bool has_legal_act = false;
-                        if (u.owner() == s.current_player()) {
-                            for (int ai = 0; ai < action_count; ai++) {
-                                const Action& aa = actions[ai];
-                                if (aa.from == idx
-                                    && (aa.type == ActionType::Move || aa.type == ActionType::Attack)) {
-                                    has_legal_act = true; break;
-                                }
-                            }
-                        }
-                        if (has_legal_act) {
-                            const RingTransformer& rt = READY_RING_TRANSFORMER;
-                            float rx = TILE_W * 0.35f * rt.scale;
-                            float ry = TILE_H * 0.35f * rt.scale;
-                            int rcx = (int)(cxf + rt.x_offset * (float)TILE_W);
-                            int rcy = (int)(cyf + rt.y_offset * (float)TILE_H);
-                            bool selected = (selected_tile == idx);
-                            Color fill = selected ? Color{ 255, 220,  60,  90 }
-                                                  : Color{  80, 220, 255,  90 };
-                            Color edge = selected ? Color{ 255, 220,  60, 230 }
-                                                  : Color{  80, 220, 255, 230 };
-                            DrawEllipse(rcx, rcy, rx, ry, color_alpha_mul(fill, rt.opacity));
-                            DrawEllipseLines(rcx, rcy, rx, ry, color_alpha_mul(edge, rt.opacity));
-                        }
-
-                        // Sprite scales off TILE_W (wider of the two) — keeps figures from
-                        // looking squished on the shorter iso tile.
-                        const Texture2D& tex = unit_tex[u.owner()][(int)u.type()];
-                        if (tex.id != 0) {
-                            // Base scale fits the tile width, then the per-unit tweak multiplier.
-                            const Transformer& xf = UNIT_TRANSFORMERS[(int)u.type()];
-                            float scale = (TILE_W * 0.95f) / (float)tex.height * xf.scale;
-                            float w = tex.width  * scale;
-                            float h = tex.height * scale;
-                            // Auto-centering offsets (from alpha bbox) keep the figure on the tile.
-                            float xoff = unit_tex_xoff[u.owner()][(int)u.type()] * scale;
-                            float yoff = unit_tex_yoff[u.owner()][(int)u.type()] * scale;
-                            // Per-unit manual tweaks, in tile-fractions.
-                            float xtweak = xf.x_offset * (float)TILE_W;
-                            float ytweak = xf.y_offset * (float)TILE_H;
-                            // Facing: a negative source width tells raylib to mirror the texture.
-                            // We also invert the x-axis offsets so the figure still centres on the
-                            // tile after the mirror.
-                            bool flipped = unit_facing_left[t.unit_id()];
-                            float src_w = flipped ? -(float)tex.width : (float)tex.width;
-                            float xoff_eff   = flipped ? -xoff   : xoff;
-                            float xtweak_eff = flipped ? -xtweak : xtweak;
-                            DrawTexturePro(tex,
-                                { 0, 0, src_w, (float)tex.height },
-                                { cxf - w * 0.5f - xoff_eff + xtweak_eff,
-                                  cyf - h * 0.5f - yoff + ytweak, w, h },
-                                { 0, 0 }, 0.0f, WHITE);
-                        } else {
-                            DrawCircle((int)cxf, (int)cyf, TILE_W / 7, uc);
-                            static const char* unit_icon[] = { "?", "W", "A", "R", "D" };
-                            const char* icon = unit_icon[(int)u.type()];
-                            DrawText(icon, (int)cxf - MeasureText(icon, 9) / 2, (int)cyf - 4, 9, WHITE);
-                        }
-                        // HP number above the diamond's top point so it sits clear of the sprite.
-                        // Placement governed by HP_TRANSFORMER (offsets in tile-fractions, scale
-                        // multiplies the base 11pt font).
-                        const char* hp_str = TextFormat("%d", u.hp());
-                        int hp_fs = (int)(11.0f * HP_TRANSFORMER.scale + 0.5f);
-                        if (hp_fs < 1) hp_fs = 1;
-                        int hp_w = MeasureText(hp_str, hp_fs);
-                        int hp_x = (int)cxf - hp_w / 2
-                                 + (int)(HP_TRANSFORMER.x_offset * TILE_W);
-                        int hp_y = (int)(cyf - TILE_H * 0.5f) - 12
-                                 + (int)(HP_TRANSFORMER.y_offset * TILE_H);
-                        DrawText(hp_str, hp_x + 1, hp_y + 1, hp_fs, BLACK);
-                        DrawText(hp_str, hp_x,     hp_y,     hp_fs, WHITE);
-                    }
-                }
-
-                // Hover highlight on top of everything else.
+                // Hover highlight on top of terrain/overlays. Units draw in the
+                // second pass below, so a unit on a hovered tile still shows.
                 if (is_highlighted(idx)) {
                     draw_diamond(ctr, { 255, 255, 255, 40 });
                     draw_diamond_outline(ctr, { 255, 255, 80, 220 }, 3.0f);
@@ -1593,10 +1607,169 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Tile-coordinate axis labels along the two bottom edges of the diamond grid.
-        // Bottom-right edge: tiles with r=0, labeled with their column index 0..N-1.
-        // Bottom-left edge:  tiles with c=0, labeled with their row    index 0..N-1.
-        // Tile (0,0) sits at the front apex and gets one label per axis (different sides).
+        // Pop-bar pass: runs after all terrain so a neighbouring mountain or
+        // tall city sprite never overdraws a city's bar. Drawn before units
+        // so a unit on a city tile still appears on top.
+        for (int i = 0; i < cur_msz * cur_msz; i++) {
+            const GameState& render_state_pb =
+                (ranged_anim.active && i == ranged_anim.to_tile)
+                    ? ranged_anim.pre_state : s;
+            const Tile& tt = render_state_pb.tile_at(i);
+            if (!tt.has_city()) continue;
+            const GameState& fog_state_pb =
+                move_anim.active ? move_anim.pre_state : s;
+            bool fogged_pb = (view != ViewMode::Omni) && !fog_state_pb.is_explored(vp, i);
+            if (fogged_pb) continue;
+            int r_pb = i / cur_msz, c_pb = i % cur_msz;
+            Vector2 ctr_pb = tile_center(r_pb, c_pb, cur_msz);
+            const City& c = render_state_pb.get_city(tt.city_id());
+            draw_pop_bar(ctr_pb, c.population(), c.level() + 1,
+                         c.units_owned(), c.owner());
+        }
+
+        // Pass 2: units + HP. Back-to-front again so units sort against each
+        // other, but every unit draws after all terrain/city sprites.
+        for (int sum = 2 * (cur_msz - 1); sum >= 0; sum--) {
+            for (int r = 0; r < cur_msz; r++) {
+                int c = sum - r;
+                if (c < 0 || c >= cur_msz) continue;
+                int idx = to_index(c, r, cur_msz);
+                const GameState& render_state =
+                    (ranged_anim.active && idx == ranged_anim.to_tile)
+                        ? ranged_anim.pre_state : s;
+                const Tile& t = render_state.tile_at(idx);
+                if (!t.has_unit()) continue;
+                const GameState& fog_state =
+                    move_anim.active ? move_anim.pre_state : s;
+                bool fogged = (view != ViewMode::Omni) && !fog_state.is_explored(vp, idx);
+                if (fogged) continue;
+                const Unit& u = render_state.get_unit(t.unit_id());
+                bool show = (view == ViewMode::Omni)
+                         || s.is_explored(vp, idx)
+                         || u.owner() == vp;
+                if (!show) continue;
+                Vector2 ctr = tile_center(r, c, cur_msz);
+                float cxf = ctr.x;
+                float cyf = ctr.y;
+                // Lerp draw pos along animated path instead of post-apply tile.
+                if (move_anim.active && move_anim.unit_id == t.unit_id()) {
+                    double elapsed = GetTime() - move_anim.start_time;
+                    if (elapsed >= move_anim.duration) {
+                        move_anim.active = false;
+                    } else if (move_anim.duration > 0.0) {
+                        double p = elapsed / move_anim.duration;
+                        int ft = move_anim.path_tiles[0];
+                        int tt = move_anim.path_tiles[move_anim.lunge ? 1
+                                                                      : move_anim.path_count - 1];
+                        if (move_anim.lunge) {
+                            // Triangle wave 0→1→0, scaled by ATTACK_LUNGE_FRAC.
+                            double tri = 1.0 - fabs(2.0 * p - 1.0);
+                            double offset = tri * (double)ATTACK_LUNGE_FRAC;
+                            Vector2 fp = tile_center(ft / cur_msz, ft % cur_msz, cur_msz);
+                            Vector2 tp = tile_center(tt / cur_msz, tt % cur_msz, cur_msz);
+                            cxf = (float)(fp.x + (tp.x - fp.x) * offset);
+                            cyf = (float)(fp.y + (tp.y - fp.y) * offset);
+                        } else {
+                            // Smoothstep (3p² - 2p³) across the whole path.
+                            double eased = p * p * (3.0 - 2.0 * p);
+                            int n_hops = move_anim.path_count - 1;
+                            double seg_f = eased * n_hops;
+                            int seg = (int)seg_f;
+                            if (seg >= n_hops) seg = n_hops - 1;
+                            double t_seg = seg_f - seg;
+                            int hft = move_anim.path_tiles[seg];
+                            int htt = move_anim.path_tiles[seg + 1];
+                            Vector2 fp = tile_center(hft / cur_msz, hft % cur_msz, cur_msz);
+                            Vector2 tp = tile_center(htt / cur_msz, htt % cur_msz, cur_msz);
+                            cxf = (float)(fp.x + (tp.x - fp.x) * t_seg);
+                            cyf = (float)(fp.y + (tp.y - fp.y) * t_seg);
+                        }
+                    }
+                }
+                Color uc = (u.owner() == 0) ? BLUE : RED;
+                bool can_act = false;
+                if (u.owner() == s.current_player()) {
+                    if (s.phase() != GameStateType::Idle) {
+                        can_act = (u.move_points() > 0 || !u.has_attacked());
+                    } else {
+                        for (int ai = 0; ai < action_count; ai++) {
+                            const Action& aa = actions[ai];
+                            if ((aa.type == ActionType::Move        && aa.from == idx)
+                             || (aa.type == ActionType::Attack      && aa.from == idx)
+                             || (aa.type == ActionType::CaptureCity && aa.to   == idx)) {
+                                can_act = true; break;
+                            }
+                        }
+                    }
+                }
+                // "Ready" ring: scans legal actions to catch mid-turn re-readies.
+                bool has_legal_act = false;
+                if (u.owner() == s.current_player()) {
+                    for (int ai = 0; ai < action_count; ai++) {
+                        const Action& aa = actions[ai];
+                        if (aa.from == idx
+                            && (aa.type == ActionType::Move || aa.type == ActionType::Attack)) {
+                            has_legal_act = true; break;
+                        }
+                    }
+                }
+                if (has_legal_act) {
+                    const RingTransformer& rt = READY_RING_TRANSFORMER;
+                    float rx = TILE_W * 0.35f * rt.scale;
+                    float ry = TILE_H * 0.35f * rt.scale;
+                    int rcx = (int)(cxf + rt.x_offset * (float)TILE_W);
+                    int rcy = (int)(cyf + rt.y_offset * (float)TILE_H);
+                    bool selected = (selected_tile == idx);
+                    Color fill = selected ? Color{ 255, 220,  60,  90 }
+                                          : Color{  80, 220, 255,  90 };
+                    Color edge = selected ? Color{ 255, 220,  60, 230 }
+                                          : Color{  80, 220, 255, 230 };
+                    DrawEllipse(rcx, rcy, rx, ry, color_alpha_mul(fill, rt.opacity));
+                    DrawEllipseLines(rcx, rcy, rx, ry, color_alpha_mul(edge, rt.opacity));
+                }
+
+                // Scale off TILE_W so figures don't squish on the shorter iso tile.
+                const Texture2D& tex = unit_tex[u.owner()][(int)u.type()];
+                if (tex.id != 0) {
+                    const Transformer& xf = UNIT_TRANSFORMERS[(int)u.type()];
+                    float scale = (TILE_W * 0.95f) / (float)tex.height * xf.scale;
+                    float w = tex.width  * scale;
+                    float h = tex.height * scale;
+                    float xoff = unit_tex_xoff[u.owner()][(int)u.type()] * scale;
+                    float yoff = unit_tex_yoff[u.owner()][(int)u.type()] * scale;
+                    float xtweak = xf.x_offset * (float)TILE_W;
+                    float ytweak = xf.y_offset * (float)TILE_H;
+                    // Negative src_w mirrors; invert x-offsets to keep centring after mirror.
+                    bool flipped = unit_facing_left[t.unit_id()];
+                    float src_w = flipped ? -(float)tex.width : (float)tex.width;
+                    float xoff_eff   = flipped ? -xoff   : xoff;
+                    float xtweak_eff = flipped ? -xtweak : xtweak;
+                    DrawTexturePro(tex,
+                        { 0, 0, src_w, (float)tex.height },
+                        { cxf - w * 0.5f - xoff_eff + xtweak_eff,
+                          cyf - h * 0.5f - yoff + ytweak, w, h },
+                        { 0, 0 }, 0.0f, WHITE);
+                } else {
+                    DrawCircle((int)cxf, (int)cyf, TILE_W / 7, uc);
+                    static const char* unit_icon[] = { "?", "W", "A", "R", "D", "G" };
+                    const char* icon = unit_icon[(int)u.type()];
+                    DrawText(icon, (int)cxf - MeasureText(icon, 9) / 2, (int)cyf - 4, 9, WHITE);
+                }
+                // HP number above diamond top; placement via HP_TRANSFORMER.
+                const char* hp_str = TextFormat("%d", u.hp());
+                int hp_fs = (int)(11.0f * HP_TRANSFORMER.scale + 0.5f);
+                if (hp_fs < 1) hp_fs = 1;
+                int hp_w = MeasureText(hp_str, hp_fs);
+                int hp_x = (int)cxf - hp_w / 2
+                         + (int)(HP_TRANSFORMER.x_offset * TILE_W);
+                int hp_y = (int)(cyf - TILE_H * 0.5f) - 12
+                         + (int)(HP_TRANSFORMER.y_offset * TILE_H);
+                DrawText(hp_str, hp_x + 1, hp_y + 1, hp_fs, BLACK);
+                DrawText(hp_str, hp_x,     hp_y,     hp_fs, WHITE);
+            }
+        }
+
+        // Axis labels: bottom-right edge labels columns (r=0), bottom-left labels rows (c=0).
         {
             constexpr int AXIS_FONT_SZ = 11;
             const Color AXIS_TEXT   = { 150, 150, 150, 255 };
@@ -1620,10 +1793,7 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Ranged-attack projectile: a small ball arcs from from_tile → to_tile. The
-        // tile-snapshot above keeps the defender at pre-HP during this flight; the
-        // moment the projectile lands, we deactivate the anim and the next frame
-        // renders the live (post-damage) state.
+        // Ranged projectile arc; deactivates on land so next frame shows live state.
         if (ranged_anim.active) {
             double elapsed = GetTime() - ranged_anim.start_time;
             if (elapsed >= ranged_anim.duration) {
@@ -1636,8 +1806,7 @@ int main(int argc, char** argv) {
                 Vector2 tp = tile_center(tt / cur_msz, tt % cur_msz, cur_msz);
                 float lx = (float)(fp.x + (tp.x - fp.x) * p);
                 float ly = (float)(fp.y + (tp.y - fp.y) * p);
-                // Parabolic arc — peak at p=0.5. Height scales with travel distance
-                // so adjacent shots get a modest hop while longer shots arc higher.
+                // Parabolic arc, peak at p=0.5; height scales with travel distance.
                 float dx = tp.x - fp.x, dy = tp.y - fp.y;
                 float dist = sqrtf(dx * dx + dy * dy);
                 float arc_h = dist * 0.18f;
@@ -1648,8 +1817,7 @@ int main(int argc, char** argv) {
             }
         }
 
-        // --- Tech tree panel (bottom strip, centred — spans 1/6 to 5/6 of width) ---
-        // Equal empty margins on left and right (each 1/6 of W), giving the panel 4/6 of W.
+        // --- Tech tree panel (bottom strip, centred 1/6..5/6 of W) ---
         const int TECH_X       = W / 6;
         const int TECH_X_END   = W - W / 6;
         const int TECH_PANEL_W = TECH_X_END - TECH_X;
@@ -1854,7 +2022,7 @@ int main(int argc, char** argv) {
             clear_visuals();
             initial = new_map();
             TILE_W = iso_grid_width() / initial.map_size();
-            TILE_H = (TILE_W * 3) / 5;  // 5:3 ratio matches the grass terrain sprite
+            TILE_H = (TILE_W * 3) / 5;
             s = initial;
             reset_facing();
             init_colourers();
@@ -1888,8 +2056,7 @@ int main(int argc, char** argv) {
             // Wipe any leftover visual-only state before the new action.
             clear_visuals();
 
-            // If this is the Explorer upgrade, simulate it on a copy first to capture
-            // the path the explorer will walk, so we can draw arrows along it.
+            // Explorer upgrade: simulate on copy first to record the walked path.
             const Action& ap = actions[applied];
             if (ap.type == ActionType::UpgradeCity
                 && ap.param == (int)CityUpgradeType::L1_EXPLORER) {
@@ -1903,8 +2070,7 @@ int main(int argc, char** argv) {
                 }
             }
 
-            // Update facing for Move/Attack actions: if the unit moves so its screen-x
-            // decreases (i.e. (Δcol - Δrow) < 0), it now faces left.
+            // Facing flips left when (Δcol - Δrow) < 0 (screen-x decreasing).
             if (actions[applied].type == ActionType::Move
                 || actions[applied].type == ActionType::Attack) {
                 const Action& a  = actions[applied];
@@ -1917,8 +2083,7 @@ int main(int argc, char** argv) {
                     unit_facing_left[uid] = (delta < 0);
             }
 
-            // Kick off the move/attack animation. For Move we only need pre-state; for
-            // Attack we need both pre and post to decide between lunge and kill-advance.
+            // Move only needs pre-state; Attack needs both to decide lunge vs advance.
             GameState pre_state = s;
             s = s.apply_action(actions[applied]);
             if (actions[applied].type == ActionType::Move) {
@@ -1949,12 +2114,45 @@ int main(int argc, char** argv) {
         }
 
 
-        // --- Selected tile outline (info tooltip removed) ---
+        // --- Selected tile outline ---
         if (selected_tile >= 0) {
             int sx, sy;
             to_coords(selected_tile, sx, sy);
             Vector2 sel_ctr = tile_center(sy, sx, cur_msz);
             draw_diamond_outline(sel_ctr, WHITE, 2.0f);
+        }
+
+        // --- Selected city territory highlight ---
+        // Solid-filled temp borders along every outer-boundary edge of the
+        // selected city's territory; disambiguates overlapping city borders.
+        if (selected_tile >= 0 && s.tile_at(selected_tile).has_city()) {
+            int sel_city = s.tile_at(selected_tile).city_id();
+            int sel_owner = s.get_city(sel_city).owner();
+            int msz_h = s.map_size();
+            int mtsz_h = s.map_tiles();
+            for (int i = 0; i < mtsz_h; i++) {
+                if (s.tile_at(i).border_city_id() != sel_city) continue;
+                int rr = i / msz_h, cc = i % msz_h;
+                Vector2 ctr2 = tile_center(rr, cc, msz_h);
+                Vector2 vtop2   = { ctr2.x,                  ctr2.y - TILE_H * 0.5f };
+                Vector2 vright2 = { ctr2.x + TILE_W * 0.5f,  ctr2.y                 };
+                Vector2 vbot2   = { ctr2.x,                  ctr2.y + TILE_H * 0.5f };
+                Vector2 vleft2  = { ctr2.x - TILE_W * 0.5f,  ctr2.y                 };
+                Vector2 edges2[4][2] = {
+                    { vbot2,  vright2 },
+                    { vleft2, vtop2   },
+                    { vbot2,  vleft2  },
+                    { vtop2,  vright2 },
+                };
+                for (int d = 0; d < 4; d++) {
+                    int nr2 = rr + BORDER_DR[d], nc2 = cc + BORDER_DC[d];
+                    int n_cid2 = -1;
+                    if (nr2 >= 0 && nr2 < msz_h && nc2 >= 0 && nc2 < msz_h)
+                        n_cid2 = s.tile_at(nr2 * msz_h + nc2).border_city_id();
+                    if (n_cid2 == sel_city) continue;
+                    draw_temp_border(edges2[d][0], edges2[d][1], sel_owner);
+                }
+            }
         }
 
         // --- Action log panel ---
@@ -2030,6 +2228,8 @@ int main(int argc, char** argv) {
             if (unit_tex[owner][i].id != 0) UnloadTexture(unit_tex[owner][i]);
     for (int i = 0; i < (int)TerrainSprite::Count; i++)
         if (terrain_tex[i].id != 0) UnloadTexture(terrain_tex[i]);
+    for (int i = 0; i < CITY_SPRITE_LEVELS; i++)
+        if (city_tex[i].id != 0) UnloadTexture(city_tex[i]);
     CloseWindow();
     return 0;
 }
