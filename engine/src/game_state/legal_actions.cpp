@@ -113,6 +113,15 @@ void GameState::legal_actions(Action out[], int& out_count) const {
 
             const UnitDef& udef = unit_def(u.type());
 
+            // Recover: only offered to a unit that has neither moved nor
+            // attacked this turn (full MP, !has_attacked) and isn't already
+            // at max HP. Mirrors the implicit end-of-turn skip-heal so the
+            // player can explicitly mark a unit as resting.
+            if (u.move_points() == udef.movement && !u.has_attacked()
+                && u.hp() < u.max_hp()) {
+                out[out_count++] = { ActionType::Recover, i, -1, 0, true };
+            }
+
             if (u.move_points() > 0) {
                 int8_t mp_at[MAX_MAP_TILES];
                 int    parent[MAX_MAP_TILES];

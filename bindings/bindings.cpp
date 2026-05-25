@@ -106,6 +106,7 @@ PYBIND11_MODULE(polyshark, m) {
         .value("CaptureCity",       ActionType::CaptureCity)
         .value("HarvestResource",   ActionType::HarvestResource)
         .value("UpgradeCity",       ActionType::UpgradeCity)
+        .value("Recover",           ActionType::Recover)
         .value("EndTurn",           ActionType::EndTurn)
         .export_values();
 

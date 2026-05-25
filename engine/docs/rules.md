@@ -122,13 +122,13 @@ Warrior requires no tech — available from turn 0.
 | Rider | 10 | 2 | 1 | 2 | 3★ | Escape, Fortify, Dash |
 
 ### Skills
-- **Fortify** — ×1.5 defence bonus in forests, mountains, and cities
+- **Fortify** — ×1.5 defence bonus in forests, mountains, and cities. Stacks with **Walls** (city upgrade) for ×2.0 in a walled city.
 - **Dash** — can move after a non-attack action
 - **Escape** (Rider) — can move again after attacking
 - **Ranged** (Archer) — attacks up to 2 tiles away; does not move after kill; cannot retaliate against melee
 
 ### Healing
-A unit that neither moves nor attacks recovers HP at the start of its next turn:
+A unit that neither moves nor attacks recovers HP at the **end of its owner's turn** (before the opponent plays):
 - **4 HP** if the tile is within a friendly city's border
 - **2 HP** anywhere else
 - Capped at max HP. Applies to all standard units.

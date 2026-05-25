@@ -23,6 +23,25 @@ void GameState::apply_end_turn() {
     GameState& s = *this;
     const int mtsz = s.map_tiles();
 
+    // Heal the player whose turn just ended: any of their units that neither
+    // moved nor attacked this turn recovers HP. Runs BEFORE the cur_player
+    // switch so the heal is visibly tied to "end of my turn" and lands before
+    // the opponent can attack the unit.
+    int prev = s.cur_player;
+    for (int i = 0; i < mtsz; i++) {
+        const Tile& t = s.tile_at(i);
+        if (!t.has_unit()) continue;
+        Unit& u = s.units[t.unit_id()];
+        if (u.owner() != prev) continue;
+        const UnitDef& udef = unit_def(u.type());
+        bool skipped = (u.move_points() == udef.movement) && !u.has_attacked();
+        if (!skipped || u.hp() >= u.max_hp()) continue;
+        int bcid = s.map[i].border_city_id();
+        bool friendly_territory = (bcid >= 0 && s.cities[bcid].owner() == prev);
+        u.heal(friendly_territory ? cfg::combat::HEAL_FRIENDLY_TERRITORY
+                                  : cfg::combat::HEAL_NEUTRAL);
+    }
+
     s.cur_player = 1 - s.cur_player;
     int next = s.cur_player;
 
@@ -34,20 +53,6 @@ void GameState::apply_end_turn() {
             if (t.has_city() && s.get_city(t.city_id()).owner() == next)
                 s.players[next].stars += s.get_city(t.city_id()).stars_per_turn();
         }
-    }
-
-    for (int i = 0; i < mtsz; i++) {
-        const Tile& t = s.tile_at(i);
-        if (!t.has_unit()) continue;
-        Unit& u = s.units[t.unit_id()];
-        if (u.owner() != next) continue;
-        const UnitDef& udef = unit_def(u.type());
-        bool skipped = (u.move_points() == udef.movement) && !u.has_attacked();
-        if (!skipped || u.hp() >= u.max_hp()) continue;
-        int bcid = s.map[i].border_city_id();
-        bool friendly_territory = (bcid >= 0 && s.cities[bcid].owner() == next);
-        u.heal(friendly_territory ? cfg::combat::HEAL_FRIENDLY_TERRITORY
-                                  : cfg::combat::HEAL_NEUTRAL);
     }
 
     for (int i = 0; i < mtsz; i++) {
@@ -319,6 +324,18 @@ void GameState::apply_attack(Action a) {
     rebuild_visibility(s, s.cur_player);
 }
 
+void GameState::apply_recover(Action a) {
+    GameState& s = *this;
+    Tile& t = s.map[a.from];
+    Unit& u = s.units[t.unit_id()];
+    int bcid = t.border_city_id();
+    bool friendly_territory = (bcid >= 0 && s.cities[bcid].owner() == u.owner());
+    u.heal(friendly_territory ? cfg::combat::HEAL_FRIENDLY_TERRITORY
+                              : cfg::combat::HEAL_NEUTRAL);
+    u.spend_movement(unit_def(u.type()).movement);
+    u.mark_attacked();
+}
+
 GameState GameState::apply_action(Action a) const {
     GameState s = *this;
     switch (a.type) {
@@ -331,6 +348,7 @@ GameState GameState::apply_action(Action a) const {
         case ActionType::CaptureCity:     s.apply_capture_city(a);      break;
         case ActionType::Move:            s.apply_move(a);              break;
         case ActionType::Attack:          s.apply_attack(a);            break;
+        case ActionType::Recover:         s.apply_recover(a);           break;
         default:                                                        break;
     }
     return s;
