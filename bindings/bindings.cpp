@@ -1,9 +1,11 @@
 #include <pybind11/pybind11.h>
+#include <pybind11/functional.h>
 #include <pybind11/stl.h>
 
 #include "game_state.h"
 #include "unit_def.h"
 #include "mapgen.h"
+#include "mcts.h"
 
 namespace py = pybind11;
 
@@ -106,6 +108,7 @@ PYBIND11_MODULE(polyshark, m) {
         .value("CaptureCity",       ActionType::CaptureCity)
         .value("HarvestResource",   ActionType::HarvestResource)
         .value("UpgradeCity",       ActionType::UpgradeCity)
+        .value("DebugAddPop",       ActionType::DebugAddPop)
         .value("Recover",           ActionType::Recover)
         .value("EndTurn",           ActionType::EndTurn)
         .export_values();
@@ -150,9 +153,38 @@ PYBIND11_MODULE(polyshark, m) {
         return unit_def(static_cast<UnitType>(unit_type)).movement;
     });
 
-    m.def("make_random_game", [](uint64_t seed) {
-        MapGenParams p = MapGen::drylands_defaults();
+    m.def("make_random_game", [](uint64_t seed, int sz) {
+        MapGenParams p = MapGenParams::for_biome(BiomeType::Drylands, sz);
         p.seed = seed;
         return MapGen(p).generate().state;
-    }, py::arg("seed") = 0);
+    }, py::arg("seed") = 0, py::arg("sz") = 11);
+
+    // --- MCTSEngine ---
+
+    py::class_<MCTSEngine>(m, "MCTSEngine")
+        .def(py::init<float, int, float>(),
+             py::arg("c_uct")        = 1.5f,
+             py::arg("batch_size")   = 8,
+             py::arg("virtual_loss") = 1.0f)
+        // Returns (best_action, root_value).
+        // eval_fn(states: list[GameState]) -> list[float]
+        .def("search", [](MCTSEngine& eng,
+                          const GameState& state,
+                          int              n_sims,
+                          py::object       eval_fn) {
+            auto cpp_eval = [&eval_fn](const std::vector<GameState>& states)
+                    -> std::vector<float> {
+                py::list py_list;
+                for (const auto& s : states) py_list.append(s);
+                py::object result = eval_fn(py_list);
+                std::vector<float> out;
+                for (auto item : result) out.push_back(item.cast<float>());
+                return out;
+            };
+            auto [action, value] = eng.search(state, n_sims, cpp_eval);
+            return py::make_tuple(action, value);
+        },
+        py::arg("state"),
+        py::arg("n_sims"),
+        py::arg("eval_fn"));
 }
