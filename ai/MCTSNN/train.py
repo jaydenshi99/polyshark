@@ -87,11 +87,11 @@ class ReplayBuffer:
 
 # --- Replay ---
 
-def save_replay(history, seed, gen, game_idx):
+def save_replay(history, seed, sz, gen, game_idx):
     os.makedirs(REPLAYS_DIR, exist_ok=True)
     path = os.path.join(REPLAYS_DIR, f"gen{gen:04d}_game{game_idx:03d}.replay")
     with open(path, "w") as f:
-        f.write(f"seed {seed}\n")
+        f.write(f"seed {seed} {sz}\n")
         for a in history:
             f.write(f"{int(a.type)} {a.src} {a.dst} {a.param}\n")
 
@@ -104,8 +104,9 @@ def run_game(mcts, gen=0, game_idx=0) -> tuple[list, bool]:
       examples  — list of (spatial, global_vec, policy, outcome)
       terminal  — True if game ended by capture, False if turn limit hit
     """
-    seed       = random.randint(0, 2**32 - 1)
+    seed       = random.randint(1, 2**32 - 1)
     state      = polyshark.make_random_game(seed)
+    sz         = state.map_size()
     trajectory = []  # (spatial, global_vec, policy, current_player)
     history    = []  # raw actions for replay file
 
@@ -149,7 +150,7 @@ def run_game(mcts, gen=0, game_idx=0) -> tuple[list, bool]:
         print(f"  -> Turn limit hit | heuristic P0={h0:.2f} P1={-h0:.2f}")
 
     examples = [(s, g, pol, out) for (s, g, pol, _), out in zip(trajectory, outcomes)]
-    save_replay(history, seed, gen, game_idx)
+    save_replay(history, seed, sz, gen, game_idx)
     return examples, terminal
 
 

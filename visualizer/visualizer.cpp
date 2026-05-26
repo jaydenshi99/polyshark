@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <sstream>
 #include <vector>
 #include <string>
 
@@ -1345,8 +1346,14 @@ int main(int argc, char** argv) {
             std::string first;
             f >> first;
             if (first == "seed") {
-                uint64_t seed; f >> seed;
-                MapGenParams p = MapGen::drylands_defaults();
+                // Format: "seed <N> <sz>" — sz is optional, defaults to 9 for old files.
+                std::string seed_line;
+                std::getline(f, seed_line);
+                std::istringstream iss(seed_line);
+                uint64_t seed; iss >> seed;
+                int sz = 9;
+                iss >> sz;
+                MapGenParams p = MapGenParams::for_biome(BiomeType::Drylands, sz);
                 p.seed = seed;
                 rs = MapGen(p).generate().state;
             } else {

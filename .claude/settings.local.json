@@ -6,7 +6,13 @@
       "Bash(taskkill /F /IM visualizer.exe)",
       "Bash(./test_game_state.exe)",
       "Bash(cmake --build engine/build)",
-      "Bash(./build/visualizer/visualizer)"
+      "Bash(./build/visualizer/visualizer)",
+      "Bash(python3 -c \"import sys; sys.path.insert\\(0, 'build/bindings'\\); import polyshark; print\\('import ok'\\); s = polyshark.make_random_game\\(\\); print\\('game ok'\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 ai/random_bot.py)",
+      "Bash(xargs ls -la)",
+      "Bash(cmake --build build --target polyshark)",
+      "Bash(cmake --build build --target polyshark visualizer)"
     ]
   }
 }

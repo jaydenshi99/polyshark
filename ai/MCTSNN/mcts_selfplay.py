@@ -24,10 +24,10 @@ def pick_action(mcts, state):
     return index_to_action(action_idx, state)
 
 
-def save_replay(history, seed, path):
+def save_replay(history, seed, sz, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
-        f.write(f"seed {seed}\n")
+        f.write(f"seed {seed} {sz}\n")
         for a in history:
             f.write(f"{int(a.type)} {a.src} {a.dst} {a.param}\n")
 
@@ -41,8 +41,9 @@ def run_game():
     model = PolysharkNet().to(device)
     mcts  = MCTS(model, device=device)
 
-    seed  = random.randint(0, 2**32 - 1)
+    seed  = random.randint(1, 2**32 - 1)
     state = polyshark.make_random_game(seed)
+    sz    = state.map_size()
     history = []
     last_logged_turn = -1
 
@@ -66,7 +67,7 @@ def run_game():
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     replay_path = os.path.join(REPLAYS_DIR, f"mcts_{timestamp}.replay")
-    save_replay(history, seed, replay_path)
+    save_replay(history, seed, sz, replay_path)
     print(f"Replay saved to {replay_path}")
 
 

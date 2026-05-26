@@ -72,8 +72,10 @@ Full MVP ruleset is documented in [engine/docs/rules.md](engine/docs/rules.md).
 **Fog of war (confirmed):**
 - Standard vision: 1-tile radius (full 3×3 square, all 8 directions) for units and cities
 - Mountain bonus: extended vision (exact radius TBD)
-- Explored tiles are permanently revealed; units are only ever hidden by fog (unexplored tiles)
-- The AI plays with imperfect information — fog of war is in scope from the start
+- Explored tiles are permanently revealed — everything on them (terrain, units, buildings, city state) is always visible once explored. There is no "explored but not currently visible" state.
+- Units are only ever hidden on unexplored tiles
+- is_explored == is_visible for any tile that has ever been seen. The encoder must gate on is_explored, not is_visible.
+- The AI plays with imperfect information — the only hidden info is unexplored tiles
 
 ## AI Design
 
