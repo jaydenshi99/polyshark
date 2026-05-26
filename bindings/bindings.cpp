@@ -139,7 +139,6 @@ PYBIND11_MODULE(polyshark, m) {
         .def("get_unit",       [](const GameState& s, int i) { return s.get_unit(i); })
         .def("get_city",       [](const GameState& s, int i) { return s.get_city(i); })
         .def("is_visible",     &GameState::is_visible)
-        .def("is_explored",    &GameState::is_explored)
         .def("get_stars",      &GameState::get_stars)
         .def("get_techs",      &GameState::get_techs)
         .def("techs_mask",     &GameState::techs_mask);

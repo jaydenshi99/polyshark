@@ -2,7 +2,16 @@
 
 #include <cstdio>
 #include <cstdarg>
+#include <cstdint>
 #include <cstring>
+
+// Engine-pure RGBA byte colour. Layout matches raylib's `Color` so the
+// visualizer can construct one directly from its existing colour constants.
+struct LogColor {
+    uint8_t r, g, b, a;
+};
+
+inline constexpr LogColor LOG_COLOR_GREY = { 160, 160, 160, 255 };
 
 class Logger {
 public:
@@ -11,23 +20,27 @@ public:
 
     static bool debugEnabled;
 
+    struct Entry {
+        char     text[ENTRY_LEN];
+        LogColor color;
+    };
+
     // Circular log buffer
-    static char entries[MAX_ENTRIES][ENTRY_LEN];
-    static int  count;   // total entries ever written (not clamped)
+    static Entry entries[MAX_ENTRIES];
+    static int   count;   // total entries ever written (not clamped)
 
     static void print(const char* fmt, ...) {
-        if (!debugEnabled) return;
-        char buf[ENTRY_LEN];
         va_list args;
         va_start(args, fmt);
-        vsnprintf(buf, ENTRY_LEN, fmt, args);
+        vprint_impl(LOG_COLOR_GREY, fmt, args);
         va_end(args);
-        // Write into circular slot
-        int slot = count % MAX_ENTRIES;
-        strncpy(entries[slot], buf, ENTRY_LEN - 1);
-        entries[slot][ENTRY_LEN - 1] = '\0';
-        count++;
-        printf("%s\n", buf);
+    }
+
+    static void print(LogColor color, const char* fmt, ...) {
+        va_list args;
+        va_start(args, fmt);
+        vprint_impl(color, fmt, args);
+        va_end(args);
     }
 
     static void clear() { count = 0; }
@@ -35,15 +48,34 @@ public:
     // Returns the i-th most recent entry (0 = newest).
     // Returns nullptr if i >= available entries.
     static const char* get(int i) {
-        int available = count < MAX_ENTRIES ? count : MAX_ENTRIES;
-        if (i >= available) return nullptr;
-        int slot = ((count - 1 - i) % MAX_ENTRIES + MAX_ENTRIES) % MAX_ENTRIES;
-        return entries[slot];
+        int slot = slot_for(i);
+        return slot < 0 ? nullptr : entries[slot].text;
+    }
+
+    static LogColor get_color(int i) {
+        int slot = slot_for(i);
+        return slot < 0 ? LOG_COLOR_GREY : entries[slot].color;
     }
 
     static int size() { return count < MAX_ENTRIES ? count : MAX_ENTRIES; }
+
+private:
+    static int slot_for(int i) {
+        int available = count < MAX_ENTRIES ? count : MAX_ENTRIES;
+        if (i < 0 || i >= available) return -1;
+        return ((count - 1 - i) % MAX_ENTRIES + MAX_ENTRIES) % MAX_ENTRIES;
+    }
+
+    static void vprint_impl(LogColor color, const char* fmt, va_list args) {
+        if (!debugEnabled) return;
+        Entry& e = entries[count % MAX_ENTRIES];
+        vsnprintf(e.text, ENTRY_LEN, fmt, args);
+        e.color = color;
+        count++;
+        printf("%s\n", e.text);
+    }
 };
 
-inline bool Logger::debugEnabled = false;
-inline int  Logger::count        = 0;
-inline char Logger::entries[Logger::MAX_ENTRIES][Logger::ENTRY_LEN] = {};
+inline bool          Logger::debugEnabled              = false;
+inline int           Logger::count                     = 0;
+inline Logger::Entry Logger::entries[Logger::MAX_ENTRIES] = {};

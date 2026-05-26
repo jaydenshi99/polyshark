@@ -7,6 +7,8 @@
 #include "types.h"
 #include "player.h"
 #include <vector>
+#include <nlohmann/json.hpp>
+#include "logger.h"
 
 constexpr int MAX_PLAYERS = 2;
 
@@ -61,10 +63,7 @@ public:
 
     // Fog of war
     bool is_visible(int player, int tile)  const { return players[player].is_visible(tile); }
-    bool is_explored(int player, int tile) const { return players[player].is_explored(tile); }
-    void set_visible(int player, int tile)        { players[player].set_visible(tile); }
-    void set_explored(int player, int tile);
-    void clear_visible(int player)                { players[player].clear_visible(); }
+    void set_visible(int player, int tile);
 
     // Tech unlocks
     bool     has_tech(int player, TechType t)  const { return players[player].has_tech(t); }
@@ -104,6 +103,13 @@ public:
     // credit, no attack credit.
     void push_unit_from(int unit_id, int spawn_tile, int spawning_player);
 
+    // Relocate `unit_id` to `dest_tile`: removes from its current tile, places
+    // on dest, updates tile_index, and reveals around dest (radius 2 on
+    // mountain landings, 1 otherwise). Intended for single-tile hops — call
+    // repeatedly to step a multi-tile path. Does NOT touch last_dir or
+    // movement points; callers handle those.
+    void move_unit(int unit_id, int dest_tile);
+
     // Allocates a city slot, places on tile.
     // Returns slot index, or -1 if full.
     int spawn_city(int tile_index, int owner, bool is_capital);
@@ -135,6 +141,13 @@ public:
     // Cheap enough to run after every applied action in tests / debug builds.
     bool check_invariants() const;
 
+    // Debug helpers — dump GameState to JSON / log it. `static` because they're
+    // utility operations, not core state transitions; call as
+    // GameState::serialise(s) / GameState::print(s).
+    static GameState deserialise(const nlohmann::json& j);
+    static nlohmann::json serialise(const GameState& s);
+    static void           print(const GameState& s);
+
 private:
     Tile map[MAX_MAP_TILES];
     Unit units[MAX_MAP_TILES];
@@ -149,11 +162,6 @@ private:
     int _map_size        = MAP_SIZE;
     int capital_city[MAX_PLAYERS] = {-1, -1};
 };
-
-
-
-void      serialize(const GameState& s, uint8_t* out_buf, int& out_size);
-GameState deserialize(const uint8_t* buf, int size);
 
 // Movement-path helpers (defined in game_state.cpp). Exposed so the visualizer can
 // reconstruct the cheapest path for animation purposes and so replays without

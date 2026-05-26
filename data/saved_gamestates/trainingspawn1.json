@@ -1,0 +1,597 @@
+{
+  "cities": [
+    {
+      "border_radius": 1,
+      "capture_ready": false,
+      "has_walls": false,
+      "has_workshop": false,
+      "id": 0,
+      "is_capital": true,
+      "is_sieged": false,
+      "level": 1,
+      "owner": 0,
+      "parks": 0,
+      "pending_upgrade": false,
+      "population": 0,
+      "tile": 24,
+      "units_owned": 1
+    },
+    {
+      "border_radius": 1,
+      "capture_ready": false,
+      "has_walls": false,
+      "has_workshop": false,
+      "id": 1,
+      "is_capital": true,
+      "is_sieged": false,
+      "level": 1,
+      "owner": 1,
+      "parks": 0,
+      "pending_upgrade": false,
+      "population": 0,
+      "tile": 60,
+      "units_owned": 1
+    }
+  ],
+  "current_player": 0,
+  "map_size": 9,
+  "players": [
+    {
+      "stars": 5,
+      "techs_mask": 1,
+      "visible": [
+        57584,
+        34755,
+        7951,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "stars": 5,
+      "techs_mask": 1,
+      "visible": [
+        0,
+        0,
+        7936,
+        31806,
+        61688,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "tiles": [
+    {
+      "i": 0,
+      "terrain": 2
+    },
+    {
+      "i": 1,
+      "terrain": 1
+    },
+    {
+      "i": 2,
+      "terrain": 3
+    },
+    {
+      "i": 3,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "i": 4,
+      "terrain": 2
+    },
+    {
+      "i": 5,
+      "terrain": 2
+    },
+    {
+      "i": 6,
+      "terrain": 1
+    },
+    {
+      "i": 7,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "i": 8,
+      "terrain": 1
+    },
+    {
+      "i": 9,
+      "terrain": 2
+    },
+    {
+      "i": 10,
+      "resource": 2,
+      "terrain": 1
+    },
+    {
+      "i": 11,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "i": 12,
+      "resource": 4,
+      "terrain": 3
+    },
+    {
+      "i": 13,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "border_city_id": 0,
+      "i": 14,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "border_city_id": 0,
+      "i": 15,
+      "terrain": 3
+    },
+    {
+      "border_city_id": 0,
+      "i": 16,
+      "resource": 2,
+      "terrain": 1
+    },
+    {
+      "i": 17,
+      "resource": 2,
+      "terrain": 1
+    },
+    {
+      "i": 18,
+      "resource": 3,
+      "terrain": 2
+    },
+    {
+      "i": 19,
+      "terrain": 2
+    },
+    {
+      "i": 20,
+      "terrain": 5
+    },
+    {
+      "i": 21,
+      "resource": 4,
+      "terrain": 3
+    },
+    {
+      "i": 22,
+      "terrain": 1
+    },
+    {
+      "border_city_id": 0,
+      "i": 23,
+      "resource": 3,
+      "terrain": 2
+    },
+    {
+      "border_city_id": 0,
+      "city_id": 0,
+      "i": 24,
+      "terrain": 1,
+      "unit_id": 0
+    },
+    {
+      "border_city_id": 0,
+      "i": 25,
+      "terrain": 2
+    },
+    {
+      "i": 26,
+      "resource": 3,
+      "terrain": 2
+    },
+    {
+      "i": 27,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "i": 28,
+      "resource": 4,
+      "terrain": 3
+    },
+    {
+      "i": 29,
+      "terrain": 2
+    },
+    {
+      "i": 30,
+      "resource": 2,
+      "terrain": 1
+    },
+    {
+      "i": 31,
+      "terrain": 2
+    },
+    {
+      "border_city_id": 0,
+      "i": 32,
+      "resource": 4,
+      "terrain": 3
+    },
+    {
+      "border_city_id": 0,
+      "i": 33,
+      "resource": 2,
+      "terrain": 1
+    },
+    {
+      "border_city_id": 0,
+      "i": 34,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "i": 35,
+      "terrain": 3
+    },
+    {
+      "i": 36,
+      "terrain": 1
+    },
+    {
+      "i": 37,
+      "terrain": 1
+    },
+    {
+      "i": 38,
+      "terrain": 2
+    },
+    {
+      "i": 39,
+      "terrain": 2
+    },
+    {
+      "i": 40,
+      "resource": 3,
+      "terrain": 2
+    },
+    {
+      "i": 41,
+      "terrain": 2
+    },
+    {
+      "i": 42,
+      "terrain": 2
+    },
+    {
+      "i": 43,
+      "terrain": 2
+    },
+    {
+      "i": 44,
+      "terrain": 1
+    },
+    {
+      "i": 45,
+      "terrain": 1
+    },
+    {
+      "i": 46,
+      "resource": 2,
+      "terrain": 1
+    },
+    {
+      "i": 47,
+      "resource": 2,
+      "terrain": 1
+    },
+    {
+      "i": 48,
+      "terrain": 2
+    },
+    {
+      "i": 49,
+      "terrain": 2
+    },
+    {
+      "border_city_id": 1,
+      "i": 50,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "border_city_id": 1,
+      "i": 51,
+      "terrain": 2
+    },
+    {
+      "border_city_id": 1,
+      "i": 52,
+      "resource": 3,
+      "terrain": 2
+    },
+    {
+      "i": 53,
+      "terrain": 1
+    },
+    {
+      "i": 54,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "i": 55,
+      "resource": 4,
+      "terrain": 3
+    },
+    {
+      "i": 56,
+      "terrain": 5
+    },
+    {
+      "i": 57,
+      "terrain": 3
+    },
+    {
+      "i": 58,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "border_city_id": 1,
+      "i": 59,
+      "resource": 3,
+      "terrain": 2
+    },
+    {
+      "border_city_id": 1,
+      "city_id": 1,
+      "i": 60,
+      "terrain": 1,
+      "unit_id": 1
+    },
+    {
+      "border_city_id": 1,
+      "i": 61,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "i": 62,
+      "terrain": 2
+    },
+    {
+      "i": 63,
+      "terrain": 2
+    },
+    {
+      "i": 64,
+      "terrain": 2
+    },
+    {
+      "i": 65,
+      "resource": 2,
+      "terrain": 1
+    },
+    {
+      "i": 66,
+      "resource": 2,
+      "terrain": 1
+    },
+    {
+      "i": 67,
+      "terrain": 2
+    },
+    {
+      "border_city_id": 1,
+      "i": 68,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "border_city_id": 1,
+      "i": 69,
+      "resource": 4,
+      "terrain": 3
+    },
+    {
+      "border_city_id": 1,
+      "i": 70,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "i": 71,
+      "resource": 4,
+      "terrain": 3
+    },
+    {
+      "i": 72,
+      "terrain": 1
+    },
+    {
+      "i": 73,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "i": 74,
+      "terrain": 3
+    },
+    {
+      "i": 75,
+      "terrain": 2
+    },
+    {
+      "i": 76,
+      "terrain": 1
+    },
+    {
+      "i": 77,
+      "resource": 2,
+      "terrain": 1
+    },
+    {
+      "i": 78,
+      "terrain": 1
+    },
+    {
+      "i": 79,
+      "resource": 1,
+      "terrain": 1
+    },
+    {
+      "i": 80,
+      "terrain": 2
+    }
+  ],
+  "turn": 0,
+  "units": [
+    {
+      "city_id": 0,
+      "has_attacked": false,
+      "hp": 10,
+      "id": 0,
+      "kills": 0,
+      "last_dir": -1,
+      "max_hp": 10,
+      "mp": 1,
+      "owner": 0,
+      "promotion_ready": false,
+      "tile": 24,
+      "type": 1
+    },
+    {
+      "city_id": 1,
+      "has_attacked": false,
+      "hp": 10,
+      "id": 1,
+      "kills": 0,
+      "last_dir": -1,
+      "max_hp": 10,
+      "mp": 1,
+      "owner": 1,
+      "promotion_ready": false,
+      "tile": 60,
+      "type": 1
+    }
+  ]
+}

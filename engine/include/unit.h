@@ -4,6 +4,13 @@
 #include "unit_def.h"
 
 class Unit {
+    // GameState::serialise / deserialise need direct read/write access to the
+    // private state to round-trip every field. The intent is narrow — only
+    // these two static methods bypass the gameplay-action helpers — and we
+    // express it with friendship rather than a wide set of public setters
+    // that gameplay code shouldn't be calling.
+    friend class GameState;
+
 public:
     UnitType type()            const { return _type; }
     bool     has_ability(uint32_t ability) const {
