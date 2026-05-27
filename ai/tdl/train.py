@@ -4,7 +4,7 @@ TDL training loop.
 Each generation:
   1. Run self-play  →  encoded (spatial, gvec, target) arrays
   2. Append to rolling buffer (capped at BUFFER_MAX pairs)
-  3. Split buffer into 90% train / 10% val
+  3. Hold out 10% of new data in separate val buffer (never trained on)
   4. Train with MSE loss + weight decay
   5. Compute val loss
   6. Save checkpoint  →  checkpoints/gen_NNN.pt
@@ -33,6 +33,7 @@ CHECKPOINTS_DIR = os.path.join(_HERE, 'checkpoints')
 LOG_PATH        = os.path.join(CHECKPOINTS_DIR, 'training_log.csv')
 
 BUFFER_MAX      = 50_000
+VAL_BUF_MAX     = 5_000
 VAL_FRACTION    = 0.1
 BLEND_GENS      = 10     # generations to decay heuristic weight from 1.0 → HEURISTIC_FLOOR
 HEURISTIC_FLOOR = 0.15   # permanent minimum heuristic blend
@@ -58,19 +59,15 @@ def _make_loader(sp, gv, tgt, batch_size, shuffle, device):
     )
 
 
-def train_one_gen(model, optimizer, sp_buf, gv_buf, tgt_buf, epochs, batch_size, device):
-    n      = len(tgt_buf)
-    n_val  = max(1, int(n * VAL_FRACTION))
-    n_train = n - n_val
+def train_one_gen(model, optimizer, sp_buf, gv_buf, tgt_buf,
+                  val_sp, val_gv, val_tgt,
+                  epochs, batch_size, device):
+    n_train = len(tgt_buf)
+    n_val   = len(val_tgt)
 
-    # Fixed random split — same indices each call within a gen.
-    idx     = np.random.permutation(n)
-    tr_idx  = idx[:n_train]
-    va_idx  = idx[n_train:]
-
-    train_loader = _make_loader(sp_buf[tr_idx], gv_buf[tr_idx], tgt_buf[tr_idx],
+    train_loader = _make_loader(sp_buf, gv_buf, tgt_buf,
                                 batch_size, shuffle=True,  device=device)
-    val_loader   = _make_loader(sp_buf[va_idx], gv_buf[va_idx], tgt_buf[va_idx],
+    val_loader   = _make_loader(val_sp, val_gv, val_tgt,
                                 batch_size, shuffle=False, device=device)
 
     final_train = 0.0
@@ -119,6 +116,10 @@ def run_training(n_gens=N_GENS, n_games=N_GAMES, n_sims=N_SIMS,
     gv_buf  = np.empty((0, G),            dtype=np.float32)
     tgt_buf = np.empty((0,),              dtype=np.float32)
 
+    val_sp  = np.empty((0, C_IN, 11, 11), dtype=np.float32)
+    val_gv  = np.empty((0, G),            dtype=np.float32)
+    val_tgt = np.empty((0,),              dtype=np.float32)
+
     start_gen = 0
     prev_ckpt = None
 
@@ -153,18 +154,33 @@ def run_training(n_gens=N_GENS, n_games=N_GAMES, n_sims=N_SIMS,
                                                heuristic_weight=h_weight)
         print(f'self-play: {len(new_tgt)} pairs  ({time.time()-t0:.1f}s)')
 
-        # 2. Append to rolling buffer; drop oldest when over cap.
-        sp_buf  = np.concatenate([sp_buf,  new_sp],  axis=0)
-        gv_buf  = np.concatenate([gv_buf,  new_gv],  axis=0)
-        tgt_buf = np.concatenate([tgt_buf, new_tgt], axis=0)
+        # 2. Split new data: 10% → held-out val buffer, 90% → training buffer.
+        n_new   = len(new_tgt)
+        n_new_v = max(1, int(n_new * VAL_FRACTION))
+        perm    = np.random.permutation(n_new)
+        v_idx   = perm[:n_new_v]
+        t_idx   = perm[n_new_v:]
+
+        val_sp  = np.concatenate([val_sp,  new_sp[v_idx]],  axis=0)
+        val_gv  = np.concatenate([val_gv,  new_gv[v_idx]],  axis=0)
+        val_tgt = np.concatenate([val_tgt, new_tgt[v_idx]], axis=0)
+        if len(val_tgt) > VAL_BUF_MAX:
+            val_sp  = val_sp[-VAL_BUF_MAX:]
+            val_gv  = val_gv[-VAL_BUF_MAX:]
+            val_tgt = val_tgt[-VAL_BUF_MAX:]
+
+        sp_buf  = np.concatenate([sp_buf,  new_sp[t_idx]],  axis=0)
+        gv_buf  = np.concatenate([gv_buf,  new_gv[t_idx]],  axis=0)
+        tgt_buf = np.concatenate([tgt_buf, new_tgt[t_idx]], axis=0)
         if len(tgt_buf) > BUFFER_MAX:
             sp_buf  = sp_buf[-BUFFER_MAX:]
             gv_buf  = gv_buf[-BUFFER_MAX:]
             tgt_buf = tgt_buf[-BUFFER_MAX:]
-        print(f'buffer:    {len(tgt_buf)} pairs')
+        print(f'buffer:    {len(tgt_buf)} train  {len(val_tgt)} val')
 
         # 3. Train + validate
         train_loss, val_loss = train_one_gen(model, optimizer, sp_buf, gv_buf, tgt_buf,
+                                             val_sp, val_gv, val_tgt,
                                              epochs, batch_size, device)
 
         # 4. Save checkpoint
