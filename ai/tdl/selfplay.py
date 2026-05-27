@@ -9,14 +9,17 @@ All states in a single turn share one target (the V_mcts of the next turn start)
 
 Usage:
   python selfplay.py                # 5 games, 200 sims
-  python selfplay.py --games 20 --sims 400
+  python selfplay.py --games 20 --sims 400 --workers 8
 """
 
 import sys, os, random, math, argparse, time
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../build/bindings'))
+import multiprocessing as mp
+
+_HERE = os.path.dirname(__file__)
+sys.path.insert(0, os.path.join(_HERE, '../../build/bindings'))
 import polyshark
 
-REPLAYS_DIR = os.path.join(os.path.dirname(__file__), '../../replays')
+REPLAYS_DIR = os.path.join(_HERE, 'replays')
 
 MAP_SIZE     = 11
 C_UCT        = 1.5
@@ -27,16 +30,36 @@ C_HEURISTIC  = 15.0
 
 
 # ---------------------------------------------------------------------------
-# Gen 0 heuristic
+# Eval functions
 # ---------------------------------------------------------------------------
 
-def eval_fn(states):
+def heuristic_eval_fn(states):
     out = []
     for s in states:
         p    = s.current_player()
         diff = polyshark.heuristic_score(s, p) - polyshark.heuristic_score(s, 1 - p)
         out.append(math.tanh(diff / C_HEURISTIC))
     return out
+
+# Keep eval_fn as an alias so train.py imports still work.
+eval_fn = heuristic_eval_fn
+
+
+def make_nn_eval_fn(ckpt_path):
+    """Load a ValueNet from ckpt_path and return an eval_fn callable."""
+    import torch
+    from model   import ValueNet
+    from encoder import encode_batch
+    device = torch.device('cpu')
+    model  = ValueNet().to(device)
+    model.load_state_dict(torch.load(ckpt_path, map_location=device, weights_only=True)['model'])
+    model.eval()
+    def _fn(states):
+        sp, gv = encode_batch(states)
+        with torch.no_grad():
+            pred = model(torch.from_numpy(sp), torch.from_numpy(gv))
+        return pred.squeeze(-1).tolist()
+    return _fn
 
 
 # ---------------------------------------------------------------------------
@@ -53,18 +76,15 @@ def run_game(engine, seed, n_sims, eval_fns=None):
                each other (used for convergence evaluation).
     """
     if eval_fns is None:
-        eval_fns = eval_fn
+        eval_fns = heuristic_eval_fn
     if callable(eval_fns):
         eval_fns = [eval_fns, eval_fns]
 
     state = polyshark.make_random_game(seed=seed, sz=MAP_SIZE)
     sz    = state.map_size()
 
-    # Per-player buffer of every state visited during the current turn.
-    # All states in the buffer share the same target: V_mcts(s_0') of
-    # that player's *next* turn start.
     turn_buf    = [[], []]
-    pairs       = []   # (GameState, float)
+    pairs       = []
     history     = []
     prev_player = -1
 
@@ -73,21 +93,15 @@ def run_game(engine, seed, n_sims, eval_fns=None):
         action, v_mcts = engine.search(state, n_sims, eval_fns[p])
 
         if p != prev_player:
-            # New turn for player p.
-            # v_mcts(s_0) of this turn is the TARGET for every state
-            # buffered from p's previous turn.
             for s in turn_buf[p]:
                 pairs.append((s, v_mcts))
             turn_buf[p] = []
             prev_player = p
 
-        # Collect current state before advancing.
         turn_buf[p].append(state)
-
         history.append(action)
         state = state.apply_action(action)
 
-    # Final pairs: no next turn — use terminal outcome or heuristic.
     terminal = state.is_terminal()
     winner   = state.winner() if terminal else -1
     for p in range(2):
@@ -96,7 +110,7 @@ def run_game(engine, seed, n_sims, eval_fns=None):
         if terminal:
             v_final = 1.0 if winner == p else -1.0
         else:
-            diff    = _score(state, p) - _score(state, 1 - p)
+            diff    = polyshark.heuristic_score(state, p) - polyshark.heuristic_score(state, 1 - p)
             v_final = math.tanh(diff / C_HEURISTIC)
         for s in turn_buf[p]:
             pairs.append((s, v_final))
@@ -104,9 +118,10 @@ def run_game(engine, seed, n_sims, eval_fns=None):
     return pairs, history, sz, terminal, winner
 
 
-def _save_replay(history, seed, sz, idx):
-    os.makedirs(REPLAYS_DIR, exist_ok=True)
-    path = os.path.join(REPLAYS_DIR, f'tdl_{idx:05d}.replay')
+def _save_replay(history, seed, sz, gen, game_idx):
+    gen_dir = os.path.join(REPLAYS_DIR, f'gen_{gen:03d}')
+    os.makedirs(gen_dir, exist_ok=True)
+    path = os.path.join(gen_dir, f'game_{game_idx:02d}_seed_{seed}.replay')
     with open(path, 'w') as f:
         f.write(f'seed {seed} {sz}\n')
         for a in history:
@@ -115,43 +130,102 @@ def _save_replay(history, seed, sz, idx):
 
 
 # ---------------------------------------------------------------------------
+# Parallel worker
+# ---------------------------------------------------------------------------
+
+_worker_engine = None
+
+def _worker_init():
+    global _worker_engine
+    _worker_engine = polyshark.MCTSEngine(
+        c_uct=C_UCT, batch_size=BATCH_SIZE, virtual_loss=VIRTUAL_LOSS,
+    )
+
+def _worker_task(args):
+    seed, n_sims, ckpt_path, gen, game_idx = args
+    fns = make_nn_eval_fn(ckpt_path) if ckpt_path else heuristic_eval_fn
+    pairs, history, sz, terminal, winner = run_game(_worker_engine, seed, n_sims, fns)
+    replay = _save_replay(history, seed, sz, gen, game_idx)
+    # Encode here — GameState objects can't be pickled across processes.
+    from encoder import encode_batch
+    import numpy as np
+    if pairs:
+        states, targets = zip(*pairs)
+        sp, gv = encode_batch(list(states))
+        tgt    = np.array(targets, dtype=np.float32)
+    else:
+        from encoder import C_IN, G
+        sp  = np.empty((0, C_IN, 11, 11), dtype=np.float32)
+        gv  = np.empty((0, G),            dtype=np.float32)
+        tgt = np.empty((0,),              dtype=np.float32)
+    return sp, gv, tgt, terminal, winner, seed, len(history), replay
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
-def run_selfplay(n_games=5, n_sims=200, eval_fns=None):
+def run_selfplay(n_games=5, n_sims=200, eval_fns=None, gen=0,
+                 n_workers=1, ckpt_path=None):
     """
-    eval_fns : single callable or [eval_p0, eval_p1].
-               Defaults to the Gen 0 heuristic for both players.
+    n_workers  : number of parallel worker processes (1 = sequential).
+    ckpt_path  : path to a ValueNet checkpoint for the leaf evaluator.
+                 None = use the Gen 0 heuristic.
+                 In parallel mode this is always used; eval_fns is ignored.
+    eval_fns   : callable or [p0_fn, p1_fn] — used in sequential mode only.
     """
-    engine = polyshark.MCTSEngine(
-        c_uct        = C_UCT,
-        batch_size   = BATCH_SIZE,
-        virtual_loss = VIRTUAL_LOSS,
-    )
+    seeds = [random.randint(1, 2**32 - 1) for _ in range(n_games)]
+    t0    = time.time()
 
-    all_pairs = []
-    t0 = time.time()
+    # Encoded buffer — arrays are accumulated regardless of sequential/parallel path.
+    from encoder import encode_batch, C_IN, G
+    import numpy as np
+    sp_all  = np.empty((0, C_IN, 11, 11), dtype=np.float32)
+    gv_all  = np.empty((0, G),            dtype=np.float32)
+    tgt_all = np.empty((0,),              dtype=np.float32)
 
-    for i in range(n_games):
-        seed = random.randint(1, 2**32 - 1)
-        gt   = time.time()
-
-        pairs, history, sz, terminal, winner = run_game(engine, seed, n_sims, eval_fns)
-        all_pairs.extend(pairs)
-
-        replay  = _save_replay(history, seed, sz, i)
-        outcome = f'P{winner} wins' if terminal else 'turn limit'
-        print(f'[{i+1}/{n_games}] seed={seed}  {len(history)} actions  '
-              f'{len(pairs)} pairs  {outcome}  ({time.time()-gt:.1f}s)  → {os.path.basename(replay)}')
+    if n_workers > 1:
+        task_args = [(seeds[i], n_sims, ckpt_path, gen, i) for i in range(n_games)]
+        with mp.Pool(n_workers, initializer=_worker_init) as pool:
+            for sp, gv, tgt, terminal, winner, seed, n_actions, replay in \
+                    pool.imap_unordered(_worker_task, task_args):
+                sp_all  = np.concatenate([sp_all,  sp],  axis=0)
+                gv_all  = np.concatenate([gv_all,  gv],  axis=0)
+                tgt_all = np.concatenate([tgt_all, tgt], axis=0)
+                outcome = f'P{winner} wins' if terminal else 'turn limit'
+                print(f'  game seed={seed}  {n_actions} actions  '
+                      f'{len(tgt)} pairs  {outcome}  → {replay}')
+    else:
+        engine = polyshark.MCTSEngine(
+            c_uct=C_UCT, batch_size=BATCH_SIZE, virtual_loss=VIRTUAL_LOSS,
+        )
+        fns = make_nn_eval_fn(ckpt_path) if ckpt_path else (eval_fns or heuristic_eval_fn)
+        for i in range(n_games):
+            seed = seeds[i]
+            gt   = time.time()
+            pairs, history, sz, terminal, winner = run_game(engine, seed, n_sims, fns)
+            if pairs:
+                states, targets = zip(*pairs)
+                sp, gv = encode_batch(list(states))
+                tgt    = np.array(targets, dtype=np.float32)
+                sp_all  = np.concatenate([sp_all,  sp],  axis=0)
+                gv_all  = np.concatenate([gv_all,  gv],  axis=0)
+                tgt_all = np.concatenate([tgt_all, tgt], axis=0)
+            replay  = _save_replay(history, seed, sz, gen, i)
+            outcome = f'P{winner} wins' if terminal else 'turn limit'
+            print(f'[{i+1}/{n_games}] seed={seed}  {len(history)} actions  '
+                  f'{len(pairs)} pairs  {outcome}  ({time.time()-gt:.1f}s)  → {replay}')
 
     elapsed = time.time() - t0
-    print(f'\n{len(all_pairs)} total training pairs from {n_games} games in {elapsed:.1f}s')
-    return all_pairs
+    print(f'\n{len(tgt_all)} total training pairs from {n_games} games in {elapsed:.1f}s')
+    return sp_all, gv_all, tgt_all
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--games', type=int, default=5)
-    parser.add_argument('--sims',  type=int, default=200)
+    parser.add_argument('--games',   type=int, default=5)
+    parser.add_argument('--sims',    type=int, default=200)
+    parser.add_argument('--gen',     type=int, default=0)
+    parser.add_argument('--workers', type=int, default=1)
     args = parser.parse_args()
-    run_selfplay(n_games=args.games, n_sims=args.sims)
+    run_selfplay(n_games=args.games, n_sims=args.sims, gen=args.gen, n_workers=args.workers)

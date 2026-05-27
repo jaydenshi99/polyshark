@@ -3,3 +3,7 @@ build/
 replays/
 __pycache__/
 *.pyc
+*.pt
+ai/tdl/checkpoints/
+ai/tdl/runs/
+ai/tdl/replays/

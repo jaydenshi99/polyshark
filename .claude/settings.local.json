@@ -18,7 +18,18 @@
       "Bash(.venv/bin/python3 ai/tdl/selfplay.py --games 1 --sims 30)",
       "Bash(grep -v \"^commit\\\\|^Author\\\\|^Date\\\\|^Merge\\\\|^\\\\s*$\\\\|^    \")",
       "Bash(python3 ai/tdl/selfplay.py --sims 200 --games 1)",
-      "Bash(python3 ai/tdl/selfplay.py --games 1 --sims 20)"
+      "Bash(python3 ai/tdl/selfplay.py --games 1 --sims 20)",
+      "Bash(python3 ai/tdl/train.py --gens 1 --games 1 --sims 20 --epochs 1)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -c \"import numpy; import torch; print\\('ok'\\)\")",
+      "Bash(pip3 --version)",
+      "Bash(python3 ai/tdl/train.py --gens 1 --games 1 --sims 20 --epochs 2)",
+      "Bash(pip install *)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python3 ai/tdl/train.py --gens 1 --games 1 --sims 20 --epochs 1)",
+      "Bash(.venv/bin/python3 ai/tdl/train.py --gens 1 --games 2 --sims 20 --epochs 1)",
+      "Bash(.venv/bin/python3 ai/tdl/train.py --gens 1 --games 4 --sims 20 --epochs 1 --workers 4)",
+      "Bash(git rm *)"
     ]
   }
 }
