@@ -197,7 +197,8 @@ PYBIND11_MODULE(polyshark, m) {
         .def("search", [](MCTSEngine& eng,
                           const GameState& state,
                           int              n_sims,
-                          py::object       eval_fn) {
+                          py::object       eval_fn,
+                          float            temperature) {
             auto cpp_eval = [&eval_fn](const std::vector<GameState>& states)
                     -> std::vector<float> {
                 py::list py_list;
@@ -207,10 +208,11 @@ PYBIND11_MODULE(polyshark, m) {
                 for (auto item : result) out.push_back(item.cast<float>());
                 return out;
             };
-            auto [action, value] = eng.search(state, n_sims, cpp_eval);
+            auto [action, value] = eng.search(state, n_sims, cpp_eval, temperature);
             return py::make_tuple(action, value);
         },
         py::arg("state"),
         py::arg("n_sims"),
-        py::arg("eval_fn"));
+        py::arg("eval_fn"),
+        py::arg("temperature") = 0.0f);
 }

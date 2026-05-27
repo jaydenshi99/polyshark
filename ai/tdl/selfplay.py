@@ -27,6 +27,7 @@ BATCH_SIZE   = 32
 VIRTUAL_LOSS = 1.0
 TURN_LIMIT   = 30
 C_HEURISTIC  = 15.0
+TEMPERATURE  = 0.2   # self-play exploration; 0 = deterministic (use for eval)
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +91,7 @@ def run_game(engine, seed, n_sims, eval_fns=None):
 
     while not state.is_terminal() and state.get_turn() < TURN_LIMIT:
         p              = state.current_player()
-        action, v_mcts = engine.search(state, n_sims, eval_fns[p])
+        action, v_mcts = engine.search(state, n_sims, eval_fns[p], TEMPERATURE)
 
         if p != prev_player:
             for s in turn_buf[p]:
