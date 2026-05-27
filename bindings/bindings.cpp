@@ -187,12 +187,12 @@ PYBIND11_MODULE(polyshark, m) {
             }
         }
 
-        // Village proximity: sum over my units of 1/(1 + min_dist_to_village).
-        // Rewards moving units toward capturable villages.
+        // Village proximity: per village, reward based on closest unit.
+        // Encourages spreading units to different villages rather than clumping.
         float village_prox = 0.0f;
-        for (auto [ur, uc] : my_units) {
+        for (int v = 0; v < (int)village_rows.size(); ++v) {
             int min_dist = 999;
-            for (int v = 0; v < (int)village_rows.size(); ++v) {
+            for (auto [ur, uc] : my_units) {
                 int d = std::abs(ur - village_rows[v]) + std::abs(uc - village_cols[v]);
                 if (d < min_dist) min_dist = d;
             }
