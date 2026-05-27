@@ -3,6 +3,10 @@
 #include <cstdint>
 
 class City {
+    // GameState::serialise / deserialise read & write private fields directly
+    // — see comment in unit.h for the rationale.
+    friend class GameState;
+
 public:
     int  owner()      const { return _owner; }
     int  level()      const { return _level; }

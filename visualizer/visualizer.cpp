@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -123,7 +124,7 @@ static const Transformer HP_TRANSFORMER = { -0.22f, 0.24f, 0.9f };
 // Defense shield(s) shown next to HP when a fortified unit has a defense
 // multiplier > 1.0. scale sets the base shield width in pixels; x/y_offset
 // nudge the whole shield strip relative to its anchor (right of the HP text).
-static const Transformer SHIELD_TRANSFORMER = { -0.11f, 0.03f, 12.0f };
+static const Transformer SHIELD_TRANSFORMER = { -0.11f, 0.02f, 12.0f };
 static const Transformer SECOND_SHIELD_TRANSFORMER = { -0.28f, 0.03f, 15.5f };
 
 // Top HUD star icons (both the big stars next to player totals and the small
@@ -620,7 +621,7 @@ static void compute_border_flags(const GameState& s, const GameState& fog_state,
         if (cid < 0) continue;
         int owner = s.get_city(cid).owner();
         int r = idx / msz, c = idx % msz;
-        bool self_fogged = !omni && !fog_state.is_explored(vp, idx);
+        bool self_fogged = !omni && !fog_state.is_visible(vp, idx);
         for (int d = 0; d < 4; d++) {
             int nr = r + BORDER_DR[d], nc = c + BORDER_DC[d];
             bool oob = (nr < 0 || nr >= msz || nc < 0 || nc >= msz);
@@ -636,7 +637,7 @@ static void compute_border_flags(const GameState& s, const GameState& fog_state,
             if (n_owner == owner) continue;       // friendly border cancels
             // Hide edges that are entirely in fog: an edge only shows when at
             // least one of its two tiles is explored (OOB counts as fogged).
-            bool n_fogged = oob || (!omni && !fog_state.is_explored(vp, n_idx));
+            bool n_fogged = oob || (!omni && !fog_state.is_visible(vp, n_idx));
             if (self_fogged && n_fogged) continue;
             // Enemy borders on the same edge: both colours draw. Per-tile
             // render order (in draw_tile_borders) gives the front tile's
@@ -784,8 +785,7 @@ static std::string format_action_str(const Action& a, int player, int turn, int 
     };
     static const char* unit_names[] = {"?","Warrior","Archer","Rider","Defender","Giant"};
     static const char* tech_names[] = {"Origin","Hunting","Org","Farming","Riding","Climb","Archery","Mining"};
-    char prefix[24]; snprintf(prefix, sizeof(prefix), "P%d T%d: ", player, turn);
-    std::string p = prefix;
+    std::string p = "";
     switch (a.type) {
         case ActionType::Move:              return p + "Move "    + coords(a.from) + "->" + coords(a.to);
         case ActionType::Attack:            return p + "Attack "  + coords(a.from) + "->" + coords(a.to);
@@ -1054,12 +1054,12 @@ namespace {
     constexpr float T1_SIN[5] = { 1.00000f,  0.30902f, -0.80902f, -0.80902f,  0.30902f };
     // Tier 2 & 3 angles: 18°, 54°, 90°, 126°, 162°, 198°, 234°, 270°, 306°, 342°
     constexpr float TN_COS[10] = {
-        0.95106f,  0.58779f,  0.00000f, -0.58779f, -0.95106f,
-       -0.95106f, -0.58779f,  0.00000f,  0.58779f,  0.95106f
+        0.30902f,  0.80902f,  1.0f, 0.80902f, 0.30902f,
+       -0.30902f,  -0.80902f,  -1.0f, -0.80902f, -0.30902f,
     };
     constexpr float TN_SIN[10] = {
-        0.30902f,  0.80902f,  1.00000f,  0.80902f,  0.30902f,
-       -0.30902f, -0.80902f, -1.00000f, -0.80902f, -0.30902f
+        0.95106f,  0.58779f,  0.0f,  -0.58779f,  -0.95106f,
+       -0.95106f,  -0.58779f,  0.0f,  0.58779f,  0.95106f,
     };
 
     inline constexpr float t1_ux(int i) { return 0.5f + T1_DIST * T1_COS[i]; }
@@ -1090,16 +1090,16 @@ static const TechNode NODES[NODE_COUNT] = {
     { TechType::Hunting,        0,             t1_ux(4), t1_uy(4) },  // 5 −198° upper-left
 
     // Tier 2: 10-slot ring; bound techs aligned with parent's ray when possible
-    { TechType::Farming,        N_ORGANISATION, t2_ux(0), t2_uy(0) },  // 6  18°
-    { TechType::Strategy,       N_ORGANISATION, t2_ux(1), t2_uy(1) },  // 7  54°
-    { TechType::None,          -1,              t2_ux(2), t2_uy(2) },  // 8  90°
-    { TechType::None,          -1,              t2_ux(3), t2_uy(3) },  // 9  126°
-    { TechType::Archery,        N_HUNTING,      t2_ux(4), t2_uy(4) },  // 10 162°
-    { TechType::None,          -1,              t2_ux(5), t2_uy(5) },  // 11 198°
-    { TechType::None,          -1,              t2_ux(6), t2_uy(6) },  // 12 234°
-    { TechType::None,          -1,              t2_ux(7), t2_uy(7) },  // 13 270°
-    { TechType::Mining,         N_CLIMBING,     t2_ux(8), t2_uy(8) },  // 14 306°
-    { TechType::None,          -1,              t2_ux(9), t2_uy(9) },  // 15 342°
+    { TechType::None,          0,               t2_ux(0), t2_uy(0) }, 
+    { TechType::Farming,       N_ORGANISATION,  t2_ux(1), t2_uy(1) }, 
+    { TechType::Strategy,      N_ORGANISATION,  t2_ux(2), t2_uy(2) },  
+    { TechType::Mining,        N_CLIMBING,      t2_ux(3), t2_uy(3) }, 
+    { TechType::None,          -1,              t2_ux(4), t2_uy(4) }, 
+    { TechType::None,          -1,              t2_ux(5), t2_uy(5) },  
+    { TechType::None,          -1,              t2_ux(6), t2_uy(6) }, 
+    { TechType::Archery,        N_HUNTING,      t2_ux(7), t2_uy(7) }, 
+    { TechType::None,           -1,              t2_ux(8), t2_uy(8) },
+    { TechType::None,          -1,              t2_ux(9), t2_uy(9) },
 
     // Tier 3: 10-slot ring at T3_DIST, all empty placeholders
     { TechType::None,          -1,              t3_ux(0), t3_uy(0) },  // 16 18°
@@ -1307,13 +1307,108 @@ int main(int argc, char** argv) {
         move_anim.active = true;
     };
 
-    // Action log; parallel _debug marks Logger entries (rendered grey).
+    // Action log: text + parallel colour from Logger. Live entries come from
+    // Logger::print (apply-action site), replay entries from replay_log below.
     std::vector<std::string> action_log;
-    std::vector<bool>        action_log_debug;
+    std::vector<LogColor>    action_log_color;
     int last_logger_count = 0;
+
+    auto to_log_color = [](Color c) -> LogColor {
+        return LogColor{ c.r, c.g, c.b, c.a };
+    };
+    auto from_log_color = [](LogColor c) -> Color {
+        return Color{ c.r, c.g, c.b, c.a };
+    };
+    auto player_log_color = [&](int player) -> LogColor {
+        return to_log_color(player == 0 ? COL_P0 : COL_P1);
+    };
+    auto log_turn_header = [&](int turn, int player) {
+        Logger::print(player_log_color(player), "Turn %d Player %d", turn, player);
+    };
     // Explorer-upgrade walk paths (visualizer-only).
     std::vector<std::vector<int>> explorer_trails;
     int log_scroll = 0;
+
+    // Save-as UI: SAVE button toggles into an inline textbox.
+    bool save_input_active = false;
+    char save_filename[64] = {};
+    int  save_filename_len = 0;
+    bool save_filename_invalid = false;  // shake/red border on invalid submit
+
+    auto is_valid_filename_char = [](char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+            || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_';
+    };
+    auto is_valid_filename = [&](const char* name, int len) {
+        if (len == 0) return false;
+        if (name[0] == '.' || name[0] == '-') return false;
+        for (int i = 0; i < len; i++) if (!is_valid_filename_char(name[i])) return false;
+        return true;
+    };
+    auto close_save_input = [&]() {
+        save_input_active = false;
+        save_filename_len = 0;
+        save_filename[0]  = 0;
+        save_filename_invalid = false;
+    };
+    auto do_save = [&]() {
+        if (!is_valid_filename(save_filename, save_filename_len)) {
+            save_filename_invalid = true;
+            return;
+        }
+        namespace fs = std::filesystem;
+        fs::path dir = "data/saved_gamestates";
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        if (ec) {
+            Logger::print("Save failed: %s (%s)", dir.string().c_str(), ec.message().c_str());
+            save_filename_invalid = true;
+            return;
+        }
+        std::string name(save_filename, save_filename_len);
+        if (name.size() < 5 || name.compare(name.size() - 5, 5, ".json") != 0)
+            name += ".json";
+        fs::path path = dir / name;
+        if (fs::exists(path)) {
+            Logger::print("Save aborted: %s already exists", path.string().c_str());
+            save_filename_invalid = true;
+            return;
+        }
+        std::ofstream f(path);
+        if (!f) {
+            Logger::print("Save failed: cannot open %s", path.string().c_str());
+            save_filename_invalid = true;
+            return;
+        }
+        f << GameState::serialise(s).dump(2);
+        if (!f) {
+            Logger::print("Save failed while writing %s", path.string().c_str());
+            save_filename_invalid = true;
+            return;
+        }
+        Logger::print("Gamestate Saved as %s", save_filename);
+        close_save_input();
+    };
+
+    // Load-panel state. `load_open` toggles the overlay above the SAVE/LOAD
+    // row; `save_files` is rescanned when the panel opens or after a delete.
+    bool load_open = false;
+    std::vector<std::string> save_files;
+    int  load_scroll = 0;
+
+    auto rescan_saves = [&]() {
+        save_files.clear();
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        fs::path dir = "data/saved_gamestates";
+        if (!fs::exists(dir, ec)) return;
+        for (auto& e : fs::directory_iterator(dir, ec)) {
+            if (e.is_regular_file(ec) && e.path().extension() == ".json")
+                save_files.push_back(e.path().filename().string());
+        }
+        std::sort(save_files.begin(), save_files.end());
+        load_scroll = 0;
+    };
 
     auto clear_visuals = [&]() {
         explorer_trails.clear();
@@ -1323,7 +1418,8 @@ int main(int argc, char** argv) {
     bool replay_mode = false;
     std::vector<GameState> replay_states;
     std::vector<Action>    replay_actions;  // one Action per applied step (paths populated for Move)
-    std::vector<std::string> replay_log;   // one entry per action
+    std::vector<std::string> replay_log;        // one entry per action
+    std::vector<LogColor>    replay_log_color;  // parallel colour per replay entry
     int replay_step = 0;
     // Previous frame's replay_step; single +1 advances animate, jumps don't.
     int last_replay_step = -1;
@@ -1345,6 +1441,12 @@ int main(int argc, char** argv) {
             GameState rs;
             std::string first;
             f >> first;
+            auto push_replay_header = [&](int turn, int player) {
+                char buf[64];
+                snprintf(buf, sizeof(buf), "Turn %d Player %d", turn, player);
+                replay_log.emplace_back(buf);
+                replay_log_color.push_back(player_log_color(player));
+            };
             if (first == "seed") {
                 // Format: "seed <N> <sz>" — sz is optional, defaults to 9 for old files.
                 std::string seed_line;
@@ -1356,17 +1458,22 @@ int main(int argc, char** argv) {
                 MapGenParams p = MapGenParams::for_biome(BiomeType::Drylands, sz);
                 p.seed = seed;
                 rs = MapGen(p).generate().state;
+                push_replay_header(rs.get_turn(), rs.current_player());
             } else {
                 rs = MapGen(MapGen::drylands_defaults()).generate().state;
+                push_replay_header(rs.get_turn(), rs.current_player());
                 // first token was already consumed — push it back as action fields
                 int t = std::stoi(first), fr, to, pa;
                 f >> fr >> to >> pa;
                 Action act0 = {(ActionType)t, fr, to, pa, true};
                 populate_move_path(act0, rs);
                 replay_log.push_back(format_action_str(act0, rs.current_player(), rs.get_turn(), rs.map_size()));
+                replay_log_color.push_back(player_log_color(rs.current_player()));
                 replay_actions.push_back(act0);
                 replay_states.push_back(rs);
                 replay_states.push_back(rs = rs.apply_action(act0));
+                if (act0.type == ActionType::EndTurn)
+                    push_replay_header(rs.get_turn(), rs.current_player());
             }
             replay_states.push_back(rs);
             int t, fr, to, pa;
@@ -1374,8 +1481,11 @@ int main(int argc, char** argv) {
                 Action act = {(ActionType)t, fr, to, pa, true};
                 populate_move_path(act, rs);
                 replay_log.push_back(format_action_str(act, rs.current_player(), rs.get_turn(), rs.map_size()));
+                replay_log_color.push_back(player_log_color(rs.current_player()));
                 replay_actions.push_back(act);
                 replay_states.push_back(rs = rs.apply_action(act));
+                if (act.type == ActionType::EndTurn)
+                    push_replay_header(rs.get_turn(), rs.current_player());
             }
             initial = s = replay_states[0];
             TILE_W = iso_grid_width() / s.map_size();
@@ -1401,6 +1511,10 @@ int main(int argc, char** argv) {
     };
     init_colourers();
 
+    // Initial turn header. Replay mode embeds its own headers in replay_log,
+    // so skip here to avoid a duplicate flowing through Logger.
+    if (!replay_mode) log_turn_header(s.get_turn(), s.current_player());
+
     auto refresh_borders = [&]() { init_colourers(); };
 
     int selected_tile = -1;
@@ -1410,6 +1524,63 @@ int main(int argc, char** argv) {
     int    sidebar_scroll = 0;
     bool   tech_open      = false;   // sticky toggle from clicking the icon
     s.legal_actions(actions, action_count);
+
+    // do_load / do_delete live here so they can capture the post-setup state
+    // (init_colourers, reset_facing, actions[], etc.) by reference. Both keep
+    // the game in a consistent state on failure — `s` is only mutated after
+    // deserialise has returned a complete state.
+    auto do_load = [&](const std::string& filename) {
+        namespace fs = std::filesystem;
+        fs::path path = fs::path("data/saved_gamestates") / filename;
+        std::ifstream f(path);
+        if (!f) {
+            Logger::print("Load failed: cannot open %s", path.string().c_str());
+            return;
+        }
+        nlohmann::json j;
+        try {
+            f >> j;
+        } catch (const std::exception& ex) {
+            Logger::print("Load failed: parse error in %s (%s)",
+                          path.string().c_str(), ex.what());
+            return;
+        }
+        GameState loaded;
+        try {
+            loaded = GameState::deserialise(j);
+        } catch (const std::exception& ex) {
+            Logger::print("Load failed: deserialise error in %s (%s)",
+                          path.string().c_str(), ex.what());
+            return;
+        }
+        s = loaded;
+        initial = s;
+        TILE_W = iso_grid_width() / s.map_size();
+        TILE_H = (TILE_W * 3) / 5;
+        reset_facing();
+        init_colourers();
+        s.legal_actions(actions, action_count);
+        sidebar_scroll = 0;
+        selected_tile  = -1;
+        log_scroll     = 0;
+        clear_visuals();
+        load_open = false;
+        Logger::print("Loaded game from %s", path.string().c_str());
+        log_turn_header(s.get_turn(), s.current_player());
+    };
+
+    auto do_delete = [&](const std::string& filename) {
+        namespace fs = std::filesystem;
+        fs::path path = fs::path("data/saved_gamestates") / filename;
+        std::error_code ec;
+        if (!fs::remove(path, ec) || ec) {
+            Logger::print("Delete failed: %s (%s)",
+                          path.string().c_str(), ec.message().c_str());
+            return;
+        }
+        Logger::print("Deleted %s", path.string().c_str());
+        rescan_saves();
+    };
 
     // HiDPI: render at physical pixel density so Retina doesn't upscale and blur.
     SetConfigFlags(FLAG_WINDOW_HIGHDPI);
@@ -1611,13 +1782,17 @@ int main(int argc, char** argv) {
 
     while (!WindowShouldClose()) {
 
-        if (IsKeyPressed(KEY_TAB)) {
+        // Global keyboard shortcuts — suppressed while the save textbox is
+        // active so typing 'p', 'f', etc. doesn't fire other actions.
+        if (!save_input_active && IsKeyPressed(KEY_TAB)) {
             view = (view == ViewMode::Omni)    ? ViewMode::P0      :
                    (view == ViewMode::P0)      ? ViewMode::P1      :
                    (view == ViewMode::P1)      ? ViewMode::Current : ViewMode::Omni;
         }
 
-        if (IsKeyPressed(KEY_F)) g_use_custom_font = !g_use_custom_font;
+        if (!save_input_active && IsKeyPressed(KEY_F)) g_use_custom_font = !g_use_custom_font;
+
+        if (!save_input_active && IsKeyPressed(KEY_P)) GameState::print(s);
 
         // Build sidebar layout (headers + action rows)
         static SidebarRow layout[512];
@@ -1830,7 +2005,7 @@ int main(int argc, char** argv) {
                 // Defer fog reveal until anim ends — freshly walked tiles stay dark.
                 const GameState& fog_state =
                     move_anim.active ? move_anim.pre_state : s;
-                bool fogged = (view != ViewMode::Omni) && !fog_state.is_explored(vp, idx);
+                bool fogged = (view != ViewMode::Omni) && !fog_state.is_visible(vp, idx);
                 Vector2 ctr = tile_center(r, c, cur_msz);
 
                 // Terrain (or fog/water) first inside the tile. Fogged tiles
@@ -1913,7 +2088,7 @@ int main(int argc, char** argv) {
             if (!tt.has_city()) continue;
             const GameState& fog_state_pb =
                 move_anim.active ? move_anim.pre_state : s;
-            bool fogged_pb = (view != ViewMode::Omni) && !fog_state_pb.is_explored(vp, i);
+            bool fogged_pb = (view != ViewMode::Omni) && !fog_state_pb.is_visible(vp, i);
             if (fogged_pb) continue;
             int r_pb = i / cur_msz, c_pb = i % cur_msz;
             Vector2 ctr_pb = tile_center(r_pb, c_pb, cur_msz);
@@ -1936,11 +2111,11 @@ int main(int argc, char** argv) {
                 if (!t.has_unit()) continue;
                 const GameState& fog_state =
                     move_anim.active ? move_anim.pre_state : s;
-                bool fogged = (view != ViewMode::Omni) && !fog_state.is_explored(vp, idx);
+                bool fogged = (view != ViewMode::Omni) && !fog_state.is_visible(vp, idx);
                 if (fogged) continue;
                 const Unit& u = render_state.get_unit(t.unit_id());
                 bool show = (view == ViewMode::Omni)
-                         || s.is_explored(vp, idx)
+                         || s.is_visible(vp, idx)
                          || u.owner() == vp;
                 if (!show) continue;
                 Vector2 ctr = tile_center(r, c, cur_msz);
@@ -2099,7 +2274,7 @@ int main(int argc, char** argv) {
             if (!tt.has_city()) continue;
             const GameState& fog_state_cl =
                 move_anim.active ? move_anim.pre_state : s;
-            bool fogged_cl = (view != ViewMode::Omni) && !fog_state_cl.is_explored(vp, i);
+            bool fogged_cl = (view != ViewMode::Omni) && !fog_state_cl.is_visible(vp, i);
             if (fogged_cl) continue;
             int r_cl = i / cur_msz, c_cl = i % cur_msz;
             Vector2 ctr_cl = tile_center(r_cl, c_cl, cur_msz);
@@ -2327,7 +2502,7 @@ int main(int argc, char** argv) {
         bool regenerate = false;
 
         // Spacebar = End Turn (only in live play; in replay mode Space steps forward)
-        if (!replay_mode && IsKeyPressed(KEY_SPACE)) {
+        if (!replay_mode && !save_input_active && IsKeyPressed(KEY_SPACE)) {
             for (int i = 0; i < action_count; i++) {
                 if (actions[i].type == ActionType::EndTurn && actions[i].affordable) {
                     applied = i;
@@ -2411,10 +2586,143 @@ int main(int argc, char** argv) {
         }
         EndScissorMode();
 
+        // --- Save / Load button row (half-width each, full height, above
+        //     regen with the same 8px gap that separates regen and reset).
+        //     Clicking SAVE flips the slot into a textbox; clicking LOAD
+        //     toggles an overlay panel listing saved games. ---
+        if (!replay_mode) {
+            constexpr int BTN_H = 28;
+            int row_y    = CONTENT_H - 72 - 8 - BTN_H;            // 8px gap above regen
+            int half_w   = (SIDEBAR - 12) / 2;                    // 4px outer + 4px center
+            int save_x   = SB + 4;
+            int load_x   = save_x + half_w + 4;
+            Rectangle save_btn      = { (float)save_x, (float)row_y, (float)half_w, (float)BTN_H };
+            Rectangle load_btn_rect = { (float)load_x, (float)row_y, (float)half_w, (float)BTN_H };
+            if (save_input_active) {
+                Color border = save_filename_invalid
+                             ? Color{ 200, 60, 60, 255 }
+                             : Color{ 120, 120, 120, 255 };
+                DrawRectangleRec(save_btn, Color{ 28, 28, 28, 255 });
+                DrawRectangleLinesEx(save_btn, 1, border);
+                int caret_blink = ((int)(GetTime() * 2.0) & 1);
+                std::string shown = std::string(save_filename, save_filename_len);
+                if (caret_blink) shown += '|';
+                DrawTextC(shown.c_str(), save_x + 4, row_y + (BTN_H - 11) / 2, 11, WHITE);
+
+                // Text input
+                int ch = GetCharPressed();
+                while (ch > 0) {
+                    if (save_filename_len < (int)sizeof(save_filename) - 1
+                        && is_valid_filename_char((char)ch)) {
+                        save_filename[save_filename_len++] = (char)ch;
+                        save_filename[save_filename_len]   = 0;
+                        save_filename_invalid = false;
+                    }
+                    ch = GetCharPressed();
+                }
+                if (IsKeyPressed(KEY_BACKSPACE) && save_filename_len > 0) {
+                    save_filename[--save_filename_len] = 0;
+                    save_filename_invalid = false;
+                }
+                if (IsKeyPressed(KEY_ENTER))  do_save();
+                if (IsKeyPressed(KEY_ESCAPE)) close_save_input();
+                // Click outside the textbox cancels.
+                if (clicked && !CheckCollisionPointRec(mouse, save_btn))
+                    close_save_input();
+            } else {
+                bool hovered = CheckCollisionPointRec(mouse, save_btn);
+                DrawRectangleRec(save_btn, hovered ? Color{ 60, 100, 150, 255 } : Color{ 40, 70, 110, 255 });
+                int tw = MeasureTextC("SAVE", 14);
+                DrawTextC("SAVE", save_x + half_w / 2 - tw / 2, row_y + (BTN_H - 14) / 2, 14, WHITE);
+                if (hovered && clicked) save_input_active = true;
+            }
+
+            // LOAD button (right half).
+            bool load_hovered = CheckCollisionPointRec(mouse, load_btn_rect) && !save_input_active;
+            DrawRectangleRec(load_btn_rect, load_hovered ? Color{ 130, 95, 50, 255 } : Color{ 95, 65, 30, 255 });
+            int ltw = MeasureTextC("LOAD", 14);
+            DrawTextC("LOAD", load_x + half_w / 2 - ltw / 2, row_y + (BTN_H - 14) / 2, 14, WHITE);
+            if (load_hovered && clicked) {
+                load_open = !load_open;
+                if (load_open) rescan_saves();
+            }
+
+            // Load overlay panel (anchored just above the SAVE/LOAD row).
+            if (load_open) {
+                constexpr int PANEL_H = 200;
+                constexpr int HDR_H   = 22;
+                constexpr int ROW_H   = 22;
+                int panel_x = SB + 4;
+                int panel_w = SIDEBAR - 8;
+                int panel_bottom = row_y - 4;
+                int panel_top    = panel_bottom - PANEL_H;
+                Rectangle panel = { (float)panel_x, (float)panel_top, (float)panel_w, (float)PANEL_H };
+                DrawRectangleRec(panel, Color{ 24, 24, 24, 255 });
+                DrawRectangleLinesEx(panel, 1, Color{ 70, 70, 70, 255 });
+                DrawTextC("LOAD GAME", panel_x + 6, panel_top + 5, 12, GRAY);
+                DrawLine(panel_x + 2, panel_top + HDR_H,
+                         panel_x + panel_w - 2, panel_top + HDR_H, Color{ 50, 50, 50, 255 });
+
+                int rows_top    = panel_top + HDR_H;
+                int rows_h      = PANEL_H - HDR_H;
+                int visible_rows = rows_h / ROW_H;
+                int total       = (int)save_files.size();
+                int max_scroll  = std::max(0, total - visible_rows);
+                if (load_scroll > max_scroll) load_scroll = max_scroll;
+
+                if (CheckCollisionPointRec(mouse, panel))
+                    load_scroll = std::clamp(load_scroll - (int)GetMouseWheelMove(), 0, max_scroll);
+
+                BeginScissorMode(panel_x, rows_top, panel_w, rows_h);
+                if (total == 0) {
+                    DrawTextC("(no saves)", panel_x + 6, rows_top + 5, 11, Color{ 110, 110, 110, 255 });
+                }
+                for (int i = 0; i < visible_rows && load_scroll + i < total; i++) {
+                    int idx = load_scroll + i;
+                    const std::string& name = save_files[idx];
+                    int ry = rows_top + i * ROW_H;
+                    if (i % 2 == 0)
+                        DrawRectangle(panel_x + 1, ry, panel_w - 2, ROW_H - 1, Color{ 30, 30, 30, 255 });
+
+                    // Display name without .json suffix.
+                    std::string display = name;
+                    if (display.size() > 5 && display.compare(display.size() - 5, 5, ".json") == 0)
+                        display.resize(display.size() - 5);
+                    DrawTextC(display.c_str(), panel_x + 6, ry + (ROW_H - 11) / 2, 11, WHITE);
+
+                    // DELETE (rightmost), then LOAD button to its left.
+                    int del_w = 18, ld_w = 38, gap = 4;
+                    int del_bx = panel_x + panel_w - 4 - del_w;
+                    int ld_bx  = del_bx - gap - ld_w;
+                    Rectangle del_btn = { (float)del_bx, (float)(ry + 2), (float)del_w, (float)(ROW_H - 4) };
+                    Rectangle ld_btn  = { (float)ld_bx,  (float)(ry + 2), (float)ld_w,  (float)(ROW_H - 4) };
+
+                    bool ld_h  = CheckCollisionPointRec(mouse, ld_btn);
+                    DrawRectangleRec(ld_btn, ld_h ? Color{ 60, 120, 80, 255 } : Color{ 30, 80, 50, 255 });
+                    int tw = MeasureTextC("LOAD", 11);
+                    DrawTextC("LOAD", ld_bx + ld_w / 2 - tw / 2, ry + (ROW_H - 11) / 2, 11, WHITE);
+
+                    bool del_h = CheckCollisionPointRec(mouse, del_btn);
+                    DrawRectangleRec(del_btn, del_h ? Color{ 180, 60, 60, 255 } : Color{ 100, 35, 35, 255 });
+                    int xw = MeasureTextC("X", 11);
+                    DrawTextC("X", del_bx + del_w / 2 - xw / 2, ry + (ROW_H - 11) / 2, 11, WHITE);
+
+                    if (ld_h && clicked)  { do_load(name);   break; }
+                    if (del_h && clicked) { do_delete(name); break; }
+                }
+                EndScissorMode();
+
+                // Esc closes; clicks inside the panel are consumed so they
+                // don't fall through and re-toggle the sidebar.
+                if (IsKeyPressed(KEY_ESCAPE)) load_open = false;
+                if (clicked && CheckCollisionPointRec(mouse, panel)) clicked = false;
+            }
+        }
+
         // --- Regenerate button ---
         if (!replay_mode) {
             Rectangle regen_btn = { (float)SB + 4, (float)CONTENT_H - 72, (float)SIDEBAR - 8, 28 };
-            bool hovered = CheckCollisionPointRec(mouse, regen_btn);
+            bool hovered = CheckCollisionPointRec(mouse, regen_btn) && !save_input_active;
             DrawRectangleRec(regen_btn, hovered ? Color{ 30, 130, 80, 255 } : Color{ 20, 80, 50, 255 });
             int tw = MeasureTextC("REGEN MAP", 14);
             DrawTextC("REGEN MAP", SB + SIDEBAR / 2 - tw / 2, CONTENT_H - 64, 14, WHITE);
@@ -2425,7 +2733,7 @@ int main(int argc, char** argv) {
         // --- Reset button (bottom of sidebar) ---
         {
             Rectangle reset_btn = { (float)SB + 4, (float)CONTENT_H - 36, (float)SIDEBAR - 8, 28 };
-            bool hovered = CheckCollisionPointRec(mouse, reset_btn);
+            bool hovered = CheckCollisionPointRec(mouse, reset_btn) && !save_input_active;
             DrawRectangleRec(reset_btn, hovered ? Color{ 140, 50, 50, 255 } : Color{ 90, 30, 30, 255 });
             DrawTextC("RESET", SB + SIDEBAR / 2 - 24, CONTENT_H - 30, 18, WHITE);
             if (hovered && clicked)
@@ -2444,9 +2752,8 @@ int main(int argc, char** argv) {
             s.legal_actions(actions, action_count);
             sidebar_scroll = 0;
             selected_tile  = -1;
-            action_log.clear();
-            action_log_debug.clear();
-            log_scroll = 0;
+            Logger::print("Regenerated map.");
+            log_turn_header(s.get_turn(), s.current_player());
         } else if (reset) {
             clear_visuals();
             if (replay_mode) {
@@ -2454,8 +2761,8 @@ int main(int argc, char** argv) {
                 s = replay_states[0];
             } else {
                 s = initial;
-                action_log.clear();
-                action_log_debug.clear();
+                Logger::print("Reset game.");
+                log_turn_header(s.get_turn(), s.current_player());
             }
             reset_facing();
             init_colourers();
@@ -2465,8 +2772,9 @@ int main(int argc, char** argv) {
             log_scroll = 0;
         }
         if (applied >= 0 && !replay_mode) {
-            action_log.push_back(format_action_str(actions[applied], s.current_player(), s.get_turn(), s.map_size()));
-            action_log_debug.push_back(false);
+            Logger::print(player_log_color(s.current_player()), "%s",
+                          format_action_str(actions[applied], s.current_player(),
+                                            s.get_turn(), s.map_size()).c_str());
 
             // Wipe any leftover visual-only state before the new action.
             clear_visuals();
@@ -2505,6 +2813,8 @@ int main(int argc, char** argv) {
                 start_move_anim(pre_state, actions[applied]);
             } else if (actions[applied].type == ActionType::Attack) {
                 start_attack_anim(pre_state, s, actions[applied]);
+            } else if (actions[applied].type == ActionType::EndTurn) {
+                log_turn_header(s.get_turn(), s.current_player());
             }
             refresh_borders();
             s.legal_actions(actions, action_count);
@@ -2513,17 +2823,19 @@ int main(int argc, char** argv) {
 
         // Sync log to current replay step
         if (replay_mode) {
-            action_log.assign(replay_log.begin(), replay_log.begin() + std::min(replay_step, (int)replay_log.size()));
-            action_log_debug.assign(action_log.size(), false);
+            int n = std::min(replay_step, (int)replay_log.size());
+            action_log.assign(replay_log.begin(), replay_log.begin() + n);
+            action_log_color.assign(replay_log_color.begin(), replay_log_color.begin() + n);
         }
 
-        // Pull any new Logger::print entries into the log panel as grey rows.
+        // Pull any new Logger::print entries into the log panel with their
+        // recorded colour (live action rows go through Logger::print too).
         while (last_logger_count < Logger::count) {
             int back_idx = Logger::count - 1 - last_logger_count;  // 0 = newest
             const char* msg = Logger::get(back_idx);
             if (msg) {
                 action_log.emplace_back(msg);
-                action_log_debug.push_back(true);
+                action_log_color.push_back(Logger::get_color(back_idx));
             }
             last_logger_count++;
         }
@@ -2572,30 +2884,34 @@ int main(int argc, char** argv) {
 
         // --- Action log panel ---
         {
-            constexpr int ROW_H   = 17;
-            constexpr int LOG_PAD = 6;
+            constexpr int ROW_H     = 17;
+            constexpr int LOG_PAD   = 6;
+            constexpr int CLEAR_H   = 24;
+            constexpr int CLEAR_PAD = 4;
             int lx = TECH_W + MAP_PX + SIDEBAR;
             DrawRectangle(lx, 0, LOG_W, CONTENT_H, { 18, 18, 18, 255 });
             DrawLine(lx, 0, lx, CONTENT_H, PANEL_LINE);
-            DrawTextC("ACTION LOG", lx + 8, 8, 14, GRAY);
+            DrawTextC("LOG", lx + 8, 8, 14, GRAY);
             DrawLine(lx + 4, 28, lx + LOG_W - 4, 28, { 50, 50, 50, 255 });
 
-            int visible_rows = (CONTENT_H - 28 - LOG_PAD) / ROW_H;
+            int log_bottom = CONTENT_H - CLEAR_H - CLEAR_PAD * 2;
+            int rows_h     = log_bottom - 28 - LOG_PAD;
+            int visible_rows = rows_h / ROW_H;
             int total_entries = (int)action_log.size();
 
             // Auto-scroll to bottom unless user has scrolled up
             int max_scroll = std::max(0, total_entries - visible_rows);
             if (log_scroll > max_scroll) log_scroll = max_scroll;
 
-            // Mouse wheel scroll when over panel
-            Rectangle panel_rect = { (float)lx, 28, (float)LOG_W, (float)(CONTENT_H - 28) };
-            if (CheckCollisionPointRec(mouse, panel_rect)) {
+            // Mouse wheel scroll when over panel (rows area only)
+            Rectangle rows_rect = { (float)lx, 28, (float)LOG_W, (float)(log_bottom - 28) };
+            if (CheckCollisionPointRec(mouse, rows_rect)) {
                 log_scroll -= (int)GetMouseWheelMove();
                 if (log_scroll < 0) log_scroll = 0;
                 if (log_scroll > max_scroll) log_scroll = max_scroll;
             }
 
-            BeginScissorMode(lx, 28 + LOG_PAD, LOG_W, CONTENT_H - 28 - LOG_PAD);
+            BeginScissorMode(lx, 28 + LOG_PAD, LOG_W, rows_h);
             for (int i = 0; i < visible_rows; i++) {
                 int entry_idx = log_scroll + i;
                 if (entry_idx >= total_entries) break;
@@ -2603,20 +2919,44 @@ int main(int argc, char** argv) {
                 int ey = 28 + LOG_PAD + i * ROW_H;
                 if (i % 2 == 0)
                     DrawRectangle(lx + 2, ey, LOG_W - 4, ROW_H - 1, { 25, 25, 25, 255 });
-                bool is_debug = (entry_idx < (int)action_log_debug.size())
-                              && action_log_debug[entry_idx];
-                Color tc = is_debug
-                         ? Color{ 160, 160, 160, 255 }
-                         : ((entry.size() > 1 && entry[1] == '0') ? COL_P0 : COL_P1);
-                DrawTextC(entry.c_str(), lx + 6, ey + 2, 11, tc);
+                LogColor lc = (entry_idx < (int)action_log_color.size())
+                            ? action_log_color[entry_idx]
+                            : LOG_COLOR_GREY;
+                DrawTextC(entry.c_str(), lx + 6, ey + 2, 11, from_log_color(lc));
             }
             EndScissorMode();
 
             // Scrollbar
             if (total_entries > visible_rows) {
-                float bar_h = (float)(CONTENT_H - 28) * visible_rows / total_entries;
-                float bar_y = 28 + (float)(CONTENT_H - 28) * log_scroll / total_entries;
+                float bar_h = (float)(log_bottom - 28) * visible_rows / total_entries;
+                float bar_y = 28 + (float)(log_bottom - 28) * log_scroll / total_entries;
                 DrawRectangle(lx + LOG_W - 4, (int)bar_y, 3, (int)bar_h, { 90, 90, 90, 255 });
+            }
+
+            // CLEAR button at the bottom of the panel. Disabled in replay mode
+            // (replay_log overwrites action_log every frame, so clearing it
+            // would just snap back).
+            DrawLine(lx + 4, log_bottom, lx + LOG_W - 4, log_bottom, { 50, 50, 50, 255 });
+            Rectangle clr_btn = { (float)(lx + CLEAR_PAD),
+                                  (float)(log_bottom + CLEAR_PAD),
+                                  (float)(LOG_W - CLEAR_PAD * 2),
+                                  (float)CLEAR_H };
+            bool clr_hovered = !replay_mode && CheckCollisionPointRec(mouse, clr_btn);
+            Color clr_bg = replay_mode  ? Color{ 30, 30, 30, 255 }
+                         : clr_hovered  ? Color{ 70, 70, 70, 255 }
+                                        : Color{ 45, 45, 45, 255 };
+            DrawRectangleRec(clr_btn, clr_bg);
+            int cw = MeasureTextC("CLEAR", 12);
+            Color clr_fg = replay_mode ? Color{ 110, 110, 110, 255 }
+                                       : Color{ 200, 200, 200, 255 };
+            DrawTextC("CLEAR", lx + LOG_W / 2 - cw / 2, log_bottom + CLEAR_PAD + 6, 12, clr_fg);
+            if (clr_hovered && clicked) {
+                action_log.clear();
+                action_log_color.clear();
+                // Leave Logger's circular buffer intact (preserves debug
+                // history) but skip past it so old entries don't refill.
+                last_logger_count = Logger::count;
+                log_scroll = 0;
             }
         }
 

@@ -99,7 +99,7 @@ void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[], int out_p
             int nx = x + MOVE_DX[d], ny = y + MOVE_DY[d];
             if (!in_bounds(nx, ny, msz)) continue;
             int ntile = to_index(nx, ny, msz);
-            if (!s.is_explored(p, ntile)) continue;  // can't step into fog
+            if (!s.is_visible(p, ntile)) continue;  // can't step into fog
             const Tile& nt = s.tile_at(ntile);
 
             if (!tile_passable(nt, climbing)) continue;
@@ -210,21 +210,7 @@ void reveal_around(GameState& s, int player, int tile_index, int radius) {
     for (int dy = -radius; dy <= radius; dy++)
         for (int dx = -radius; dx <= radius; dx++)
             if (in_bounds(x + dx, y + dy, msz))
-                s.set_explored(player, to_index(x + dx, y + dy, msz));
-}
-
-void rebuild_visibility(GameState& s, int player) {
-    const int mtsz = s.map_tiles();
-    s.clear_visible(player);
-    for (int i = 0; i < mtsz; i++) {
-        const Tile& t = s.tile_at(i);
-        if (t.has_unit() && s.get_unit(t.unit_id()).owner() == player) {
-            int r = (t.terrain() == TerrainType::Mountain) ? 2 : 1;
-            reveal_around(s, player, i, r);
-        }
-        if (t.has_city() && s.get_city(t.city_id()).owner() == player)
-            reveal_around(s, player, i, 1);
-    }
+                s.set_visible(player, to_index(x + dx, y + dy, msz));
 }
 
 // --------------------------------------------------------- public interface --
@@ -241,12 +227,12 @@ int GameState::winner() const {
 bool GameState::is_terminal() const { return winner() != NO_WINNER; }
 int  GameState::current_player() const { return cur_player; }
 
-void GameState::set_explored(int player, int tile) {
+void GameState::set_visible(int player, int tile) {
     // Always re-mark visible (rebuild_visibility wipes it then expects each
     // reveal_around call to restore it). Only run the corner bonus on the
     // first-ever reveal.
-    bool was_explored = players[player].is_explored(tile);
-    players[player].set_explored(tile);  // sets both explored and visible bits
+    bool was_explored = players[player].is_visible(tile);
+    players[player].set_visible(tile);  // sets both explored and visible bits
     if (was_explored) return;
 
     if (!is_lighthouse(tile, _map_size)) return;
@@ -256,6 +242,22 @@ void GameState::set_explored(int player, int tile) {
     // the pointer is stale and would feed population to the enemy.
     if (cities[cap].owner() != player) return;
     cities[cap].add_population(1);
+}
+
+void GameState::move_unit(int unit_id, int dest_tile) {
+    Unit& u = units[unit_id];
+    int src = u.tile_index();
+    if (src == dest_tile) return;
+    int radius = (map[dest_tile].terrain() == TerrainType::Mountain) ? 2 : 1;
+    reveal_around(*this, u.owner(), dest_tile, radius);
+    // Ally pass-through: paths from reachable_tiles can route through friendly
+    // tiles as transit nodes. Reveal as the unit "passes over" them but don't
+    // physically place — the unit advances on the next call.
+    if (map[dest_tile].has_unit() && units[map[dest_tile].unit_id()].owner() == u.owner())
+        return;
+    map[src].remove_unit();
+    map[dest_tile].place_unit(unit_id);
+    u.set_tile(dest_tile);
 }
 
 int GameState::spawn_unit(UnitType type, int owner, int tile_index, int city_id) {
@@ -396,7 +398,7 @@ int dest_clear_count(const GameState& s, int player, int dest, int sz) {
             int fx = dx + xx, fy = dy + yy;
             if (!in_bounds(fx, fy, sz)) continue;
             int idx = to_index(fx, fy, sz);
-            if (s.is_explored(player, idx)) continue;
+            if (s.is_visible(player, idx)) continue;
             clear++;
         }
     return clear > cfg::explorer::FOG_REVEAL_CAP ? cfg::explorer::FOG_REVEAL_CAP : clear;
@@ -418,7 +420,7 @@ inline void mark_lighthouse_directions(const GameState& s, int player, int sz,
         to_index(sz - 1, sz - 1, sz),
     };
     for (int c : corners) {
-        if (s.is_explored(player, c)) continue;
+        if (s.is_visible(player, c)) continue;
         if (dist[c] < 1 || dist[c] > cfg::explorer::SCAN_RADIUS) continue;
         int fs = first_step[c];
         if (fs < 0) continue;
@@ -483,7 +485,7 @@ int choose_explorer_step(const GameState& s, int player, int cur,
     int min_d = INT_MAX;
     for (int i = 0; i < mtsz; i++) {
         if (dist[i] < 1) continue;
-        if (s.is_explored(player, i)) continue;
+        if (s.is_visible(player, i)) continue;
         if (dist[i] < min_d) min_d = dist[i];
     }
 
@@ -527,7 +529,7 @@ int choose_explorer_step(const GameState& s, int player, int cur,
     // ---- Steps 3 + 4: score each first-step direction by its best fog tile ----
     for (int i = 0; i < mtsz; i++) {
         if (dist[i] != min_d) continue;
-        if (s.is_explored(player, i)) continue;
+        if (s.is_visible(player, i)) continue;
         int fs = first_step[i];
         if (fs < 0) continue;
         int idx = neighbour_dir[fs];

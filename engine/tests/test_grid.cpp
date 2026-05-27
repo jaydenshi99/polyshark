@@ -3,27 +3,30 @@
 #include "grid.h"
 
 static void test_to_index() {
-    assert(to_index(0, 0) == 0);
-    assert(to_index(10, 0) == 10);
-    assert(to_index(0, 1) == 11);
-    assert(to_index(10, 10) == 120);
+    constexpr int N = MAP_SIZE;
+    assert(to_index(0, 0)         == 0);
+    assert(to_index(N - 1, 0)     == N - 1);
+    assert(to_index(0, 1)         == N);
+    assert(to_index(N - 1, N - 1) == N * N - 1);
 }
 
 static void test_to_coords() {
+    constexpr int N = MAP_SIZE;
     int x, y;
-    to_coords(0, x, y);   assert(x == 0 && y == 0);
-    to_coords(10, x, y);  assert(x == 10 && y == 0);
-    to_coords(11, x, y);  assert(x == 0 && y == 1);
-    to_coords(120, x, y); assert(x == 10 && y == 10);
+    to_coords(0,           x, y); assert(x == 0     && y == 0);
+    to_coords(N - 1,       x, y); assert(x == N - 1 && y == 0);
+    to_coords(N,           x, y); assert(x == 0     && y == 1);
+    to_coords(N * N - 1,   x, y); assert(x == N - 1 && y == N - 1);
 }
 
 static void test_in_bounds() {
+    constexpr int N = MAP_SIZE;
     assert(in_bounds(0, 0));
-    assert(in_bounds(10, 10));
+    assert(in_bounds(N - 1, N - 1));
     assert(!in_bounds(-1, 0));
     assert(!in_bounds(0, -1));
-    assert(!in_bounds(11, 0));
-    assert(!in_bounds(0, 11));
+    assert(!in_bounds(N, 0));
+    assert(!in_bounds(0, N));
 }
 
 static void test_distance() {

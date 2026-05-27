@@ -67,9 +67,7 @@ void GameState::push_unit_from(int unit_id, int spawn_tile, int spawning_player)
         const Tile& nt = map[n_idx];
         if (nt.has_unit()) continue;
         if (!tile_passable(nt, climbing)) continue;
-        map[spawn_tile].remove_unit();
-        map[n_idx].place_unit(unit_id);
-        u.set_tile(n_idx);
+        move_unit(unit_id, n_idx);
         return;
     }
 

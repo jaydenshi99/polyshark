@@ -15,8 +15,12 @@ add_library(engine
     src/game_state/apply_action.cpp
     src/game_state/damage_calculator.cpp
     src/game_state/forced_spawn.cpp
+    src/game_state/state_serialiser.cpp
     src/mapgen.cpp
 )
+
+# game_state.h includes <nlohmann/json.hpp>, so it must propagate to consumers.
+target_link_libraries(engine PUBLIC nlohmann_json::nlohmann_json)
 
 add_executable(test_grid
     tests/test_grid.cpp
