@@ -63,8 +63,10 @@ class ValueNet(nn.Module):
         )
 
         self.head = nn.Sequential(
+            nn.Dropout(p=0.3),
             nn.Linear(1600 + g, 256),
             nn.ReLU(inplace=True),
+            nn.Dropout(p=0.3),
             nn.Linear(256, 1),
             nn.Tanh(),
         )

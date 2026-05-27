@@ -29,7 +29,10 @@
       "Bash(.venv/bin/python3 ai/tdl/train.py --gens 1 --games 1 --sims 20 --epochs 1)",
       "Bash(.venv/bin/python3 ai/tdl/train.py --gens 1 --games 2 --sims 20 --epochs 1)",
       "Bash(.venv/bin/python3 ai/tdl/train.py --gens 1 --games 4 --sims 20 --epochs 1 --workers 4)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Bash(sysctl hw.memsize)",
+      "Bash(awk '{print $2/1024/1024/1024 \" GB\"}')",
+      "Bash(.venv/bin/python3 ai/tdl/train.py --gens 1 --games 2 --sims 20 --epochs 2 --workers 2)"
     ]
   }
 }
