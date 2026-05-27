@@ -13,11 +13,12 @@ nlohmann::json GameState::serialise(const GameState& s) {
     j["turn"]           = s.get_turn();
     j["current_player"] = s.current_player();
     j["map_size"]       = s.map_size();
-
+    int map_area = s.map_size() * s.map_size();
+    int total_visible_size = (map_area + 15) / 16;
     json players = json::array();
     for (int p = 0; p < MAX_PLAYERS; p++) {
         json visible = json::array();
-        for (int w = 0; w < FOG_WORDS; w++)
+        for (int w = 0; w < total_visible_size; w++)
             visible.push_back((uint32_t)s.players[p].visible[w]);
         players.push_back({
             { "stars",      s.get_stars(p)   },

@@ -37,17 +37,27 @@
   "map_size": 9,
   "players": [
     {
-      "stars": 5,
+      "stars": 11,
       "techs_mask": 1,
       "visible": [
-        65535, 65535, 65535, 65535, 65535, 1
+        63740,
+        34787,
+        7951,
+        0,
+        0,
+        0
       ]
     },
     {
-      "stars": 5,
+      "stars": 9,
       "techs_mask": 1,
       "visible": [
-        65535, 65535, 65535, 65535, 65535, 1
+        0,
+        49152,
+        40897,
+        32575,
+        61688,
+        0
       ]
     }
   ],
@@ -67,7 +77,8 @@
     {
       "i": 3,
       "resource": 1,
-      "terrain": 1
+      "terrain": 1,
+      "unit_id": 0
     },
     {
       "i": 4,
@@ -168,8 +179,7 @@
       "border_city_id": 0,
       "city_id": 0,
       "i": 24,
-      "terrain": 1,
-      "unit_id": 0
+      "terrain": 1
     },
     {
       "border_city_id": 0,
@@ -279,7 +289,8 @@
     },
     {
       "i": 48,
-      "terrain": 2
+      "terrain": 2,
+      "unit_id": 1
     },
     {
       "i": 49,
@@ -339,8 +350,7 @@
       "border_city_id": 1,
       "city_id": 1,
       "i": 60,
-      "terrain": 1,
-      "unit_id": 1
+      "terrain": 1
     },
     {
       "border_city_id": 1,
@@ -437,7 +447,7 @@
       "terrain": 2
     }
   ],
-  "turn": 0,
+  "turn": 3,
   "units": [
     {
       "city_id": 0,
@@ -445,12 +455,12 @@
       "hp": 10,
       "id": 0,
       "kills": 0,
-      "last_dir": -1,
+      "last_dir": 7,
       "max_hp": 10,
-      "mp": 1,
+      "mp": 0,
       "owner": 0,
       "promotion_ready": false,
-      "tile": 24,
+      "tile": 3,
       "type": 1
     },
     {
@@ -459,12 +469,12 @@
       "hp": 10,
       "id": 1,
       "kills": 0,
-      "last_dir": -1,
+      "last_dir": 5,
       "max_hp": 10,
-      "mp": 1,
+      "mp": 0,
       "owner": 1,
       "promotion_ready": false,
-      "tile": 60,
+      "tile": 48,
       "type": 1
     }
   ]
