@@ -39,7 +39,9 @@ PYBIND11_MODULE(polyshark, m) {
         .value("No_Unit",  UnitType::None)
         .value("Warrior",  UnitType::Warrior)
         .value("Archer",   UnitType::Archer)
-        .value("Rider",    UnitType::Rider);
+        .value("Rider",    UnitType::Rider)
+        .value("Defender", UnitType::Defender)
+        .value("Giant",    UnitType::Giant);
 
     py::enum_<BuildingType>(m, "BuildingType")
         .value("No_Building", BuildingType::None)
@@ -95,7 +97,10 @@ PYBIND11_MODULE(polyshark, m) {
         .def_property_readonly("has_walls",       &City::has_walls)
         .def_property_readonly("has_workshop",    &City::has_workshop)
         .def_property_readonly("pending_upgrade", &City::has_pending_upgrade)
-        .def_property_readonly("stars_per_turn",  &City::stars_per_turn);
+        .def_property_readonly("capture_ready",  &City::capture_ready)
+        .def_property_readonly("units_owned",    &City::units_owned)
+        .def_property_readonly("unit_capacity",  &City::unit_capacity)
+        .def_property_readonly("stars_per_turn", &City::stars_per_turn);
 
     // --- ActionType / Action ---
 

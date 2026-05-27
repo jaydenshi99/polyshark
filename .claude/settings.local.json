@@ -12,7 +12,10 @@
       "Bash(python3 ai/random_bot.py)",
       "Bash(xargs ls -la)",
       "Bash(cmake --build build --target polyshark)",
-      "Bash(cmake --build build --target polyshark visualizer)"
+      "Bash(cmake --build build --target polyshark visualizer)",
+      "Bash(python3 ai/tdl/selfplay.py --games 2 --sims 50)",
+      "Bash(.venv/bin/python3 -c ' *)",
+      "Bash(.venv/bin/python3 ai/tdl/selfplay.py --games 1 --sims 30)"
     ]
   }
 }
