@@ -381,7 +381,7 @@ void MapGen::init_players(GameState& s, int cap0, int cap1) {
                 int tx = cx + dx, ty = cy + dy;
                 if (!in_bounds(tx, ty, sz)) continue;
                 if (is_corner(tx, ty)) continue;  // lighthouses stay fogged
-                s.set_explored(p, to_index(tx, ty, sz));
+                s.set_visible(p, to_index(tx, ty, sz));
             }
     }
 }

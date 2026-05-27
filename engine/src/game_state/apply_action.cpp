@@ -12,7 +12,6 @@ extern const int MOVE_DX[8];
 extern const int MOVE_DY[8];
 bool tile_passable(const Tile& t, bool has_climbing);
 void reveal_around(GameState& s, int player, int tile_index, int radius);
-void rebuild_visibility(GameState& s, int player);
 void reachable_tiles(const GameState& s, int unit_id, int8_t out_mp[], int out_parent[]);
 bool encode_path_bits(const int parent[], int src, int dst, int msz,
                       uint32_t* out_bits, uint8_t* out_steps);
@@ -79,8 +78,6 @@ void GameState::apply_end_turn() {
         bool attacker_here = t.has_unit() && s.units[t.unit_id()].owner() == next;
         t.set_capture_ready(attacker_here);
     }
-
-    rebuild_visibility(s, next);
 }
 
 void GameState::apply_research_tech(Action a) {
@@ -203,7 +200,6 @@ void GameState::apply_capture_city(Action a) {
     }
 
     reveal_around(s, p, a.to, 1);
-    rebuild_visibility(s, p);
 }
 
 void GameState::apply_move(Action a) {
@@ -212,12 +208,11 @@ void GameState::apply_move(Action a) {
     int dst = a.to;
     int uid = s.map[src].unit_id();
     Unit& u = s.units[uid];
-    int p   = u.owner();
     int msz = s.map_size();
 
-    // Reveal fog along the path. If the action carries an encoded path, use it;
-    // otherwise (e.g. legacy replay action with path_steps == 0) recompute via BFS
-    // on the current state — deterministic, same result as the original emit.
+    // If the action carries an encoded path, use it; otherwise (e.g. legacy
+    // replay action with path_steps == 0) recompute via BFS on the current
+    // state — deterministic, same result as the original emit.
     uint32_t pbits  = a.path_bits;
     uint8_t  psteps = a.path_steps;
     if (psteps == 0 && src != dst) {
@@ -229,17 +224,14 @@ void GameState::apply_move(Action a) {
     int path_tiles[MAX_MOVE_PATH_STEPS + 1];
     int path_count = 0;
     decode_path_bits(src, pbits, psteps, msz, path_tiles, &path_count);
-    for (int i = 0; i < path_count; i++) {
-        // Standard vision radius (mountain bonus is handled by rebuild_visibility
-        // when the unit settles at its destination).
-        reveal_around(s, p, path_tiles[i], 1);
-    }
 
-    s.map[src].remove_unit();
-    s.map[dst].place_unit(uid);
-    u.set_tile(dst);
+    // Walk the path one tile at a time. Each hop reveals around its landing,
+    for (int i = 1; i < path_count; i++) {
+        reveal_around(s, u.owner(), path_tiles[i], 1);
+    }
+    s.move_unit(uid, path_tiles[path_count-1]);
+
     // Record the final-hop direction (last 3-bit dir in path_bits) for
-    // forced-spawn pushes. psteps > 0 here since src != dst.
     if (psteps > 0) {
         int last_hop = (int)((pbits >> (3 * (psteps - 1))) & 0x7u);
         u.set_last_dir((int8_t)last_hop);
@@ -249,7 +241,6 @@ void GameState::apply_move(Action a) {
     // 1 tile) can't initiate another Move this turn. Note: Escape (Rider's post-attack
     // ability) still resets move points via reset_turn — that's intentional.
     u.spend_movement(u.move_points());
-    rebuild_visibility(s, p);
 }
 
 void GameState::apply_attack(Action a) {
@@ -295,9 +286,7 @@ void GameState::apply_attack(Action a) {
             bool climbing  = s.has_tech(attacker.owner(), TechType::Climbing);
             bool can_enter = tile_passable(s.map[def_tile], climbing);
             if (melee_attack && can_enter) {
-                s.map[attacker.tile_index()].remove_unit();
-                s.map[def_tile].place_unit(atk_uid);
-                attacker.set_tile(def_tile);
+                s.move_unit(atk_uid, def_tile);
                 // Kill-advance is effectively a move — record the direction.
                 if (attack_dir >= 0) attacker.set_last_dir((int8_t)attack_dir);
             }
@@ -320,8 +309,6 @@ void GameState::apply_attack(Action a) {
             attacker.spend_movement(attacker.move_points());
         }
     }
-
-    rebuild_visibility(s, s.cur_player);
 }
 
 void GameState::apply_recover(Action a) {

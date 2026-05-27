@@ -149,7 +149,7 @@ void GameState::legal_actions(Action out[], int& out_count) const {
                     if (!dt.has_unit()) continue;
                     const Unit& target = s.get_unit(dt.unit_id());
                     if (target.owner() == p) continue;
-                    if (!s.is_explored(p, j)) continue;  // units only hidden by fog
+                    if (!s.is_visible(p, j)) continue;  // units only hidden by fog
                     int dist = chebyshev_distance(i, j, s.map_size());
                     if (dist < 1 || dist > udef.range) continue;
                     out[out_count++] = { ActionType::Attack, i, j, 0, true };
