@@ -9,7 +9,7 @@ All states in a single turn share one target (the V_mcts of the next turn start)
 
 Usage:
   python selfplay.py                # 5 games, 200 sims
-  python selfplay.py --games 20 --sims 100
+  python selfplay.py --games 20 --sims 400
 """
 
 import sys, os, random, math, argparse, time
@@ -135,7 +135,7 @@ def _save_replay(history, seed, sz, idx):
 # Main loop
 # ---------------------------------------------------------------------------
 
-def run_selfplay(n_games=5, n_sims=4000, eval_fns=None):
+def run_selfplay(n_games=5, n_sims=200, eval_fns=None):
     """
     eval_fns : single callable or [eval_p0, eval_p1].
                Defaults to the Gen 0 heuristic for both players.
@@ -169,6 +169,6 @@ def run_selfplay(n_games=5, n_sims=4000, eval_fns=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--games', type=int, default=5)
-    parser.add_argument('--sims',  type=int, default=4000)
+    parser.add_argument('--sims',  type=int, default=200)
     args = parser.parse_args()
     run_selfplay(n_games=args.games, n_sims=args.sims)

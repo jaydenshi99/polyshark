@@ -57,7 +57,8 @@ PYBIND11_MODULE(polyshark, m) {
         .value("Riding",       TechType::Riding)
         .value("Climbing",     TechType::Climbing)
         .value("Archery",      TechType::Archery)
-        .value("Mining",       TechType::Mining);
+        .value("Mining",       TechType::Mining)
+        .value("Strategy",     TechType::Strategy);
 
     // --- Tile ---
 
@@ -147,6 +148,7 @@ PYBIND11_MODULE(polyshark, m) {
         .def("get_unit",       [](const GameState& s, int i) { return s.get_unit(i); })
         .def("get_city",       [](const GameState& s, int i) { return s.get_city(i); })
         .def("is_visible",     &GameState::is_visible)
+        .def("is_explored",    &GameState::is_visible)  // alias — explored == visible in Polytopia
         .def("get_stars",      &GameState::get_stars)
         .def("get_techs",      &GameState::get_techs)
         .def("techs_mask",     &GameState::techs_mask);
