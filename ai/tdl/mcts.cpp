@@ -34,8 +34,9 @@ int MCTSEngine::_uct_pick(const MCTSNode* node) const {
     for (const auto& e : node->edges) N += e.n;
     float sqrt_N = std::sqrt((float)std::max(N, 1));
 
-    float best  = std::numeric_limits<float>::lowest();
+    float best   = std::numeric_limits<float>::lowest();
     int   best_i = 0;
+    int   ties   = 0;
     for (int i = 0; i < (int)node->edges.size(); i++) {
         const auto& e = node->edges[i];
         float q     = (e.n > 0) ? (e.w / (float)e.n) : 0.0f;
@@ -43,6 +44,10 @@ int MCTSEngine::_uct_pick(const MCTSNode* node) const {
         if (score > best) {
             best   = score;
             best_i = i;
+            ties   = 1;
+        } else if (score == best) {
+            ++ties;
+            if (std::rand() % ties == 0) best_i = i;
         }
     }
     return best_i;
@@ -145,10 +150,13 @@ std::pair<Action, float> MCTSEngine::search(const GameState& root_state,
 
     int best_i = 0;
     if (temperature <= 0.0f) {
-        // Argmax by visit count.
+        // Argmax by visit count, random tiebreak.
         int best_n = -1;
+        int ties   = 0;
         for (int i = 0; i < (int)root->edges.size(); i++) {
-            if (root->edges[i].n > best_n) { best_n = root->edges[i].n; best_i = i; }
+            int n = root->edges[i].n;
+            if (n > best_n) { best_n = n; best_i = i; ties = 1; }
+            else if (n == best_n) { ++ties; if (std::rand() % ties == 0) best_i = i; }
         }
     } else {
         // Sample proportional to N^(1/T).

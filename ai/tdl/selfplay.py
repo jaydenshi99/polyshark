@@ -27,7 +27,7 @@ BATCH_SIZE   = 32
 VIRTUAL_LOSS = 1.0
 TURN_LIMIT   = 15
 C_HEURISTIC  = 15.0
-TEMPERATURE  = 0.2   # self-play exploration; 0 = deterministic (use for eval)
+TEMPERATURE  = 0.0   # self-play exploration; 0 = deterministic (use for eval)
 
 
 # ---------------------------------------------------------------------------
