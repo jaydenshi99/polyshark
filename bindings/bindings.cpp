@@ -39,7 +39,9 @@ PYBIND11_MODULE(polyshark, m) {
         .value("No_Unit",  UnitType::None)
         .value("Warrior",  UnitType::Warrior)
         .value("Archer",   UnitType::Archer)
-        .value("Rider",    UnitType::Rider);
+        .value("Rider",    UnitType::Rider)
+        .value("Defender", UnitType::Defender)
+        .value("Giant",    UnitType::Giant);
 
     py::enum_<BuildingType>(m, "BuildingType")
         .value("No_Building", BuildingType::None)
@@ -55,7 +57,8 @@ PYBIND11_MODULE(polyshark, m) {
         .value("Riding",       TechType::Riding)
         .value("Climbing",     TechType::Climbing)
         .value("Archery",      TechType::Archery)
-        .value("Mining",       TechType::Mining);
+        .value("Mining",       TechType::Mining)
+        .value("Strategy",     TechType::Strategy);
 
     // --- Tile ---
 
@@ -95,7 +98,10 @@ PYBIND11_MODULE(polyshark, m) {
         .def_property_readonly("has_walls",       &City::has_walls)
         .def_property_readonly("has_workshop",    &City::has_workshop)
         .def_property_readonly("pending_upgrade", &City::has_pending_upgrade)
-        .def_property_readonly("stars_per_turn",  &City::stars_per_turn);
+        .def_property_readonly("capture_ready",  &City::capture_ready)
+        .def_property_readonly("units_owned",    &City::units_owned)
+        .def_property_readonly("unit_capacity",  &City::unit_capacity)
+        .def_property_readonly("stars_per_turn", &City::stars_per_turn);
 
     // --- ActionType / Action ---
 
@@ -142,6 +148,7 @@ PYBIND11_MODULE(polyshark, m) {
         .def("get_unit",       [](const GameState& s, int i) { return s.get_unit(i); })
         .def("get_city",       [](const GameState& s, int i) { return s.get_city(i); })
         .def("is_visible",     &GameState::is_visible)
+        .def("is_explored",    &GameState::is_visible)  // alias — explored == visible in Polytopia
         .def("get_stars",      &GameState::get_stars)
         .def("get_techs",      &GameState::get_techs)
         .def("techs_mask",     &GameState::techs_mask);
