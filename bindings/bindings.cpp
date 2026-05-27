@@ -159,24 +159,50 @@ PYBIND11_MODULE(polyshark, m) {
         return unit_def(static_cast<UnitType>(unit_type)).movement;
     });
 
-    // Gen-0 heuristic score for one player: 3*cities + sum(level) + 0.3*techs + 0.2*units.
-    // Exposed so eval_fn can avoid per-tile Python loops.
+    // Gen-0 heuristic score for one player.
+    // Components: cities, city levels, techs, units, village proximity.
     m.def("heuristic_score", [](const GameState& s, int player) -> float {
         int cities = 0, total_level = 0, units = 0;
+        int sz = s.map_size();
+
+        // Collect village positions and unit positions for proximity calc.
+        std::vector<int> village_rows, village_cols;
+        std::vector<std::pair<int,int>> my_units;
+
         for (int i = 0; i < s.map_tiles(); ++i) {
             const Tile& t = s.tile_at(i);
+            int row = i / sz, col = i % sz;
+
             if (t.has_city()) {
                 const City& c = s.get_city(t.city_id());
                 if (c.owner() == player) { ++cities; total_level += c.level(); }
             }
             if (t.has_unit()) {
                 const Unit& u = s.get_unit(t.unit_id());
-                if (u.owner() == player) ++units;
+                if (u.owner() == player) { ++units; my_units.push_back({row, col}); }
+            }
+            if (t.terrain() == TerrainType::Village && s.is_visible(player, i)) {
+                village_rows.push_back(row);
+                village_cols.push_back(col);
             }
         }
+
+        // Village proximity: sum over my units of 1/(1 + min_dist_to_village).
+        // Rewards moving units toward capturable villages.
+        float village_prox = 0.0f;
+        for (auto [ur, uc] : my_units) {
+            int min_dist = 999;
+            for (int v = 0; v < (int)village_rows.size(); ++v) {
+                int d = std::abs(ur - village_rows[v]) + std::abs(uc - village_cols[v]);
+                if (d < min_dist) min_dist = d;
+            }
+            if (min_dist < 999)
+                village_prox += 1.0f / (1.0f + min_dist);
+        }
+
         int mask = s.techs_mask(player);
         int tech_bits = __builtin_popcount(mask >> 1); // skip Origin bit
-        return 3.0f * cities + total_level + 0.3f * tech_bits + 0.2f * units;
+        return 3.0f * cities + total_level + 0.3f * tech_bits + 0.2f * units + 0.5f * village_prox;
     }, py::arg("state"), py::arg("player"));
 
     m.def("make_random_game", [](uint64_t seed, int sz) {

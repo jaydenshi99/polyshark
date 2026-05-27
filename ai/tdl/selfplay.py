@@ -25,7 +25,7 @@ MAP_SIZE     = 11
 C_UCT        = 1.5
 BATCH_SIZE   = 32
 VIRTUAL_LOSS = 1.0
-TURN_LIMIT   = 30
+TURN_LIMIT   = 15
 C_HEURISTIC  = 15.0
 TEMPERATURE  = 0.2   # self-play exploration; 0 = deterministic (use for eval)
 
