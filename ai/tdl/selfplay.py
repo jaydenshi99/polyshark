@@ -30,28 +30,11 @@ C_HEURISTIC  = 15.0
 # Gen 0 heuristic
 # ---------------------------------------------------------------------------
 
-def _score(state, player):
-    cities = total_level = units = 0
-    for i in range(state.map_tiles()):
-        t = state.tile_at(i)
-        if t.has_city:
-            c = state.get_city(t.city_id)
-            if c.owner == player:
-                cities += 1
-                total_level += c.level
-        if t.has_unit:
-            u = state.get_unit(t.unit_id)
-            if u.owner == player:
-                units += 1
-    tech_bits = bin(state.techs_mask(player) >> 1).count('1')  # skip Origin
-    return 3.0 * cities + total_level + 0.3 * tech_bits + 0.2 * units
-
-
 def eval_fn(states):
     out = []
     for s in states:
         p    = s.current_player()
-        diff = _score(s, p) - _score(s, 1 - p)
+        diff = polyshark.heuristic_score(s, p) - polyshark.heuristic_score(s, 1 - p)
         out.append(math.tanh(diff / C_HEURISTIC))
     return out
 

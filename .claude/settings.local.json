@@ -17,7 +17,8 @@
       "Bash(.venv/bin/python3 -c ' *)",
       "Bash(.venv/bin/python3 ai/tdl/selfplay.py --games 1 --sims 30)",
       "Bash(grep -v \"^commit\\\\|^Author\\\\|^Date\\\\|^Merge\\\\|^\\\\s*$\\\\|^    \")",
-      "Bash(python3 ai/tdl/selfplay.py --sims 200 --games 1)"
+      "Bash(python3 ai/tdl/selfplay.py --sims 200 --games 1)",
+      "Bash(python3 ai/tdl/selfplay.py --games 1 --sims 20)"
     ]
   }
 }

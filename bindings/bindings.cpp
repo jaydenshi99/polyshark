@@ -159,6 +159,26 @@ PYBIND11_MODULE(polyshark, m) {
         return unit_def(static_cast<UnitType>(unit_type)).movement;
     });
 
+    // Gen-0 heuristic score for one player: 3*cities + sum(level) + 0.3*techs + 0.2*units.
+    // Exposed so eval_fn can avoid per-tile Python loops.
+    m.def("heuristic_score", [](const GameState& s, int player) -> float {
+        int cities = 0, total_level = 0, units = 0;
+        for (int i = 0; i < s.map_tiles(); ++i) {
+            const Tile& t = s.tile_at(i);
+            if (t.has_city()) {
+                const City& c = s.get_city(t.city_id());
+                if (c.owner() == player) { ++cities; total_level += c.level(); }
+            }
+            if (t.has_unit()) {
+                const Unit& u = s.get_unit(t.unit_id());
+                if (u.owner() == player) ++units;
+            }
+        }
+        int mask = s.techs_mask(player);
+        int tech_bits = __builtin_popcount(mask >> 1); // skip Origin bit
+        return 3.0f * cities + total_level + 0.3f * tech_bits + 0.2f * units;
+    }, py::arg("state"), py::arg("player"));
+
     m.def("make_random_game", [](uint64_t seed, int sz) {
         MapGenParams p = MapGenParams::for_biome(BiomeType::Drylands, sz);
         p.seed = seed;
