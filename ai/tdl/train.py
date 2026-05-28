@@ -35,13 +35,13 @@ LOG_PATH           = os.path.join(CHECKPOINTS_DIR, 'training_log.csv')
 TRAIN_BUF_REPLAYS  = 400   # keep last ~10 gens of train games
 VAL_BUF_REPLAYS    = 80    # keep last ~20 gens of val games
 N_GENS             = 10
-N_GAMES            = 40
+N_GAMES            = 80
 N_SIMS             = 100
 N_WORKERS          = 1
 EPOCHS             = 2
 BATCH_SIZE         = 256
 LR                 = 1e-3
-WEIGHT_DECAY       = 1e-4
+WEIGHT_DECAY       = 5e-4
 LOADER_WORKERS     = 4     # DataLoader workers for re-simulation + encoding
 
 
@@ -168,7 +168,7 @@ def run_training(n_gens=N_GENS, n_games=N_GAMES, n_sims=N_SIMS,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--gens',    type=int, default=N_GENS)
-    parser.add_argument('--games',   type=int, default=N_GAMES)
+    parser.add_argument('--games',   type=int, default=N_GAMES)  # 80
     parser.add_argument('--sims',    type=int, default=N_SIMS)
     parser.add_argument('--workers', type=int, default=N_WORKERS)
     parser.add_argument('--epochs',  type=int, default=EPOCHS)

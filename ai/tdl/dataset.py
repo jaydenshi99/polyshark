@@ -14,6 +14,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+MAX_STATES_PER_GAME = 50  # cap per replay to reduce within-game label correlation
+
 _HERE = os.path.dirname(__file__)
 sys.path.insert(0, os.path.join(_HERE, '../../build/bindings'))
 
@@ -65,12 +67,14 @@ class ReplayDataset(Dataset):
     def __init__(self, replay_paths, augment=True):
         self.augment = augment
         self.replays = [load_replay(p) for p in replay_paths]
-        # Flat index: list of (replay_idx, state_idx_within_replay)
-        self._index = [
-            (ri, si)
-            for ri, r in enumerate(self.replays)
-            for si in range(len(r.actions))
-        ]
+        # Randomly subsample up to MAX_STATES_PER_GAME per replay to reduce
+        # within-game label correlation across batches.
+        self._index = []
+        for ri, r in enumerate(self.replays):
+            n = len(r.actions)
+            indices = random.sample(range(n), min(MAX_STATES_PER_GAME, n))
+            for si in indices:
+                self._index.append((ri, si))
 
     def __len__(self):
         return len(self._index)
