@@ -68,16 +68,6 @@ def make_nn_eval_fn(ckpt_path):
     return _fn
 
 
-def make_blended_eval_fn(ckpt_path, heuristic_weight):
-    """Blend NN and heuristic: (1-w)*NN + w*heuristic."""
-    nn_fn  = make_nn_eval_fn(ckpt_path)
-    nn_w   = 1.0 - heuristic_weight
-    def _fn(states):
-        nn_vals = nn_fn(states)
-        h_vals  = heuristic_eval_fn(states)
-        return [nn_w * n + heuristic_weight * h for n, h in zip(nn_vals, h_vals)]
-    return _fn
-
 
 # ---------------------------------------------------------------------------
 # Single game
@@ -153,11 +143,8 @@ def _worker_init():
     )
 
 def _worker_task(args):
-    seed, n_sims, ckpt_path, heuristic_weight, gen, game_idx = args
-    if ckpt_path:
-        fns = make_blended_eval_fn(ckpt_path, heuristic_weight) if heuristic_weight > 0 else make_nn_eval_fn(ckpt_path)
-    else:
-        fns = heuristic_eval_fn
+    seed, n_sims, ckpt_path, gen, game_idx = args
+    fns = make_nn_eval_fn(ckpt_path) if ckpt_path else heuristic_eval_fn
     pairs, history, sz, terminal, winner = run_game(_worker_engine, seed, n_sims, fns)
     replay = _save_replay(history, seed, sz, gen, game_idx)
     # Encode here — GameState objects can't be pickled across processes.
@@ -180,13 +167,12 @@ def _worker_task(args):
 # ---------------------------------------------------------------------------
 
 def run_selfplay(n_games=5, n_sims=200, eval_fns=None, gen=0,
-                 n_workers=1, ckpt_path=None, heuristic_weight=0.0):
+                 n_workers=1, ckpt_path=None):
     """
-    n_workers  : number of parallel worker processes (1 = sequential).
-    ckpt_path  : path to a ValueNet checkpoint for the leaf evaluator.
-                 None = use the Gen 0 heuristic.
-                 In parallel mode this is always used; eval_fns is ignored.
-    eval_fns   : callable or [p0_fn, p1_fn] — used in sequential mode only.
+    n_workers : number of parallel worker processes (1 = sequential).
+    ckpt_path : ValueNet checkpoint for MCTS leaf evaluation (action selection only).
+                None = use pure heuristic.
+    eval_fns  : callable or [p0_fn, p1_fn] — sequential mode only, ignored if ckpt_path set.
     """
     seeds = [random.randint(1, 2**32 - 1) for _ in range(n_games)]
     t0    = time.time()
@@ -199,7 +185,7 @@ def run_selfplay(n_games=5, n_sims=200, eval_fns=None, gen=0,
     tgt_all = np.empty((0,),              dtype=np.float32)
 
     if n_workers > 1:
-        task_args = [(seeds[i], n_sims, ckpt_path, heuristic_weight, gen, i) for i in range(n_games)]
+        task_args = [(seeds[i], n_sims, ckpt_path, gen, i) for i in range(n_games)]
         with mp.Pool(n_workers, initializer=_worker_init) as pool:
             for sp, gv, tgt, terminal, winner, seed, n_actions, replay in \
                     pool.imap_unordered(_worker_task, task_args):
@@ -213,10 +199,7 @@ def run_selfplay(n_games=5, n_sims=200, eval_fns=None, gen=0,
         engine = polyshark.MCTSEngine(
             c_uct=C_UCT, batch_size=BATCH_SIZE, virtual_loss=VIRTUAL_LOSS,
         )
-        if ckpt_path:
-            fns = make_blended_eval_fn(ckpt_path, heuristic_weight) if heuristic_weight > 0 else make_nn_eval_fn(ckpt_path)
-        else:
-            fns = eval_fns or heuristic_eval_fn
+        fns = make_nn_eval_fn(ckpt_path) if ckpt_path else (eval_fns or heuristic_eval_fn)
         for i in range(n_games):
             seed = seeds[i]
             gt   = time.time()

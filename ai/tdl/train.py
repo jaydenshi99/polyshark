@@ -35,8 +35,6 @@ LOG_PATH        = os.path.join(CHECKPOINTS_DIR, 'training_log.csv')
 BUFFER_MAX      = 50_000
 VAL_BUF_MAX     = 5_000
 VAL_FRACTION    = 0.1
-BLEND_GENS      = 10     # generations to decay heuristic weight from 1.0 → HEURISTIC_FLOOR
-HEURISTIC_FLOOR = 0.15   # permanent minimum heuristic blend
 N_GENS       = 10
 N_GAMES      = 20
 N_SIMS       = 100
@@ -145,13 +143,9 @@ def run_training(n_gens=N_GENS, n_games=N_GAMES, n_sims=N_SIMS,
         t_gen = time.time()
 
         # 1. Self-play + encode
-        h_weight = max(HEURISTIC_FLOOR, 1.0 - gen * (1.0 - HEURISTIC_FLOOR) / BLEND_GENS) \
-                   if prev_ckpt else 1.0
-        print(f'heuristic_weight: {h_weight:.2f}')
         t0 = time.time()
         new_sp, new_gv, new_tgt = run_selfplay(n_games=n_games, n_sims=n_sims, gen=gen,
-                                               n_workers=n_workers, ckpt_path=prev_ckpt,
-                                               heuristic_weight=h_weight)
+                                               n_workers=n_workers, ckpt_path=prev_ckpt)
         print(f'self-play: {len(new_tgt)} pairs  ({time.time()-t0:.1f}s)')
 
         # 2. Split new data: 10% → held-out val buffer, 90% → training buffer.
