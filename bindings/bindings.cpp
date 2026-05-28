@@ -125,6 +125,8 @@ PYBIND11_MODULE(polyshark, m) {
         .def_readonly("dst",        &Action::to)
         .def_readonly("param",      &Action::param)
         .def_readonly("affordable", &Action::affordable)
+        .def_readonly("path_bits",  &Action::path_bits)
+        .def_readonly("path_steps", &Action::path_steps)
         .def("__repr__", [](const Action& a) {
             return "<Action type=" + std::to_string((int)a.type)
                  + " src=" + std::to_string(a.from)
@@ -151,7 +153,20 @@ PYBIND11_MODULE(polyshark, m) {
         .def("is_explored",    &GameState::is_visible)  // alias — explored == visible in Polytopia
         .def("get_stars",      &GameState::get_stars)
         .def("get_techs",      &GameState::get_techs)
-        .def("techs_mask",     &GameState::techs_mask);
+        .def("techs_mask",     &GameState::techs_mask)
+        // Reconstruct and apply an action from raw replay fields (O(1), no legal_actions call).
+        .def("apply_action_raw", [](const GameState& s, int type, int from, int to,
+                                    int param, uint32_t path_bits, uint8_t path_steps) {
+            Action a;
+            a.type       = static_cast<ActionType>(type);
+            a.from       = from;
+            a.to         = to;
+            a.param      = param;
+            a.affordable = true;
+            a.path_bits  = path_bits;
+            a.path_steps = path_steps;
+            return s.apply_action(a);
+        });
 
     // Base movement per unit type, indexed by UnitType int value.
     // Exposed so the encoder can normalise move_points without hardcoding.

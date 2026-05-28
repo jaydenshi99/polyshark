@@ -49,7 +49,7 @@ static constexpr int MAP_OFF  = TECH_W;
 static constexpr int MAP_CANVAS = 674;
 static constexpr int MAP_PX     = MAP_CANVAS + PAD * 2 + LABEL;
 static constexpr int LOG_W      = 200;
-static constexpr int TECH_H     = 0;
+static constexpr int TECH_H     = 18;  // scrubber strip below main content
 static constexpr float TECH_PANEL_SIZE = 320.0f;  // square side of the expanded tech tree panel
 static constexpr float TECH_ICON_R     = 18.0f;   // radius of the collapsed bottom-left icon
 static constexpr int W          = TECH_W + MAP_PX + SIDEBAR + LOG_W;
@@ -1420,6 +1420,7 @@ int main(int argc, char** argv) {
     std::vector<Action>    replay_actions;  // one Action per applied step (paths populated for Move)
     std::vector<std::string> replay_log;        // one entry per action
     std::vector<LogColor>    replay_log_color;  // parallel colour per replay entry
+    std::vector<int>         replay_log_at_step; // how many log entries to show at each replay_step
     int replay_step = 0;
     // Previous frame's replay_step; single +1 advances animate, jumps don't.
     int last_replay_step = -1;
@@ -1459,6 +1460,13 @@ int main(int argc, char** argv) {
                 p.seed = seed;
                 rs = MapGen(p).generate().state;
                 push_replay_header(rs.get_turn(), rs.current_player());
+                // Skip optional outcome line (new format: "outcome <v_p0> <v_p1>").
+                {
+                    auto pos = f.tellg();
+                    std::string tok; f >> tok;
+                    if (tok == "outcome") { float v0, v1; f >> v0 >> v1; }
+                    else f.seekg(pos);
+                }
             } else {
                 rs = MapGen(MapGen::drylands_defaults()).generate().state;
                 push_replay_header(rs.get_turn(), rs.current_player());
@@ -1471,13 +1479,18 @@ int main(int argc, char** argv) {
                 replay_log_color.push_back(player_log_color(rs.current_player()));
                 replay_actions.push_back(act0);
                 replay_states.push_back(rs);
+                replay_log_at_step.push_back(1);  // state 0: show only turn header
                 replay_states.push_back(rs = rs.apply_action(act0));
                 if (act0.type == ActionType::EndTurn)
                     push_replay_header(rs.get_turn(), rs.current_player());
+                replay_log_at_step.push_back((int)replay_log.size());
             }
             replay_states.push_back(rs);
+            replay_log_at_step.push_back((int)replay_log.size());  // step 0
             int t, fr, to, pa;
             while (f >> t >> fr >> to >> pa) {
+                // New format appends path_bits path_steps — consume if present.
+                { auto pos = f.tellg(); int pb, ps; if (!(f >> pb >> ps)) f.seekg(pos); }
                 Action act = {(ActionType)t, fr, to, pa, true};
                 populate_move_path(act, rs);
                 replay_log.push_back(format_action_str(act, rs.current_player(), rs.get_turn(), rs.map_size()));
@@ -1486,6 +1499,7 @@ int main(int argc, char** argv) {
                 replay_states.push_back(rs = rs.apply_action(act));
                 if (act.type == ActionType::EndTurn)
                     push_replay_header(rs.get_turn(), rs.current_player());
+                replay_log_at_step.push_back((int)replay_log.size());
             }
             initial = s = replay_states[0];
             TILE_W = iso_grid_width() / s.map_size();
@@ -1864,7 +1878,7 @@ int main(int argc, char** argv) {
         // Scrubber — click or drag to jump to any replay step
         static bool scrubbing = false;
         constexpr int SCRUB_H = 18;
-        const int scrub_y = CONTENT_H - SCRUB_H;
+        const int scrub_y = CONTENT_H;  // in the TECH_H strip, below all content buttons
         if (replay_mode) {
             bool over_scrub = mouse.y >= scrub_y;
             if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && over_scrub) scrubbing = true;
@@ -2823,7 +2837,9 @@ int main(int argc, char** argv) {
 
         // Sync log to current replay step
         if (replay_mode) {
-            int n = std::min(replay_step, (int)replay_log.size());
+            int n = (replay_step < (int)replay_log_at_step.size())
+                    ? replay_log_at_step[replay_step]
+                    : (int)replay_log.size();
             action_log.assign(replay_log.begin(), replay_log.begin() + n);
             action_log_color.assign(replay_log_color.begin(), replay_log_color.begin() + n);
         }

@@ -2,94 +2,78 @@
 TDL training loop.
 
 Each generation:
-  1. Run self-play  →  encoded (spatial, gvec, target) arrays
-  2. Append to rolling buffer (capped at BUFFER_MAX pairs)
-  3. Hold out 10% of new data in separate val buffer (never trained on)
-  4. Train with MSE loss + weight decay
-  5. Compute val loss
+  1. Run self-play  →  replay files saved to disk
+  2. Add train replays to rolling buffer (capped at TRAIN_BUF_REPLAYS)
+  3. Add val replays to val buffer (capped at VAL_BUF_REPLAYS, never trained on)
+  4. Build ReplayDataset → DataLoader (re-simulate + encode + augment on-the-fly)
+  5. Train for EPOCHS epochs
   6. Save checkpoint  →  checkpoints/gen_NNN.pt
   7. Log to training_log.csv
 
 Usage:
-  python train.py                         # 10 gens, 20 games, 200 sims
-  python train.py --gens 20 --games 24 --sims 50 --workers 8
+  python train.py                         # 10 gens, 40 games, 100 sims
+  python train.py --gens 30 --games 40 --sims 100 --workers 8
   python train.py --resume checkpoints/gen_005.pt
 """
 
 import sys, os, argparse, csv, time
-import numpy as np
+
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
 
 _HERE = os.path.dirname(__file__)
 sys.path.insert(0, os.path.join(_HERE, '../../build/bindings'))
 
-from selfplay  import run_selfplay
-from encoder   import C_IN, G
-from model     import ValueNet
+from selfplay import run_selfplay
+from dataset  import ReplayDataset
+from model    import ValueNet
 
-CHECKPOINTS_DIR = os.path.join(_HERE, 'checkpoints')
-LOG_PATH        = os.path.join(CHECKPOINTS_DIR, 'training_log.csv')
+CHECKPOINTS_DIR    = os.path.join(_HERE, 'checkpoints')
+LOG_PATH           = os.path.join(CHECKPOINTS_DIR, 'training_log.csv')
 
-BUFFER_MAX      = 50_000
-VAL_BUF_MAX     = 5_000
-VAL_FRACTION    = 0.1
-N_GENS       = 10
-N_GAMES      = 20
-N_SIMS       = 100
-N_WORKERS    = 1
-EPOCHS       = 2
-BATCH_SIZE   = 256
-LR           = 1e-3
-WEIGHT_DECAY = 1e-4
+TRAIN_BUF_REPLAYS  = 400   # keep last ~10 gens of train games
+VAL_BUF_REPLAYS    = 80    # keep last ~20 gens of val games
+N_GENS             = 10
+N_GAMES            = 40
+N_SIMS             = 100
+N_WORKERS          = 1
+EPOCHS             = 2
+BATCH_SIZE         = 256
+LR                 = 1e-3
+WEIGHT_DECAY       = 1e-4
+LOADER_WORKERS     = 4     # DataLoader workers for re-simulation + encoding
 
 
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
 
-def _make_loader(sp, gv, tgt, batch_size, shuffle, device):
-    return DataLoader(
-        TensorDataset(torch.from_numpy(sp), torch.from_numpy(gv), torch.from_numpy(tgt)),
-        batch_size=batch_size, shuffle=shuffle,
-        pin_memory=(device.type == 'cuda'),
-    )
-
-
-def train_one_gen(model, optimizer, sp_buf, gv_buf, tgt_buf,
-                  val_sp, val_gv, val_tgt,
-                  epochs, batch_size, device):
-    n_train = len(tgt_buf)
-    n_val   = len(val_tgt)
-
-    train_loader = _make_loader(sp_buf, gv_buf, tgt_buf,
-                                batch_size, shuffle=True,  device=device)
-    val_loader   = _make_loader(val_sp, val_gv, val_tgt,
-                                batch_size, shuffle=False, device=device)
-
+def train_one_gen(model, optimizer, train_loader, val_loader, epochs, device):
     final_train = 0.0
+
     for epoch in range(epochs):
         model.train()
-        epoch_loss = 0.0
+        total_loss, n_train = 0.0, 0
         for sp, gv, tgt in train_loader:
             sp, gv, tgt = sp.to(device), gv.to(device), tgt.to(device)
             loss = F.mse_loss(model(sp, gv).squeeze(-1), tgt)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            epoch_loss += loss.item() * len(tgt)
-        final_train = epoch_loss / n_train
+            total_loss += loss.item() * len(tgt)
+            n_train    += len(tgt)
+        final_train = total_loss / max(n_train, 1)
         print(f'  epoch {epoch+1:2d}/{epochs}  train_loss={final_train:.4f}')
 
-    # Validation loss (no grad, no dropout)
     model.eval()
-    val_loss = 0.0
+    val_loss, n_val = 0.0, 0
     with torch.no_grad():
         for sp, gv, tgt in val_loader:
             sp, gv, tgt = sp.to(device), gv.to(device), tgt.to(device)
             val_loss += F.mse_loss(model(sp, gv).squeeze(-1), tgt).item() * len(tgt)
-    val_loss /= n_val
+            n_val    += len(tgt)
+    val_loss /= max(n_val, 1)
     print(f'  val_loss={val_loss:.4f}')
 
     return final_train, val_loss
@@ -100,7 +84,7 @@ def train_one_gen(model, optimizer, sp_buf, gv_buf, tgt_buf,
 # ---------------------------------------------------------------------------
 
 def run_training(n_gens=N_GENS, n_games=N_GAMES, n_sims=N_SIMS,
-                 n_workers=N_WORKERS, epochs=EPOCHS, batch_size=BATCH_SIZE, resume=None):
+                 n_workers=N_WORKERS, epochs=EPOCHS, resume=None):
 
     device = torch.device('cuda' if torch.cuda.is_available() else
                           'mps'  if torch.backends.mps.is_available() else 'cpu')
@@ -110,16 +94,10 @@ def run_training(n_gens=N_GENS, n_games=N_GAMES, n_sims=N_SIMS,
     model.eval()
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
 
-    sp_buf  = np.empty((0, C_IN, 11, 11), dtype=np.float32)
-    gv_buf  = np.empty((0, G),            dtype=np.float32)
-    tgt_buf = np.empty((0,),              dtype=np.float32)
-
-    val_sp  = np.empty((0, C_IN, 11, 11), dtype=np.float32)
-    val_gv  = np.empty((0, G),            dtype=np.float32)
-    val_tgt = np.empty((0,),              dtype=np.float32)
-
-    start_gen = 0
-    prev_ckpt = None
+    train_paths = []
+    val_paths   = []
+    start_gen   = 0
+    prev_ckpt   = None
 
     os.makedirs(CHECKPOINTS_DIR, exist_ok=True)
 
@@ -135,49 +113,42 @@ def run_training(n_gens=N_GENS, n_games=N_GAMES, n_sims=N_SIMS,
     log_file   = open(LOG_PATH, 'a', newline='')
     log_writer = csv.writer(log_file)
     if not log_exists:
-        log_writer.writerow(['gen', 'n_pairs', 'buffer_size',
-                             'train_loss', 'val_loss', 'elapsed_s'])
+        log_writer.writerow(['gen', 'n_train_games', 'n_val_games',
+                             'train_states', 'train_loss', 'val_loss', 'elapsed_s'])
 
     for gen in range(start_gen, start_gen + n_gens):
         print(f'\n=== Generation {gen} ===')
         t_gen = time.time()
 
-        # 1. Self-play + encode
-        t0 = time.time()
-        new_sp, new_gv, new_tgt = run_selfplay(n_games=n_games, n_sims=n_sims, gen=gen,
-                                               n_workers=n_workers, ckpt_path=prev_ckpt)
-        print(f'self-play: {len(new_tgt)} pairs  ({time.time()-t0:.1f}s)')
+        # 1. Self-play
+        new_train, new_val = run_selfplay(
+            n_games=n_games, n_sims=n_sims, gen=gen,
+            n_workers=n_workers, ckpt_path=prev_ckpt)
 
-        # 2. Split new data: 10% → held-out val buffer, 90% → training buffer.
-        n_new   = len(new_tgt)
-        n_new_v = max(1, int(n_new * VAL_FRACTION))
-        perm    = np.random.permutation(n_new)
-        v_idx   = perm[:n_new_v]
-        t_idx   = perm[n_new_v:]
+        # 2. Update replay buffers (rotate out oldest when over cap).
+        train_paths.extend(new_train)
+        val_paths.extend(new_val)
+        if len(train_paths) > TRAIN_BUF_REPLAYS:
+            train_paths = train_paths[-TRAIN_BUF_REPLAYS:]
+        if len(val_paths) > VAL_BUF_REPLAYS:
+            val_paths = val_paths[-VAL_BUF_REPLAYS:]
+        print(f'buffer:  {len(train_paths)} train replays  {len(val_paths)} val replays')
 
-        val_sp  = np.concatenate([val_sp,  new_sp[v_idx]],  axis=0)
-        val_gv  = np.concatenate([val_gv,  new_gv[v_idx]],  axis=0)
-        val_tgt = np.concatenate([val_tgt, new_tgt[v_idx]], axis=0)
-        if len(val_tgt) > VAL_BUF_MAX:
-            val_sp  = val_sp[-VAL_BUF_MAX:]
-            val_gv  = val_gv[-VAL_BUF_MAX:]
-            val_tgt = val_tgt[-VAL_BUF_MAX:]
+        # 3. Build datasets and loaders.
+        train_ds = ReplayDataset(train_paths, augment=True)
+        val_ds   = ReplayDataset(val_paths,   augment=False)
+        print(f'         {len(train_ds)} train states  {len(val_ds)} val states')
 
-        sp_buf  = np.concatenate([sp_buf,  new_sp[t_idx]],  axis=0)
-        gv_buf  = np.concatenate([gv_buf,  new_gv[t_idx]],  axis=0)
-        tgt_buf = np.concatenate([tgt_buf, new_tgt[t_idx]], axis=0)
-        if len(tgt_buf) > BUFFER_MAX:
-            sp_buf  = sp_buf[-BUFFER_MAX:]
-            gv_buf  = gv_buf[-BUFFER_MAX:]
-            tgt_buf = tgt_buf[-BUFFER_MAX:]
-        print(f'buffer:    {len(tgt_buf)} train  {len(val_tgt)} val')
+        train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,
+                                  num_workers=LOADER_WORKERS, persistent_workers=True)
+        val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False,
+                                  num_workers=LOADER_WORKERS, persistent_workers=True)
 
-        # 3. Train + validate
-        train_loss, val_loss = train_one_gen(model, optimizer, sp_buf, gv_buf, tgt_buf,
-                                             val_sp, val_gv, val_tgt,
-                                             epochs, batch_size, device)
+        # 4. Train
+        train_loss, val_loss = train_one_gen(
+            model, optimizer, train_loader, val_loader, epochs, device)
 
-        # 4. Save checkpoint
+        # 5. Save checkpoint
         ckpt_path = os.path.join(CHECKPOINTS_DIR, f'gen_{gen:03d}.pt')
         torch.save({'gen': gen, 'model': model.state_dict(),
                     'optimizer': optimizer.state_dict()}, ckpt_path)
@@ -185,10 +156,10 @@ def run_training(n_gens=N_GENS, n_games=N_GAMES, n_sims=N_SIMS,
         elapsed = time.time() - t_gen
         print(f'saved {os.path.basename(ckpt_path)}  ({elapsed:.1f}s total)')
 
-        log_writer.writerow([gen, len(new_tgt), len(tgt_buf),
-                             f'{train_loss:.4f}', f'{val_loss:.4f}', f'{elapsed:.1f}'])
+        log_writer.writerow([gen, len(train_paths), len(val_paths),
+                             len(train_ds), f'{train_loss:.4f}', f'{val_loss:.4f}',
+                             f'{elapsed:.1f}'])
         log_file.flush()
-
         prev_ckpt = ckpt_path
 
     log_file.close()
