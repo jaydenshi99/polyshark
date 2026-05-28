@@ -1,11 +1,16 @@
 """
-Gen 0 self-play using the C++ MCTS + hand-crafted heuristic.
+Self-play data generation using the C++ MCTS + heuristic/NN leaf evaluator.
 
-Each game collects one training pair per state visited during each player's turn:
+Each game collects one training pair per state visited:
   input  : every s_i where current_player == P  (current player's fog)
-  target : V_mcts(s_0')  where s_0' is the same player's next turn-start
+  target : final game outcome for player P
+             +1.0  if P won  (terminal)
+             -1.0  if P lost (terminal)
+             tanh(heuristic_diff / C_HEURISTIC)  if turn limit reached
 
-All states in a single turn share one target (the V_mcts of the next turn start).
+MCTS uses the eval_fn for action selection only — training targets come
+from the game outcome, not from the NN's own estimates. This avoids the
+self-referential bootstrapping collapse.
 
 Usage:
   python selfplay.py                # 5 games, 200 sims
@@ -25,7 +30,7 @@ MAP_SIZE     = 11
 C_UCT        = 1.5
 BATCH_SIZE   = 32
 VIRTUAL_LOSS = 1.0
-TURN_LIMIT   = 15
+TURN_LIMIT   = 40
 C_HEURISTIC  = 15.0
 TEMPERATURE  = 0.0   # self-play exploration; 0 = deterministic (use for eval)
 
@@ -86,45 +91,39 @@ def run_game(engine, seed, n_sims, eval_fns=None):
                Pass a single callable to use the same evaluator for both players.
                Pass [eval_p0, eval_p1] to pit two different evaluators against
                each other (used for convergence evaluation).
+
+    Training targets are the final game outcome, not MCTS leaf values.
     """
     if eval_fns is None:
         eval_fns = heuristic_eval_fn
     if callable(eval_fns):
         eval_fns = [eval_fns, eval_fns]
 
-    state = polyshark.make_random_game(seed=seed, sz=MAP_SIZE)
-    sz    = state.map_size()
-
-    turn_buf    = [[], []]
-    pairs       = []
-    history     = []
-    prev_player = -1
+    state      = polyshark.make_random_game(seed=seed, sz=MAP_SIZE)
+    sz         = state.map_size()
+    all_states = [[], []]
+    history    = []
 
     while not state.is_terminal() and state.get_turn() < TURN_LIMIT:
-        p              = state.current_player()
-        action, v_mcts = engine.search(state, n_sims, eval_fns[p], TEMPERATURE)
-
-        if p != prev_player:
-            for s in turn_buf[p]:
-                pairs.append((s, v_mcts))
-            turn_buf[p] = []
-            prev_player = p
-
-        turn_buf[p].append(state)
+        p      = state.current_player()
+        action, _ = engine.search(state, n_sims, eval_fns[p], TEMPERATURE)
+        all_states[p].append(state)
         history.append(action)
         state = state.apply_action(action)
 
     terminal = state.is_terminal()
     winner   = state.winner() if terminal else -1
+
+    pairs = []
     for p in range(2):
-        if not turn_buf[p]:
+        if not all_states[p]:
             continue
         if terminal:
             v_final = 1.0 if winner == p else -1.0
         else:
             diff    = polyshark.heuristic_score(state, p) - polyshark.heuristic_score(state, 1 - p)
             v_final = math.tanh(diff / C_HEURISTIC)
-        for s in turn_buf[p]:
+        for s in all_states[p]:
             pairs.append((s, v_final))
 
     return pairs, history, sz, terminal, winner

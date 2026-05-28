@@ -6,17 +6,16 @@ TDL value network.
 Architecture
 ────────────
   spatial [B, C_IN, 11, 11]
-    Stem Conv(C_IN→64, 3×3, pad=1)  →  BN → ReLU    [B,  64, 11, 11]
-    ResBlock(64)                                       [B,  64, 11, 11]
-    ResBlock(64)                                       [B,  64, 11, 11]
-    Conv(64→128,  3×3, pad=0)        →  BN → ReLU    [B, 128,  9,  9]
-    Conv(128→128, 3×3, pad=0)        →  BN → ReLU    [B, 128,  7,  7]
-    Conv(128→128, 3×3, pad=0)        →  BN → ReLU    [B, 128,  5,  5]
-    Conv(128→64,  1×1)               →  BN → ReLU    [B,  64,  5,  5]
-    flatten                                            [B, 1600]
-  cat with global_vec [B, G]                          [B, 1600+G]
-    Linear(1600+G → 256) → ReLU
-    Linear(256    →   1) → Tanh
+    Stem Conv(C_IN→32, 3×3, pad=1)  →  BN → ReLU    [B,  32, 11, 11]
+    ResBlock(32)                                       [B,  32, 11, 11]
+    Conv(32→64,  3×3, pad=0)        →  BN → ReLU    [B,  64,  9,  9]
+    Conv(64→64,  3×3, pad=0)        →  BN → ReLU    [B,  64,  7,  7]
+    Conv(64→64,  3×3, pad=0)        →  BN → ReLU    [B,  64,  5,  5]
+    Conv(64→32,  1×1)               →  BN → ReLU    [B,  32,  5,  5]
+    flatten                                            [B, 800]
+  cat with global_vec [B, G]                          [B, 800+G]
+    Linear(800+G → 128) → ReLU
+    Linear(128   →   1) → Tanh
 """
 
 import torch
@@ -47,27 +46,26 @@ class ValueNet(nn.Module):
 
         self.spatial = nn.Sequential(
             # Stem: preserve 11×11
-            nn.Conv2d(c_in, 64, 3, padding=1, bias=False),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(c_in, 32, 3, padding=1, bias=False),
+            nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
-            # Two residual blocks (full-board receptive field)
-            _ResBlock(64),
-            _ResBlock(64),
+            # One residual block
+            _ResBlock(32),
             # Gradual unpadded reduction: 11→9→7→5
-            nn.Conv2d(64,  128, 3, bias=False), nn.BatchNorm2d(128), nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, 3, bias=False), nn.BatchNorm2d(128), nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, 3, bias=False), nn.BatchNorm2d(128), nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, 3, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, 3, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, 3, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
             # 1×1 channel compress before flatten
-            nn.Conv2d(128, 64, 1, bias=False), nn.BatchNorm2d(64), nn.ReLU(inplace=True),
-            nn.Flatten(),  # → [B, 64*5*5] = [B, 1600]
+            nn.Conv2d(64, 32, 1, bias=False), nn.BatchNorm2d(32), nn.ReLU(inplace=True),
+            nn.Flatten(),  # → [B, 32*5*5] = [B, 800]
         )
 
         self.head = nn.Sequential(
             nn.Dropout(p=0.3),
-            nn.Linear(1600 + g, 256),
+            nn.Linear(800 + g, 128),
             nn.ReLU(inplace=True),
             nn.Dropout(p=0.3),
-            nn.Linear(256, 1),
+            nn.Linear(128, 1),
             nn.Tanh(),
         )
 
@@ -77,6 +75,6 @@ class ValueNet(nn.Module):
         global_vec : [B, G]             float32
         returns    : [B, 1]             float32 in [-1, 1]
         """
-        feat = self.spatial(spatial)           # [B, 1600]
-        x    = torch.cat([feat, global_vec], dim=1)  # [B, 1611]
+        feat = self.spatial(spatial)           # [B, 800]
+        x    = torch.cat([feat, global_vec], dim=1)  # [B, 811]
         return self.head(x)                    # [B, 1]
