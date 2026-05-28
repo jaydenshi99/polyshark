@@ -196,7 +196,7 @@ PYBIND11_MODULE(polyshark, m) {
                 const Unit& u = s.get_unit(t.unit_id());
                 if (u.owner() == player) { ++units; my_units.push_back({row, col}); }
             }
-            if (t.terrain() == TerrainType::Village && s.is_visible(player, i)) {
+            if (t.terrain() == TerrainType::Village && !t.has_city() && s.is_visible(player, i)) {
                 village_rows.push_back(row);
                 village_cols.push_back(col);
             }

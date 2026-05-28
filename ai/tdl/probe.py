@@ -1,13 +1,13 @@
 """
 Feature importance probe for a trained ValueNet checkpoint.
 
-Runs gradient saliency over a batch of random game states and prints:
-  - Top spatial channels (which per-tile features the model is most sensitive to)
-  - Global vector feature importances
+Two methods:
+  - Gradient saliency: mean |dV/d_input| per channel
+  - Occlusion:         zero out one channel, measure mean |output change|
 
 Usage:
   python probe.py checkpoints/gen_010.pt
-  python probe.py checkpoints/gen_010.pt --games 50
+  python probe.py checkpoints/gen_010.pt --games 50 --method occlusion
 """
 
 import sys, os, argparse
@@ -84,11 +84,44 @@ def saliency(model, sp_np, gv_np, device):
     return sp_grad, gv_grad
 
 
+def occlusion(model, sp_np, gv_np, device):
+    """
+    Zero out one channel at a time and measure mean absolute output change.
+    More direct than gradient saliency: tells you how much the model actually
+    relies on each channel, not just how sensitive gradients are.
+    """
+    sp = torch.from_numpy(sp_np).to(device)
+    gv = torch.from_numpy(gv_np).to(device)
+
+    with torch.no_grad():
+        baseline = model(sp, gv).squeeze(-1)  # [N]
+
+    sp_imp = np.zeros(C_IN,  dtype=np.float32)
+    gv_imp = np.zeros(G,     dtype=np.float32)
+
+    with torch.no_grad():
+        for c in range(C_IN):
+            sp_occ      = sp.clone()
+            sp_occ[:, c, :, :] = 0.0
+            delta       = (model(sp_occ, gv).squeeze(-1) - baseline).abs()
+            sp_imp[c]   = delta.mean().item()
+
+        for g in range(G):
+            gv_occ      = gv.clone()
+            gv_occ[:, g] = 0.0
+            delta       = (model(sp, gv_occ).squeeze(-1) - baseline).abs()
+            gv_imp[g]   = delta.mean().item()
+
+    return sp_imp, gv_imp
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('ckpt')
-    parser.add_argument('--games', type=int, default=30)
-    parser.add_argument('--top',   type=int, default=15)
+    parser.add_argument('--games',  type=int,   default=30)
+    parser.add_argument('--top',    type=int,   default=15)
+    parser.add_argument('--method', type=str,   default='saliency',
+                        choices=['saliency', 'occlusion'])
     args = parser.parse_args()
 
     device = torch.device('mps' if torch.backends.mps.is_available() else
@@ -98,27 +131,28 @@ def main():
     ckpt  = torch.load(args.ckpt, map_location=device, weights_only=True)
     model.load_state_dict(ckpt['model'])
     model.eval()
-    # Keep dropout active so gradients flow through, but eval mode is fine
-    # (dropout off = cleaner gradients for the probe)
 
-    print(f'loaded {args.ckpt}  device={device}')
+    print(f'loaded {args.ckpt}  device={device}  method={args.method}')
     print(f'collecting states from {args.games} games...')
     states = collect_states(args.games)
     sp_np, gv_np = encode_batch(states)
 
-    sp_grad, gv_grad = saliency(model, sp_np, gv_np, device)
+    if args.method == 'occlusion':
+        sp_imp, gv_imp = occlusion(model, sp_np, gv_np, device)
+        label = 'mean |output change| on occlusion'
+    else:
+        sp_imp, gv_imp = saliency(model, sp_np, gv_np, device)
+        label = 'mean |dV/d_input|'
 
-    # Spatial: top-N channels by mean |grad|
-    sp_rank = np.argsort(sp_grad)[::-1]
-    print(f'\n--- Top {args.top} spatial channels (mean |dV/d_input|) ---')
+    sp_rank = np.argsort(sp_imp)[::-1]
+    print(f'\n--- Top {args.top} spatial channels ({label}) ---')
     for i in sp_rank[:args.top]:
-        print(f'  ch {i:2d}  {SPATIAL_NAMES[i]:<30s}  {sp_grad[i]:.5f}')
+        print(f'  ch {i:2d}  {SPATIAL_NAMES[i]:<30s}  {sp_imp[i]:.5f}')
 
-    # Global vector: all, ranked
-    gv_rank = np.argsort(gv_grad)[::-1]
-    print(f'\n--- Global vector importances ---')
+    gv_rank = np.argsort(gv_imp)[::-1]
+    print(f'\n--- Global vector importances ({label}) ---')
     for i in gv_rank:
-        print(f'  g[{i:2d}]  {GVEC_NAMES[i]:<25s}  {gv_grad[i]:.5f}')
+        print(f'  g[{i:2d}]  {GVEC_NAMES[i]:<25s}  {gv_imp[i]:.5f}')
 
 
 if __name__ == '__main__':
