@@ -14,6 +14,7 @@ city counts, unit material, board control, etc).
 
 from __future__ import annotations
 
+import math
 import random
 import sys
 import os
@@ -23,53 +24,150 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../build/bindings
 import polyshark  # noqa: E402
 
 
+# Per-unit-type combat worth used by state_value. Roughly tracks the unit's
+# cost, with Giant bumped well above its 0-star training cost since its battle
+# value is much higher than what you pay for it.
+ARMY_VALUE = {
+    polyshark.UnitType.Warrior:  2,
+    polyshark.UnitType.Archer:   3,
+    polyshark.UnitType.Rider:    3,
+    polyshark.UnitType.Defender: 3,
+    polyshark.UnitType.Giant:   15,
+}
+
+
+# Intrinsic worth of a researched tech, tracking tech_def.h's tier field (higher
+# tiers cost more and gate stronger units/resources). Tier-0 Origin is free and
+# always owned, so it's absent and scores nothing.
+TECH_INTRINSIC_VALUE = {
+    polyshark.TechType.Hunting:      1,
+    polyshark.TechType.Organisation: 1,
+    polyshark.TechType.Riding:       4,
+    polyshark.TechType.Climbing:     1,
+    polyshark.TechType.Farming:      1,
+    polyshark.TechType.Archery:      4,
+    polyshark.TechType.Mining:       1,
+    polyshark.TechType.Strategy:     4,
+}
+
+# Population a resource yields when harvested, and the tech needed to harvest it
+# (mirrors resource_def.h). A resource only counts once its tech is owned.
+RESOURCE_POP = {
+    polyshark.ResourceType.Fruit:  1,
+    polyshark.ResourceType.Crop:   2,
+    polyshark.ResourceType.Animal: 1,
+    polyshark.ResourceType.Metal:  2,
+}
+RESOURCE_TECH = {
+    polyshark.ResourceType.Fruit:  polyshark.TechType.Organisation,
+    polyshark.ResourceType.Crop:   polyshark.TechType.Farming,
+    polyshark.ResourceType.Animal: polyshark.TechType.Hunting,
+    polyshark.ResourceType.Metal:  polyshark.TechType.Mining,
+}
+
+
+# Weight on the village-proximity diff: (enemy's nearest-village distance) minus
+# (mine). Positive when I'm closer to a village, nudging units to capture them.
+VILLAGE_DISTANCE_PENALTY = 1
+
+
+# ---------------------------------------------------------------------------
+# Tech heuristic
+# ---------------------------------------------------------------------------
+
+def tech_heuristic(state, player: int) -> float:
+    """
+    Per-player tech worth = each owned tech's intrinsic tier value plus the
+    harvestable population it unlocks. The population term sweeps every tile in
+    the player's territory and sums the pop_reward of each resource the player
+    has the tech to harvest. Returns me - them.
+    """
+    score = [0.0, 0.0]
+
+    # Intrinsic value: each owned tech contributes its intrinsic worth (Origin = 0).
+    for p in (player, 1 - player):
+        for tech in state.get_techs(p):
+            score[p] += TECH_INTRINSIC_VALUE.get(tech, 0)
+
+    # Harvestable population unlocked within each player's territory.
+    for i in range(state.map_tiles()):
+        t = state.tile_at(i)
+        bcid = t.border_city_id
+        if bcid == -1:
+            continue
+        r = t.resource
+        tech = RESOURCE_TECH.get(r)
+        if tech is None:
+            continue                            # no resource / nothing to harvest
+        owner = state.get_city(bcid).owner
+        if state.has_tech(owner, tech):
+            score[owner] += RESOURCE_POP[r]
+
+    return score[player] - score[1 - player]
+
+
 # ---------------------------------------------------------------------------
 # State evaluation
 # ---------------------------------------------------------------------------
 
 def state_value(state, player: int) -> float:
-    """
-    Estimate `player`'s value of the position in [-1, 1].
-
-    Terminal states are handled by the caller (MCTS sees winner() directly),
-    so this only needs to score non-terminal positions. The default is a
-    crude star + city + unit material diff squashed to [-1, 1] via tanh.
-    """
     if state.is_terminal():
         w = state.winner()
-        if w == player:    return 1.0
-        if w == -1:        return 0.0
-        return -1.0
+        if w == player:    return 100      # win  → peg bar to +100
+        if w == -1:        return 0        # draw → centre
+        return -100                        # loss → peg bar to -100
 
     me, them = player, 1 - player
 
-    stars = state.get_stars(me) - state.get_stars(them)
-
     # Material on the board: each tile holding a city/unit contributes for
     # its owner. Cheap O(N) sweep — fine until rollouts dominate cost.
-    cities  = [0, 0]
-    units   = [0, 0]
-    capital = [None, None]
+    cities    = [0, 0]
+    units     = [0, 0]
+    stars_pt  = [0, 0]   # income rate (sum of City.stars_per_turn) per player
+    capital   = [None, None]
+    size       = state.map_size()
+    villages   = []           # (x, y) of uncaptured village tiles
+    unit_xy    = [[], []]     # (x, y) of each player's units
     for i in range(state.map_tiles()):
         t = state.tile_at(i)
+        if t.terrain == polyshark.TerrainType.Village:
+            villages.append((i % size, i // size))
         if t.has_city:
             c = state.get_city(t.city_id)
-            cities[c.owner] += 1 + c.level
+            cities[c.owner]   += 1
+            stars_pt[c.owner] += c.stars_per_turn
             if c.is_capital:
                 capital[c.owner] = c
         if t.has_unit:
             u = state.get_unit(t.unit_id)
-            units[u.owner] += u.hp  # weight by remaining HP
+            v = ARMY_VALUE.get(u.type, 1)
+            units[u.owner] += v * (u.hp / max(u.max_hp, 1))
+            unit_xy[u.owner].append((i % size, i // size))
 
-    city_diff = cities[me] - cities[them]
-    unit_diff = units[me]  - units[them]
+    # Tech worth: resource-usability heuristic (already a me - them diff).
+    tech_diff = tech_heuristic(state, player)
 
-    # Capital captured? That's effectively decisive even pre-terminal.
-    if capital[them] is not None and capital[them].owner == me: return 0.95
-    if capital[me]   is not None and capital[me].owner   == them: return -0.95
+    # Village proximity: for each player, the shortest Chebyshev distance from
+    # any of their units to any uncaptured village (global min over villages).
+    # The diff (theirs - mine) rewards me being closer to a village than them.
+    def nearest_village_dist(my_xy):
+        if not villages or not my_xy:
+            return 0.0
+        return min(max(abs(vx - ux), abs(vy - uy))
+                   for (vx, vy) in villages
+                   for (ux, uy) in my_xy)
 
-    raw = 0.04 * stars + 0.15 * city_diff + 0.01 * unit_diff
-    return _tanh(raw)
+    village_diff = nearest_village_dist(unit_xy[them]) - nearest_village_dist(unit_xy[me])
+
+    # Stars term reflects income rate, not the current stockpile — a sieged
+    # / captured city contributes 0 (matches City::stars_per_turn in C++).
+    stars_pt  = stars_pt[me]  - stars_pt[them]
+    city_diff = cities[me]    - cities[them]
+    unit_diff = units[me]     - units[them]
+
+    raw =  3 * stars_pt + 5 * city_diff + unit_diff + tech_diff \
+         + VILLAGE_DISTANCE_PENALTY * village_diff
+    return raw
 
 
 # ---------------------------------------------------------------------------

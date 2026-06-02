@@ -4,6 +4,10 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/pybind/pybind11.git
     GIT_TAG        v2.13.6
 )
+# Use the modern find_package(Python) finder instead of pybind11's bundled
+# PythonLibsNew (the latter sets PYTHON_LIBRARY incorrectly for libpython on
+# some macOS installs, breaking pybind11::embed linking).
+set(PYBIND11_FINDPYTHON ON)
 FetchContent_MakeAvailable(pybind11)
 
 pybind11_add_module(polyshark bindings.cpp)

@@ -13,6 +13,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+# Python Development component is required by the visualizer's embedded
+# interpreter (pybind11::embed). The bindings module only needs the
+# Interpreter+Module sides, but finding Development covers both.
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+
 add_subdirectory(engine)
 add_subdirectory(bindings)
 add_subdirectory(visualizer)
