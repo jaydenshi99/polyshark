@@ -125,6 +125,8 @@ PYBIND11_MODULE(polyshark, m) {
         .def_readonly("dst",        &Action::to)
         .def_readonly("param",      &Action::param)
         .def_readonly("affordable", &Action::affordable)
+        .def_readonly("path_bits",  &Action::path_bits)
+        .def_readonly("path_steps", &Action::path_steps)
         .def("__repr__", [](const Action& a) {
             return "<Action type=" + std::to_string((int)a.type)
                  + " src=" + std::to_string(a.from)
@@ -151,13 +153,72 @@ PYBIND11_MODULE(polyshark, m) {
         .def("is_explored",    &GameState::is_visible)  // alias — explored == visible in Polytopia
         .def("get_stars",      &GameState::get_stars)
         .def("get_techs",      &GameState::get_techs)
-        .def("techs_mask",     &GameState::techs_mask);
+        .def("techs_mask",     &GameState::techs_mask)
+        // Reconstruct and apply an action from raw replay fields (O(1), no legal_actions call).
+        .def("apply_action_raw", [](const GameState& s, int type, int from, int to,
+                                    int param, uint32_t path_bits, uint8_t path_steps) {
+            Action a;
+            a.type       = static_cast<ActionType>(type);
+            a.from       = from;
+            a.to         = to;
+            a.param      = param;
+            a.affordable = true;
+            a.path_bits  = path_bits;
+            a.path_steps = path_steps;
+            return s.apply_action(a);
+        });
 
     // Base movement per unit type, indexed by UnitType int value.
     // Exposed so the encoder can normalise move_points without hardcoding.
     m.def("unit_base_move", [](int unit_type) {
         return unit_def(static_cast<UnitType>(unit_type)).movement;
     });
+
+    // Gen-0 heuristic score for one player.
+    // Components: cities, city levels, techs, units, village proximity.
+    m.def("heuristic_score", [](const GameState& s, int player) -> float {
+        int cities = 0, total_level = 0, units = 0;
+        int sz = s.map_size();
+
+        // Collect village positions and unit positions for proximity calc.
+        std::vector<int> village_rows, village_cols;
+        std::vector<std::pair<int,int>> my_units;
+
+        for (int i = 0; i < s.map_tiles(); ++i) {
+            const Tile& t = s.tile_at(i);
+            int row = i / sz, col = i % sz;
+
+            if (t.has_city()) {
+                const City& c = s.get_city(t.city_id());
+                if (c.owner() == player) { ++cities; total_level += c.level(); }
+            }
+            if (t.has_unit()) {
+                const Unit& u = s.get_unit(t.unit_id());
+                if (u.owner() == player) { ++units; my_units.push_back({row, col}); }
+            }
+            if (t.terrain() == TerrainType::Village && !t.has_city() && s.is_visible(player, i)) {
+                village_rows.push_back(row);
+                village_cols.push_back(col);
+            }
+        }
+
+        // Village proximity: per village, reward based on closest unit.
+        // Encourages spreading units to different villages rather than clumping.
+        float village_prox = 0.0f;
+        for (int v = 0; v < (int)village_rows.size(); ++v) {
+            int min_dist = 999;
+            for (auto [ur, uc] : my_units) {
+                int d = std::abs(ur - village_rows[v]) + std::abs(uc - village_cols[v]);
+                if (d < min_dist) min_dist = d;
+            }
+            if (min_dist < 999)
+                village_prox += 1.0f / (1.0f + min_dist);
+        }
+
+        int mask = s.techs_mask(player);
+        int tech_bits = __builtin_popcount(mask >> 1); // skip Origin bit
+        return 3.0f * cities + total_level + 0.3f * tech_bits + 0.2f * units + 0.5f * village_prox;
+    }, py::arg("state"), py::arg("player"));
 
     m.def("make_random_game", [](uint64_t seed, int sz) {
         MapGenParams p = MapGenParams::for_biome(BiomeType::Drylands, sz);
@@ -177,7 +238,8 @@ PYBIND11_MODULE(polyshark, m) {
         .def("search", [](MCTSEngine& eng,
                           const GameState& state,
                           int              n_sims,
-                          py::object       eval_fn) {
+                          py::object       eval_fn,
+                          float            temperature) {
             auto cpp_eval = [&eval_fn](const std::vector<GameState>& states)
                     -> std::vector<float> {
                 py::list py_list;
@@ -187,10 +249,11 @@ PYBIND11_MODULE(polyshark, m) {
                 for (auto item : result) out.push_back(item.cast<float>());
                 return out;
             };
-            auto [action, value] = eng.search(state, n_sims, cpp_eval);
+            auto [action, value] = eng.search(state, n_sims, cpp_eval, temperature);
             return py::make_tuple(action, value);
         },
         py::arg("state"),
         py::arg("n_sims"),
-        py::arg("eval_fn"));
+        py::arg("eval_fn"),
+        py::arg("temperature") = 0.0f);
 }

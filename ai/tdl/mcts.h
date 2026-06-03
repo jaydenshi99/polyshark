@@ -33,10 +33,12 @@ public:
     explicit MCTSEngine(float c_uct = 1.5f, int batch_size = 8, float virtual_loss = 1.0f);
 
     // Run n_sims simulations from root_state using eval_fn at leaves.
-    // Returns: {best_action (highest visit count), root_value (mean W/N)}.
+    // temperature=0 → argmax (deterministic); temperature>0 → sample proportional to N^(1/T).
+    // Returns: {selected_action, root_value (mean W/N)}.
     std::pair<Action, float> search(const GameState& root_state,
                                     int              n_sims,
-                                    EvalFn           eval_fn);
+                                    EvalFn           eval_fn,
+                                    float            temperature = 0.0f);
 
 private:
     float _c_uct;

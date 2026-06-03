@@ -34,8 +34,9 @@ int MCTSEngine::_uct_pick(const MCTSNode* node) const {
     for (const auto& e : node->edges) N += e.n;
     float sqrt_N = std::sqrt((float)std::max(N, 1));
 
-    float best  = std::numeric_limits<float>::lowest();
+    float best   = std::numeric_limits<float>::lowest();
     int   best_i = 0;
+    int   ties   = 0;
     for (int i = 0; i < (int)node->edges.size(); i++) {
         const auto& e = node->edges[i];
         float q     = (e.n > 0) ? (e.w / (float)e.n) : 0.0f;
@@ -43,6 +44,10 @@ int MCTSEngine::_uct_pick(const MCTSNode* node) const {
         if (score > best) {
             best   = score;
             best_i = i;
+            ties   = 1;
+        } else if (score == best) {
+            ++ties;
+            if (std::rand() % ties == 0) best_i = i;
         }
     }
     return best_i;
@@ -103,7 +108,8 @@ void MCTSEngine::_backprop(SelResult& r, float value) {
 
 std::pair<Action, float> MCTSEngine::search(const GameState& root_state,
                                              int              n_sims,
-                                             EvalFn           eval_fn) {
+                                             EvalFn           eval_fn,
+                                             float            temperature) {
     _pool.clear();
     MCTSNode* root = _alloc();
     _expand(root, root_state);
@@ -137,18 +143,37 @@ std::pair<Action, float> MCTSEngine::search(const GameState& root_state,
         done += wave;
     }
 
-    // Best action = highest visit count (temperature 0).
-    int   best_i = 0, best_n = -1;
+    // Compute root value and select action.
     float total_w = 0.0f, total_n = 0.0f;
-    for (int i = 0; i < (int)root->edges.size(); i++) {
-        total_w += root->edges[i].w;
-        total_n += (float)root->edges[i].n;
-        if (root->edges[i].n > best_n) {
-            best_n = root->edges[i].n;
-            best_i = i;
+    for (const auto& e : root->edges) { total_w += e.w; total_n += (float)e.n; }
+    float root_value = (total_n > 0.0f) ? (total_w / total_n) : 0.0f;
+
+    int best_i = 0;
+    if (temperature <= 0.0f) {
+        // Argmax by visit count, random tiebreak.
+        int best_n = -1;
+        int ties   = 0;
+        for (int i = 0; i < (int)root->edges.size(); i++) {
+            int n = root->edges[i].n;
+            if (n > best_n) { best_n = n; best_i = i; ties = 1; }
+            else if (n == best_n) { ++ties; if (std::rand() % ties == 0) best_i = i; }
+        }
+    } else {
+        // Sample proportional to N^(1/T).
+        float inv_t = 1.0f / temperature;
+        std::vector<float> weights(root->edges.size());
+        float sum = 0.0f;
+        for (int i = 0; i < (int)root->edges.size(); i++) {
+            weights[i] = std::pow((float)root->edges[i].n, inv_t);
+            sum += weights[i];
+        }
+        float r = ((float)std::rand() / (float)RAND_MAX) * sum;
+        float cum = 0.0f;
+        for (int i = 0; i < (int)weights.size(); i++) {
+            cum += weights[i];
+            if (r <= cum) { best_i = i; break; }
         }
     }
 
-    float root_value = (total_n > 0.0f) ? (total_w / total_n) : 0.0f;
     return {root->edges[best_i].action, root_value};
 }
