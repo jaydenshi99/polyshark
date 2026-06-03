@@ -24,8 +24,8 @@ from model   import ValueNet
 #   [2]  → 32 ch, 11×11   (stem, full res)
 #   [5]  → 64 ch,  9×9
 #   [8]  → 64 ch,  7×7
-#   [11] → 32 ch,  5×5    (last conv, used here)
-TARGET_LAYER = 11
+#   [11] → 32 ch,  5×5
+TARGET_LAYER = 2
 
 
 def _normalise(t):
@@ -50,10 +50,12 @@ def get_heatmap(model, sp_np, gv_np, channel, sz):
             model(sp, gv)
         handle.remove()
 
-        A = saved[0].clone().detach().requires_grad_(True)  # [1, 32, 5, 5]
+        A = saved[0].clone().detach().requires_grad_(True)
         with torch.enable_grad():
-            x_flat = model.spatial[12](A)
-            out    = model.head(torch.cat([x_flat, gv], dim=1))
+            x = A
+            for i in range(TARGET_LAYER + 1, len(model.spatial)):
+                x = model.spatial[i](x)
+            out = model.head(torch.cat([x, gv], dim=1))
             out.sum().backward()
 
         dA    = A.grad                                       # [1, 32, 5, 5]
