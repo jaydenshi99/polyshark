@@ -132,6 +132,12 @@ public:
     void apply_attack(Action a);
     void apply_recover(Action a);
 
+    // Recompute every city's siege flag from current unit occupancy. A city is
+    // sieged (and so yields 0 stars_per_turn) while an enemy unit sits on it.
+    // Called after any action that moves units so SPT is always accurate, not
+    // just refreshed at turn-switch.
+    void update_sieges();
+
     void explore(int tile, int player,
                  int* out_path = nullptr, int* out_count = nullptr);
     void claim_border_for_city(int city_id);

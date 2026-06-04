@@ -149,8 +149,90 @@ static void test_push_removes_unit_when_no_free_tile_enemy() {
     assert(!s.get_unit(victim_uid).is_alive());
 }
 
+// ---------------------------------------------------------------------------
+// Terminal / win-condition tests
+//
+// Domination rule: the game is terminal exactly when a player's capital has
+// been captured by the enemy. Capturing ordinary (non-capital) cities — or any
+// number of them — never ends the game. is_terminal() is just winner() != -1.
+// ---------------------------------------------------------------------------
+
+// Player `captor` (must be cur_player) takes the city in slot `city_id` sitting
+// on `tile`. A captor-owned unit is placed on the tile first so the capture's
+// "a unit stands on the captured tile" precondition holds.
+static GameState capture_city(GameState s, int captor, int city_id, int tile) {
+    s.spawn_unit(UnitType::Warrior, captor, tile);
+    Action a{ ActionType::CaptureCity, city_id, tile, 0, true, 0, 0 };
+    return s.apply_action(a);
+}
+
+// Two capitals, both held by their founders → not terminal, no winner.
+static void test_terminal_fresh_capitals() {
+    GameState s = make_field_map(5);
+    s.spawn_city(to_index(1, 1, 5), 0, /*is_capital=*/true);
+    s.spawn_city(to_index(3, 3, 5), 1, /*is_capital=*/true);
+    assert(!s.is_terminal());
+    assert(s.winner() == -1);
+    assert(s.check_invariants());
+}
+
+// Capturing an ordinary (non-capital) city must NOT end the game.
+static void test_terminal_noncapital_capture() {
+    GameState s = make_field_map(5);
+    int t_city1 = to_index(3, 1, 5);
+    s.spawn_city(to_index(1, 1, 5), 0, /*is_capital=*/true);
+    s.spawn_city(to_index(3, 3, 5), 1, /*is_capital=*/true);
+    int city1 = s.spawn_city(t_city1, 1, /*is_capital=*/false);
+    assert(city1 >= 0);
+
+    // cur_player defaults to 0 → player 0 captures player 1's ordinary city.
+    s = capture_city(s, 0, city1, t_city1);
+    assert(s.get_city(city1).owner() == 0);   // capture actually happened
+    assert(!s.is_terminal());                  // ...but the game continues
+    assert(s.winner() == -1);
+    assert(s.check_invariants());
+}
+
+// Capturing the enemy capital ends the game; winner is the captor.
+static void test_terminal_capital_capture() {
+    GameState s = make_field_map(5);
+    int t_cap1 = to_index(3, 3, 5);
+    s.spawn_city(to_index(1, 1, 5), 0, /*is_capital=*/true);
+    int cap1 = s.spawn_city(t_cap1, 1, /*is_capital=*/true);
+    assert(cap1 >= 0);
+
+    s = capture_city(s, 0, cap1, t_cap1);
+    assert(s.get_city(cap1).owner() == 0);
+    assert(s.is_terminal());
+    assert(s.winner() == 0);
+    assert(s.check_invariants());
+}
+
+// A captured-capital (terminal) state must survive a serialise/deserialise
+// round-trip. capital_city[] is reconstructed from is_capital/owner, which is
+// ambiguous once a capital changes hands — so it's stored explicitly. The
+// visualizer round-trips through JSON on every eval, so this is the path that
+// previously made is_terminal() flip back to false after a winning capture.
+static void test_terminal_survives_roundtrip() {
+    GameState s = make_field_map(5);
+    int t_cap1 = to_index(3, 3, 5);
+    s.spawn_city(to_index(1, 1, 5), 0, /*is_capital=*/true);
+    int cap1 = s.spawn_city(t_cap1, 1, /*is_capital=*/true);
+    s = capture_city(s, 0, cap1, t_cap1);
+    assert(s.is_terminal() && s.winner() == 0);
+
+    GameState rt = GameState::deserialise(GameState::serialise(s));
+    assert(rt.is_terminal());          // <-- regressed to false before the fix
+    assert(rt.winner() == 0);
+    assert(rt.check_invariants());
+}
+
 int main() {
     test_new_game();
+    test_terminal_fresh_capitals();
+    test_terminal_noncapital_capture();
+    test_terminal_capital_capture();
+    test_terminal_survives_roundtrip();
     test_invariants_fresh_map();
     test_invariants_random_playout();
     test_push_keeps_unit_alive();

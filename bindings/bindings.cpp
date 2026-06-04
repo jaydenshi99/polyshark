@@ -20,14 +20,15 @@ PYBIND11_MODULE(polyshark, m) {
 
     // --- Enums ---
 
+    // TerrainType::None collides with Python None; renamed.
     py::enum_<TerrainType>(m, "TerrainType")
-        .value("Field",    TerrainType::Field)
-        .value("Forest",   TerrainType::Forest)
-        .value("Mountain", TerrainType::Mountain)
-        .value("Water",    TerrainType::Water)
-        .value("Village",  TerrainType::Village);
+        .value("No_Terrain", TerrainType::None)
+        .value("Field",      TerrainType::Field)
+        .value("Forest",     TerrainType::Forest)
+        .value("Mountain",   TerrainType::Mountain)
+        .value("Water",      TerrainType::Water)
+        .value("Village",    TerrainType::Village);
 
-    // ResourceType::None collides with Python None; renamed.
     py::enum_<ResourceType>(m, "ResourceType")
         .value("No_Resource", ResourceType::None)
         .value("Fruit",       ResourceType::Fruit)
@@ -58,7 +59,29 @@ PYBIND11_MODULE(polyshark, m) {
         .value("Climbing",     TechType::Climbing)
         .value("Archery",      TechType::Archery)
         .value("Mining",       TechType::Mining)
-        .value("Strategy",     TechType::Strategy);
+        .value("Strategy",     TechType::Strategy)
+        .value("No_Tech",      TechType::None);
+
+    py::enum_<CityUpgradeType>(m, "CityUpgradeType")
+        .value("L1_Workshop",          CityUpgradeType::L1_WORKSHOP)
+        .value("L1_Explorer",          CityUpgradeType::L1_EXPLORER)
+        .value("L2_Resources",         CityUpgradeType::L2_RESOURCES)
+        .value("L2_Walls",             CityUpgradeType::L2_WALLS)
+        .value("L3_Border_Growth",     CityUpgradeType::L3_BORDER_GROWTH)
+        .value("L3_Population_Growth", CityUpgradeType::L3_POPULATION_GROWTH)
+        .value("L4_Park",              CityUpgradeType::L4_PARK)
+        .value("L4_Superunit",         CityUpgradeType::L4_SUPERUNIT);
+
+    py::enum_<GameStateType>(m, "GameStateType")
+        .value("UpgradingCity", GameStateType::UpgradingCity)
+        .value("Idle",          GameStateType::Idle);
+
+    // Ability bitmask flags — combine with has_ability().
+    m.attr("ABILITY_FORTIFY") = ABILITY_FORTIFY;
+    m.attr("ABILITY_DASH")    = ABILITY_DASH;
+    m.attr("ABILITY_ESCAPE")  = ABILITY_ESCAPE;
+    m.attr("ABILITY_RANGED")  = ABILITY_RANGED;
+    m.attr("ABILITY_STATIC")  = ABILITY_STATIC;
 
     // --- Tile ---
 
@@ -70,7 +93,9 @@ PYBIND11_MODULE(polyshark, m) {
         .def_property_readonly("city_id",        &Tile::city_id)
         .def_property_readonly("border_city_id", &Tile::border_city_id)
         .def_property_readonly("has_unit",       &Tile::has_unit)
-        .def_property_readonly("has_city",       &Tile::has_city);
+        .def_property_readonly("has_city",       &Tile::has_city)
+        .def_property_readonly("has_building",   &Tile::has_building)
+        .def_property_readonly("capture_ready",  &Tile::capture_ready);
 
     // --- Unit ---
 
@@ -84,7 +109,10 @@ PYBIND11_MODULE(polyshark, m) {
         .def_property_readonly("has_attacked",    &Unit::has_attacked)
         .def_property_readonly("kills",           &Unit::kills)
         .def_property_readonly("promotion_ready", &Unit::promotion_ready)
-        .def_property_readonly("is_alive",        &Unit::is_alive);
+        .def_property_readonly("city_id",         &Unit::city_id)
+        .def_property_readonly("last_dir",        &Unit::last_dir)
+        .def_property_readonly("is_alive",        &Unit::is_alive)
+        .def("has_ability", &Unit::has_ability, py::arg("ability"));
 
     // --- City ---
 
@@ -98,10 +126,12 @@ PYBIND11_MODULE(polyshark, m) {
         .def_property_readonly("has_walls",       &City::has_walls)
         .def_property_readonly("has_workshop",    &City::has_workshop)
         .def_property_readonly("pending_upgrade", &City::has_pending_upgrade)
-        .def_property_readonly("capture_ready",  &City::capture_ready)
-        .def_property_readonly("units_owned",    &City::units_owned)
-        .def_property_readonly("unit_capacity",  &City::unit_capacity)
-        .def_property_readonly("stars_per_turn", &City::stars_per_turn);
+        .def_property_readonly("capture_ready",   &City::capture_ready)
+        .def_property_readonly("unit_capacity",   &City::unit_capacity)
+        .def_property_readonly("units_owned",     &City::units_owned)
+        .def_property_readonly("border_radius",   &City::border_radius)
+        .def_property_readonly("can_spawn",       &City::can_spawn)
+        .def_property_readonly("stars_per_turn",  &City::stars_per_turn);
 
     // --- ActionType / Action ---
 
@@ -137,36 +167,45 @@ PYBIND11_MODULE(polyshark, m) {
     // --- GameState ---
 
     py::class_<GameState>(m, "GameState")
-        .def("legal_actions",  &legal_actions_vec)
-        .def("apply_action",   &GameState::apply_action)
-        .def("is_terminal",    &GameState::is_terminal)
-        .def("winner",         &GameState::winner)
-        .def("current_player", &GameState::current_player)
-        .def("get_turn",       &GameState::get_turn)
-        .def("map_size",       &GameState::map_size)
-        .def("map_tiles",      &GameState::map_tiles)
-        // Returned by value so callers don't hold dangling refs across apply_action.
-        .def("tile_at",        [](const GameState& s, int i) { return s.tile_at(i); })
-        .def("get_unit",       [](const GameState& s, int i) { return s.get_unit(i); })
-        .def("get_city",       [](const GameState& s, int i) { return s.get_city(i); })
-        .def("is_visible",     &GameState::is_visible)
-        .def("is_explored",    &GameState::is_visible)  // alias — explored == visible in Polytopia
-        .def("get_stars",      &GameState::get_stars)
-        .def("get_techs",      &GameState::get_techs)
-        .def("techs_mask",     &GameState::techs_mask)
-        // Reconstruct and apply an action from raw replay fields (O(1), no legal_actions call).
-        .def("apply_action_raw", [](const GameState& s, int type, int from, int to,
-                                    int param, uint32_t path_bits, uint8_t path_steps) {
-            Action a;
-            a.type       = static_cast<ActionType>(type);
-            a.from       = from;
-            a.to         = to;
-            a.param      = param;
-            a.affordable = true;
-            a.path_bits  = path_bits;
-            a.path_steps = path_steps;
-            return s.apply_action(a);
-        });
+        // Turn / outcome.
+        .def("legal_actions",   &legal_actions_vec)
+        .def("apply_action",    &GameState::apply_action)
+        .def("is_terminal",     &GameState::is_terminal)
+        .def("winner",          &GameState::winner)
+        .def("current_player",  &GameState::current_player)
+        .def("get_turn",        &GameState::get_turn)
+        .def("map_size",        &GameState::map_size)
+        .def("map_tiles",       &GameState::map_tiles)
+        .def("phase",           &GameState::phase)
+        .def("can_harvest",     &GameState::can_harvest)
+
+        // Board accessors. Tile/Unit/City are returned by value so callers
+        // don't hold dangling refs across apply_action (which copies the
+        // whole state internally).
+        .def("tile_at",  [](const GameState& s, int i) { return s.tile_at(i); })
+        .def("get_unit", [](const GameState& s, int i) { return s.get_unit(i); })
+        .def("get_city", [](const GameState& s, int i) { return s.get_city(i); })
+
+        // Per-player state.
+        .def("is_visible",    &GameState::is_visible)
+        .def("get_stars",     &GameState::get_stars)
+        .def("has_tech",      &GameState::has_tech)
+        .def("get_techs",     &GameState::get_techs)
+        .def("techs_mask",    &GameState::techs_mask)
+        .def("owned_cities",  &GameState::owned_cities)
+
+        // Debug / introspection.
+        .def("check_invariants", &GameState::check_invariants)
+
+        // JSON serialise/deserialise — bridged through strings so Python can
+        // round-trip via the stdlib `json` module without nlohmann bindings.
+        .def_static("serialise",   [](const GameState& s) {
+            return GameState::serialise(s).dump();
+        })
+        .def_static("deserialise", [](const std::string& json_str) {
+            return GameState::deserialise(nlohmann::json::parse(json_str));
+        })
+        .def_static("print", &GameState::print);
 
     // Base movement per unit type, indexed by UnitType int value.
     // Exposed so the encoder can normalise move_points without hardcoding.

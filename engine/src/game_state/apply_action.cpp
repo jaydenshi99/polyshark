@@ -63,12 +63,12 @@ void GameState::apply_end_turn() {
         }
     }
 
+    s.update_sieges();
     for (int i = 0; i < s.city_count; i++) {
         City& c = s.cities[i];
         int ctile = c.tile_index();
         bool has_unit  = s.map[ctile].has_unit();
         int unit_owner = has_unit ? s.units[s.map[ctile].unit_id()].owner() : -1;
-        c.set_sieged(has_unit && unit_owner != c.owner());
         c.set_capture_ready(has_unit && unit_owner == next && c.owner() != next);
     }
 
@@ -338,5 +338,19 @@ GameState GameState::apply_action(Action a) const {
         case ActionType::Recover:         s.apply_recover(a);           break;
         default:                                                        break;
     }
+    // Keep every city's siege flag (and thus stars_per_turn) accurate after any
+    // unit movement, not just at turn-switch. EndTurn already refreshes these.
+    s.update_sieges();
     return s;
+}
+
+void GameState::update_sieges() {
+    GameState& s = *this;
+    for (int i = 0; i < s.city_count; i++) {
+        City& c = s.cities[i];
+        int ctile = c.tile_index();
+        bool has_unit  = s.map[ctile].has_unit();
+        int unit_owner = has_unit ? s.units[s.map[ctile].unit_id()].owner() : -1;
+        c.set_sieged(has_unit && unit_owner != c.owner());
+    }
 }

@@ -13,6 +13,15 @@ nlohmann::json GameState::serialise(const GameState& s) {
     j["turn"]           = s.get_turn();
     j["current_player"] = s.current_player();
     j["map_size"]       = s.map_size();
+
+    // Founder→capital mapping. Must be stored explicitly: a captured capital
+    // keeps is_capital()==true but owner()==captor, so it can't be rebuilt from
+    // city fields alone. Without this, winner()/is_terminal() can't tell that a
+    // founder's capital was taken after a round-trip.
+    json capitals = json::array();
+    for (int p = 0; p < MAX_PLAYERS; p++)
+        capitals.push_back(s.capital_city[p]);
+    j["capital_city"]   = capitals;
     int map_area = s.map_size() * s.map_size();
     int total_visible_size = (map_area + 15) / 16;
     json players = json::array();
@@ -158,6 +167,19 @@ GameState GameState::deserialise(const nlohmann::json& j) {
             c._has_walls       = cj.value("has_walls", false);
             c._has_workshop    = cj.value("has_workshop", false);
             c._pending_upgrade = cj.value("pending_upgrade", false);
+        }
+    }
+
+    // Prefer the explicit founder→capital mapping. Fall back to rebuilding it
+    // from is_capital/owner for legacy saves that predate the field — note this
+    // fallback is wrong for already-captured capitals (see serialise()).
+    if (j.contains("capital_city") && j["capital_city"].is_array()) {
+        const auto& caps = j["capital_city"];
+        for (int p = 0; p < MAX_PLAYERS && p < (int)caps.size(); p++)
+            out.capital_city[p] = caps[p].get<int>();
+    } else {
+        for (int i = 0; i < out.city_count; i++) {
+            const City& c = out.cities[i];
             if (c.is_capital() && c.owner() >= 0 && c.owner() < MAX_PLAYERS)
                 out.capital_city[c.owner()] = i;
         }

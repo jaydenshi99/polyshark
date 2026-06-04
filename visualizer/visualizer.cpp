@@ -7,12 +7,15 @@
 #include "tech_def.h"
 #include "game_state.h"
 #include "logger.h"
+#include <pybind11/embed.h>
+#include <pybind11/stl.h>
 #include <utility>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <vector>
 #include <string>
@@ -1191,6 +1194,57 @@ static void draw_tech_tree(uint32_t owned_techs, int player_idx,
 
 int main(int argc, char** argv) {
     Logger::debugEnabled = true;
+
+    // Which AI folder to embed. Defaults to the phase-1 heuristic bot; swap
+    // with `--ai-dir <path>` to point at another bot directory that exposes
+    // a top-level `heuristics.py` with a `state_value(state, player)` fn.
+    std::string ai_dir = "ai/mcts-phase1";
+    for (int i = 1; i < argc - 1; i++) {
+        if (std::string(argv[i]) == "--ai-dir") {
+            ai_dir = argv[i + 1];
+            break;
+        }
+    }
+
+    // ----- Embedded Python interpreter (for calling heuristics.py from UI) -----
+    // The scoped_interpreter MUST outlive every py:: object below, so it lives
+    // in main()'s scope. JSON is used to ferry the GameState across the
+    // boundary: the visualizer's pybind11 doesn't share a type registry with
+    // polyshark.cpython-*.so, so passing a GameState directly wouldn't cast.
+    namespace py = pybind11;
+    std::optional<py::scoped_interpreter> py_guard;
+    py::object py_heuristics;
+    py::object py_polyshark;
+    bool python_ok = false;
+    try {
+        py_guard.emplace();
+        py::module_ sys_mod = py::module_::import("sys");
+        py::list path = sys_mod.attr("path");
+        // Order matters — later inserts take priority. The AI dir is first
+        // so its `heuristics.py` shadows anything else.
+        path.attr("insert")(0, "build/bindings");
+        path.attr("insert")(0, ai_dir);
+        py_polyshark  = py::module_::import("polyshark");
+        py_heuristics = py::module_::import("heuristics");
+        python_ok = true;
+        Logger::print("Python embedded; heuristics loaded from %s", ai_dir.c_str());
+    } catch (const std::exception& e) {
+        Logger::print("Python init failed (EVAL disabled): %s", e.what());
+    }
+
+    auto eval_state_value = [&](const GameState& gs) -> std::optional<double> {
+        if (!python_ok) return std::nullopt;
+        try {
+            std::string js = GameState::serialise(gs).dump();
+            py::object state = py_polyshark.attr("GameState").attr("deserialise")(js);
+            py::object val   = py_heuristics.attr("state_value")(state, gs.current_player());
+            return val.cast<double>();
+        } catch (const std::exception& e) {
+            Logger::print("EVAL failed: %s", e.what());
+            return std::nullopt;
+        }
+    };
+
     uint64_t gen_seed = 1;
     int climate[MAX_MAP_TILES] = {};
     auto new_map = [&]() {
@@ -1327,6 +1381,29 @@ int main(int argc, char** argv) {
     auto log_turn_header = [&](int turn, int player) {
         Logger::print(player_log_color(player), "Turn %d Player %d", turn, player);
     };
+
+    // EVAL toggle state. When `eval_on` is true the bar is rendered and
+    // every applied action triggers a recompute + log. `eval_value` is the
+    // cached result from the last compute (in `eval_perspective`'s frame).
+    bool   eval_on          = false;
+    bool   eval_has_value   = false;
+    double eval_value       = 0.0;
+    int    eval_perspective = 0;
+
+    auto refresh_eval = [&](bool log_it) {
+        if (!eval_on) return;
+        auto v = eval_state_value(s);
+        if (!v.has_value()) return;
+        eval_value       = *v;
+        eval_perspective = s.current_player();
+        eval_has_value   = true;
+        if (log_it) {
+            Logger::print(player_log_color(eval_perspective),
+                          "Heuristic value (P%d): %+.3f",
+                          eval_perspective, eval_value);
+        }
+    };
+
     // Explorer-upgrade walk paths (visualizer-only).
     std::vector<std::vector<int>> explorer_trails;
     int log_scroll = 0;
@@ -1672,6 +1749,10 @@ int main(int argc, char** argv) {
         load_open = false;
         Logger::print("Loaded game from %s", path.string().c_str());
         log_turn_header(s.get_turn(), s.current_player());
+        // Reset the heuristic eval bar — the cached value belongs to the
+        // previous state. If EVAL is on, refresh against the loaded state.
+        eval_has_value = false;
+        refresh_eval(true);
     };
 
     auto do_delete = [&](const std::string& filename) {
@@ -1887,16 +1968,20 @@ int main(int argc, char** argv) {
 
     while (!WindowShouldClose()) {
 
-        // Global keyboard shortcuts — suppressed while the save textbox is
-        // active so typing 'p', 'f', etc. doesn't fire other actions.
-        if (!save_input_active && IsKeyPressed(KEY_TAB)) {
+        // Global keyboard shortcuts — suppressed while the save textbox or
+        // the load panel is open so typing/clicking through them doesn't
+        // also fire global actions.
+        bool kb_blocked = save_input_active || load_open;
+        if (!kb_blocked && IsKeyPressed(KEY_TAB)) {
             view = (view == ViewMode::Omni)    ? ViewMode::P0      :
                    (view == ViewMode::P0)      ? ViewMode::P1      :
                    (view == ViewMode::P1)      ? ViewMode::Current : ViewMode::Omni;
         }
 
-        if (!save_input_active && IsKeyPressed(KEY_F)) g_use_custom_font = !g_use_custom_font;
+        if (!kb_blocked && IsKeyPressed(KEY_F)) g_use_custom_font = !g_use_custom_font;
 
+        if (!kb_blocked && IsKeyPressed(KEY_P)) GameState::print(s);
+      
         if (!save_input_active && IsKeyPressed(KEY_H) &&
                 (!heatmap_steps.empty() || cam_write)) {
             show_heatmap = !show_heatmap;
@@ -1924,6 +2009,15 @@ int main(int argc, char** argv) {
         // Compute hovered action before drawing so map tiles can react to it
         Vector2 mouse   = GetMousePosition();
         bool    clicked = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+
+        // When the LOAD panel is open it should behave like a modal: every
+        // underlying handler (sidebar actions, map tiles, REGEN/RESET/SAVE,
+        // EVAL, CLEAR-log) must see no click this frame, otherwise a click
+        // on a panel row also fires the sidebar action drawn behind it.
+        // The panel and the LOAD toggle button use `clicked_panel` instead
+        // of `clicked` so they remain interactive.
+        bool clicked_panel = clicked;
+        if (load_open) clicked = false;
 
         // Scroll wheel scrolls the sidebar actions list
         int SB_CONTENT_TOP = SIDEBAR_TOP;
@@ -2464,73 +2558,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        // --- Collapsible tech tree (bottom-left). Hover or click to expand. ---
-        {
-            const float icon_r     = TECH_ICON_R;
-            const float icon_cx    = PAD + icon_r + 4.0f;
-            const float icon_cy    = H   - PAD - icon_r - 4.0f;
-            const float panel_size = TECH_PANEL_SIZE;
-
-            // Panel sits above-and-right of the icon, sharing its bottom-left corner.
-            const float panel_left   = icon_cx - icon_r;
-            const float panel_bottom = icon_cy + icon_r;
-            const float panel_top    = panel_bottom - panel_size;
-            Rectangle panel_rect = { panel_left, panel_top, panel_size, panel_size };
-
-            int hover_tech = -1;
-            if (hovered_action >= 0 && actions[hovered_action].type == ActionType::ResearchTech)
-                hover_tech = actions[hovered_action].param;
-
-            bool icon_hovered  = CheckCollisionPointCircle(mouse, { icon_cx, icon_cy }, icon_r);
-            bool panel_hovered = (tech_open || icon_hovered) && CheckCollisionPointRec(mouse, panel_rect);
-            bool expanded      = tech_open || icon_hovered || panel_hovered;
-
-            if (icon_hovered && clicked) {
-                tech_open = !tech_open;
-                clicked = false;  // consume click so map doesn't react
-            }
-
-            // Expanded panel — drawn first so the icon overlays its corner.
-            if (expanded) {
-                DrawRectangleRec(panel_rect, PANEL_BG);
-                DrawRectangleLinesEx(panel_rect, 1, PANEL_LINE);
-
-                // Tech tree's bottom-left is just inside the panel; size insets to fit.
-                float pad_in = panel_size * 0.10f;
-                float tree_bl_x = panel_left + pad_in;
-                float tree_bl_y = panel_bottom - pad_in;
-                float tree_size = panel_size - 2 * pad_in;
-
-                int pv = (view == ViewMode::Omni)    ? s.current_player()
-                       : (view == ViewMode::P1)      ? 1
-                       : (view == ViewMode::Current) ? s.current_player()
-                                                     : 0;
-                draw_tech_tree(s.get_player(pv).techs_mask(), pv,
-                               tree_bl_x, tree_bl_y, tree_size, hover_tech);
-
-                // "P0 TECH" / "P1 TECH" header
-                Color hc = (pv == 0) ? COL_P0 : COL_P1;
-                const char* hdr = (pv == 0) ? "P0 TECH" : "P1 TECH";
-                int hsz = (int)std::max(10.0f, panel_size * 0.055f);
-                DrawTextC(hdr, (int)(panel_left + 8), (int)(panel_top + 6), hsz, hc);
-            }
-
-            // Icon — small collapsed circle with three radial hint-lines.
-            Color ic_fill = expanded ? PANEL_BG : Color{ 30, 30, 30, 255 };
-            Color ic_line = expanded ? ((s.current_player() == 0) ? COL_P0 : COL_P1)
-                                     : Color{ 130, 130, 130, 255 };
-            DrawCircleV({ icon_cx, icon_cy }, icon_r, ic_fill);
-            DrawCircleLines((int)icon_cx, (int)icon_cy, (int)icon_r, ic_line);
-            // Three short rays as a visual hint of the radial layout
-            float hint_r = icon_r * 0.65f;
-            for (int k = 0; k < 3; k++) {
-                float a = (k + 1) / 4.0f * (3.14159265f / 2.0f);  // 22.5°, 45°, 67.5°
-                DrawLineEx({ icon_cx - icon_r * 0.15f, icon_cy + icon_r * 0.15f },
-                           { icon_cx - icon_r * 0.15f + cosf(a) * hint_r,
-                             icon_cy + icon_r * 0.15f - sinf(a) * hint_r },
-                           1.5f, ic_line);
-            }
-        }
+        // Tech tree moved further down the frame so it layers above the
+        // heuristic eval bar — see the block just before "Action log panel".
 
         // --- Top HUD bar ---
         DrawRectangle(0, 0, W, TOP_HUD, PANEL_BG);
@@ -2636,7 +2665,7 @@ int main(int argc, char** argv) {
         bool regenerate = false;
 
         // Spacebar = End Turn (only in live play; in replay mode Space steps forward)
-        if (!replay_mode && !save_input_active && IsKeyPressed(KEY_SPACE)) {
+        if (!replay_mode && !save_input_active && !load_open && IsKeyPressed(KEY_SPACE)) {
             for (int i = 0; i < action_count; i++) {
                 if (actions[i].type == ActionType::EndTurn && actions[i].affordable) {
                     applied = i;
@@ -2721,6 +2750,35 @@ int main(int argc, char** argv) {
         }
         EndScissorMode();
 
+        // --- TOGGLE EVAL button (half-size, bottom-right of the map area).
+        //     Toggles the heuristic-value bar at the bottom of the map AND
+        //     auto-logging on every applied action. ---
+        if (!replay_mode) {
+            constexpr int EVAL_W = (SIDEBAR)/2;       // half the old sidebar-width
+            constexpr int EVAL_H = 20;                      // half the old height
+            int eval_btn_x = iso_grid_right() - 10 - EVAL_W;
+            int eval_btn_y = CONTENT_H - 10 - EVAL_H;
+            Rectangle eval_btn = { (float)eval_btn_x, (float)eval_btn_y,
+                                   (float)EVAL_W, (float)EVAL_H };
+            bool eval_enabled  = python_ok && !save_input_active;
+            bool eval_hov      = eval_enabled && CheckCollisionPointRec(mouse, eval_btn);
+            // ON state is brighter; hover lightens; disabled is dim.
+            Color eval_bg = !eval_enabled ? Color{ 35, 35, 35, 255 }
+                          : eval_on       ? (eval_hov ? Color{ 130, 90, 180, 255 } : Color{ 100, 70, 150, 255 })
+                                          : (eval_hov ? Color{ 90,  60, 130, 255 } : Color{ 60,  40,  90, 255 });
+            Color eval_fg = eval_enabled  ? WHITE : Color{ 110, 110, 110, 255 };
+            DrawRectangleRec(eval_btn, eval_bg);
+            const char* label = "TOGGLE EVAL";
+            int etw = MeasureTextC(label, 11);
+            DrawTextC(label, eval_btn_x + EVAL_W / 2 - etw / 2,
+                      eval_btn_y + (EVAL_H - 11) / 2, 11, eval_fg);
+            if (eval_hov && clicked) {
+                eval_on = !eval_on;
+                if (eval_on) refresh_eval(true);       // compute + log on enable
+                else         eval_has_value = false;   // hide stale slider on disable
+            }
+        }
+
         // --- Save / Load button row (half-width each, full height, above
         //     regen with the same 8px gap that separates regen and reset).
         //     Clicking SAVE flips the slot into a textbox; clicking LOAD
@@ -2777,18 +2835,23 @@ int main(int argc, char** argv) {
             DrawRectangleRec(load_btn_rect, load_hovered ? Color{ 130, 95, 50, 255 } : Color{ 95, 65, 30, 255 });
             int ltw = MeasureTextC("LOAD", 14);
             DrawTextC("LOAD", load_x + half_w / 2 - ltw / 2, row_y + (BTN_H - 14) / 2, 14, WHITE);
-            if (load_hovered && clicked) {
+            // Use clicked_panel so the LOAD toggle keeps working while the
+            // panel is open (the global `clicked` is suppressed in modal mode).
+            if (load_hovered && clicked_panel) {
                 load_open = !load_open;
                 if (load_open) rescan_saves();
             }
 
-            // Load overlay panel (anchored just above the SAVE/LOAD row).
+            // Load overlay panel (anchored just above the EVAL button so it
+            // doesn't cover it).
             if (load_open) {
                 constexpr int PANEL_H = 200;
                 constexpr int HDR_H   = 22;
                 constexpr int ROW_H   = 22;
                 int panel_x = SB + 4;
                 int panel_w = SIDEBAR - 8;
+                // EVAL no longer lives in the sidebar — anchor against the
+                // SAVE/LOAD row directly.
                 int panel_bottom = row_y - 4;
                 int panel_top    = panel_bottom - PANEL_H;
                 Rectangle panel = { (float)panel_x, (float)panel_top, (float)panel_w, (float)PANEL_H };
@@ -2842,15 +2905,14 @@ int main(int argc, char** argv) {
                     int xw = MeasureTextC("X", 11);
                     DrawTextC("X", del_bx + del_w / 2 - xw / 2, ry + (ROW_H - 11) / 2, 11, WHITE);
 
-                    if (ld_h && clicked)  { do_load(name);   break; }
-                    if (del_h && clicked) { do_delete(name); break; }
+                    if (ld_h && clicked_panel)  { do_load(name);   break; }
+                    if (del_h && clicked_panel) { do_delete(name); break; }
                 }
                 EndScissorMode();
 
-                // Esc closes; clicks inside the panel are consumed so they
-                // don't fall through and re-toggle the sidebar.
+                // Esc closes. (Click suppression is now handled by the
+                // global modal guard at the start of the frame.)
                 if (IsKeyPressed(KEY_ESCAPE)) load_open = false;
-                if (clicked && CheckCollisionPointRec(mouse, panel)) clicked = false;
             }
         }
 
@@ -2889,6 +2951,10 @@ int main(int argc, char** argv) {
             selected_tile  = -1;
             Logger::print("Regenerated map.");
             log_turn_header(s.get_turn(), s.current_player());
+            // Stale cached eval belongs to the previous map — clear it; if
+            // EVAL is still on, recompute against the fresh state.
+            eval_has_value = false;
+            refresh_eval(true);
         } else if (reset) {
             clear_visuals();
             if (replay_mode) {
@@ -2905,6 +2971,9 @@ int main(int argc, char** argv) {
             sidebar_scroll = 0;
             selected_tile  = -1;
             log_scroll = 0;
+            // Stale eval belongs to the pre-reset state.
+            eval_has_value = false;
+            refresh_eval(true);
         }
         if (applied >= 0 && !replay_mode) {
             Logger::print(player_log_color(s.current_player()), "%s",
@@ -2952,6 +3021,8 @@ int main(int argc, char** argv) {
                 log_turn_header(s.get_turn(), s.current_player());
             }
             refresh_borders();
+            // Auto-refresh the heuristic bar after every applied action.
+            refresh_eval(true);
             s.legal_actions(actions, action_count);
             sidebar_scroll = 0;
         }
@@ -3016,6 +3087,137 @@ int main(int argc, char** argv) {
                     if (n_cid2 == sel_city) continue;
                     draw_temp_border(edges2[d][0], edges2[d][1], sel_owner);
                 }
+            }
+        }
+
+        // --- Heuristic eval bar (bottom of map, shown only when EVAL is on).
+        //     Drawn before the tech tree so the tech panel layers on top. ---
+        if (eval_on && !replay_mode) {
+            // Centre the bar on the iso grid's actual centre (the iso grid is
+            // drawn around `iso_grid_right() / 2`, which doesn't coincide with
+            // the middle of the MAP_PX region because of the LABEL gutter).
+            const int bar_margin = 30;
+            const int bar_w      = MAP_CANVAS - bar_margin * 2;
+            const int bar_cx     = iso_grid_right() / 2;  // value 0
+            const int bar_x      = bar_cx - bar_w / 2;
+            const int bar_h      = 4;
+            const int bar_y      = CONTENT_H - 28;
+
+            Color minor_tick = { 130, 130, 130, 255 };
+            Color zero_tick  = { 230, 230, 230, 255 };
+            Color bar_fill   = { 40,  40,  40, 230 };
+            Color bar_border = { 90,  90,  90, 255 };
+
+            DrawRectangle(bar_x, bar_y, bar_w, bar_h, bar_fill);
+            DrawRectangleLines(bar_x, bar_y, bar_w, bar_h, bar_border);
+
+            // Ticks at every 10-unit step from -100 to +100. Big at 0, small elsewhere.
+            for (int i = -10; i <= 10; i++) {
+                int  tx = bar_x + (int)(((i + 10) / 20.0f) * bar_w);
+                int  th = (i == 0) ? 16 : 6;
+                int  ty = bar_y + bar_h / 2 - th / 2;
+                Color tc = (i == 0) ? zero_tick : minor_tick;
+                DrawRectangle(tx, ty, 1, th, tc);
+            }
+
+            // End labels and "0" label.
+            DrawTextC("0",    bar_cx - 3,        bar_y + bar_h + 6, 10, zero_tick);
+            DrawTextC("-100", bar_x - 26,        bar_y - 4,         10, Color{ 200, 90,  90, 255 });
+            DrawTextC("+100", bar_x + bar_w + 4, bar_y - 4,         10, Color{ 90,  200, 90, 255 });
+
+            // Slider — vertical bar through the strip plus a small triangle
+            // pointing down to it for legibility at the exact position.
+            if (eval_has_value) {
+                double clamped = eval_value < -100.0 ? -100.0
+                               : eval_value >  100.0 ?  100.0 : eval_value;
+                int sx = bar_x + (int)((clamped + 100.0) / 200.0 * bar_w);
+                Color slider_col = (eval_perspective == 0) ? COL_P0 : COL_P1;
+
+                // Vertical marker bar — 3px wide, extends 8px above and below
+                // the scale so it stands out against the tick marks.
+                int marker_h = bar_h + 16;
+                DrawRectangle(sx - 1, bar_y - 8, 3, marker_h, slider_col);
+
+                // Triangle pointer above the marker.
+                Vector2 a = { (float)(sx - 5), (float)(bar_y - 14) };
+                Vector2 b = { (float)(sx + 5), (float)(bar_y - 14) };
+                Vector2 c = { (float)sx,       (float)(bar_y - 8)  };
+                DrawTriangle(a, b, c, slider_col);
+
+                char buf[24];
+                snprintf(buf, sizeof(buf), "%+.3f", eval_value);
+                int lw = MeasureTextC(buf, 10);
+                DrawTextC(buf, sx - lw / 2, bar_y - 28, 10, slider_col);
+            }
+        }
+
+        // --- Collapsible tech tree (bottom-left). Hover or click to expand.
+        //     Drawn LATE in the frame so its expanded panel visually covers
+        //     the heuristic eval bar (and any other floating UI) below it. ---
+        {
+            const float icon_r     = TECH_ICON_R;
+            const float icon_cx    = PAD + icon_r + 4.0f;
+            const float icon_cy    = H   - PAD - icon_r - 4.0f;
+            const float panel_size = TECH_PANEL_SIZE;
+
+            // Panel sits above-and-right of the icon, sharing its bottom-left corner.
+            const float panel_left   = icon_cx - icon_r;
+            const float panel_bottom = icon_cy + icon_r;
+            const float panel_top    = panel_bottom - panel_size;
+            Rectangle panel_rect = { panel_left, panel_top, panel_size, panel_size };
+
+            int hover_tech = -1;
+            if (hovered_action >= 0 && actions[hovered_action].type == ActionType::ResearchTech)
+                hover_tech = actions[hovered_action].param;
+
+            bool icon_hovered  = CheckCollisionPointCircle(mouse, { icon_cx, icon_cy }, icon_r);
+            bool panel_hovered = (tech_open || icon_hovered) && CheckCollisionPointRec(mouse, panel_rect);
+            bool expanded      = tech_open || icon_hovered || panel_hovered;
+
+            if (icon_hovered && clicked) {
+                tech_open = !tech_open;
+                clicked = false;  // consume so nothing else reacts this frame
+            }
+
+            // Expanded panel — drawn first so the icon overlays its corner.
+            if (expanded) {
+                DrawRectangleRec(panel_rect, PANEL_BG);
+                DrawRectangleLinesEx(panel_rect, 1, PANEL_LINE);
+
+                // Tech tree's bottom-left is just inside the panel; size insets to fit.
+                float pad_in = panel_size * 0.10f;
+                float tree_bl_x = panel_left + pad_in;
+                float tree_bl_y = panel_bottom - pad_in;
+                float tree_size = panel_size - 2 * pad_in;
+
+                int pv = (view == ViewMode::Omni)    ? s.current_player()
+                       : (view == ViewMode::P1)      ? 1
+                       : (view == ViewMode::Current) ? s.current_player()
+                                                     : 0;
+                draw_tech_tree(s.get_player(pv).techs_mask(), pv,
+                               tree_bl_x, tree_bl_y, tree_size, hover_tech);
+
+                // "P0 TECH" / "P1 TECH" header
+                Color hc = (pv == 0) ? COL_P0 : COL_P1;
+                const char* hdr = (pv == 0) ? "P0 TECH" : "P1 TECH";
+                int hsz = (int)std::max(10.0f, panel_size * 0.055f);
+                DrawTextC(hdr, (int)(panel_left + 8), (int)(panel_top + 6), hsz, hc);
+            }
+
+            // Icon — small collapsed circle with three radial hint-lines.
+            Color ic_fill = expanded ? PANEL_BG : Color{ 30, 30, 30, 255 };
+            Color ic_line = expanded ? ((s.current_player() == 0) ? COL_P0 : COL_P1)
+                                     : Color{ 130, 130, 130, 255 };
+            DrawCircleV({ icon_cx, icon_cy }, icon_r, ic_fill);
+            DrawCircleLines((int)icon_cx, (int)icon_cy, (int)icon_r, ic_line);
+            // Three short rays as a visual hint of the radial layout
+            float hint_r = icon_r * 0.65f;
+            for (int k = 0; k < 3; k++) {
+                float a = (k + 1) / 4.0f * (3.14159265f / 2.0f);  // 22.5°, 45°, 67.5°
+                DrawLineEx({ icon_cx - icon_r * 0.15f, icon_cy + icon_r * 0.15f },
+                           { icon_cx - icon_r * 0.15f + cosf(a) * hint_r,
+                             icon_cy + icon_r * 0.15f - sinf(a) * hint_r },
+                           1.5f, ic_line);
             }
         }
 
