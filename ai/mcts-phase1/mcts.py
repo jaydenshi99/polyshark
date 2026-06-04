@@ -185,7 +185,12 @@ class MCTS:
         return best_a
 
     def _puct_pick(self, node: Node) -> object:
-        sqrt_N = math.sqrt(max(node.n, 1))
+        # PUCT (AlphaZero):  a* = argmax_a  Q(s,a) + c * P(s,a) * sqrt(N_tot) / (1 + N(s,a))
+        # where N_tot = Σ_b N(s,b) is the total visits across this node's children.
+        # Unvisited children (N=0) are driven purely by their prior P — no
+        # special-casing needed, unlike UCB1.
+        n_tot = sum(child.n for child in node.children.values())
+        sqrt_N = math.sqrt(max(n_tot, 1))
         best_score, best_a = -math.inf, None
         for a, child in node.children.items():
             p = node.priors.get(a, 1.0)

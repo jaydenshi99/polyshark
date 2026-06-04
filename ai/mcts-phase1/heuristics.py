@@ -70,6 +70,10 @@ RESOURCE_TECH = {
 # (mine). Positive when I'm closer to a village, nudging units to capture them.
 VILLAGE_DISTANCE_PENALTY = 1
 
+# action_prior bonus for a Move whose destination is closer to an uncaptured
+# city (Village tile) than its origin — pulls the tree search toward expansion.
+MOVE_TOWARD_CITY_PRIOR = 6.0
+
 
 # ---------------------------------------------------------------------------
 # Tech heuristic
@@ -194,15 +198,34 @@ def rollout_policy(state, rng: random.Random):
 
 def action_prior(state, action) -> float:
     """
-    Hand-rolled prior in (0, 1]. Default treats all legal actions equally
-    and just nudges Attack / CaptureCity above EndTurn. Caller normalises.
+    Hand-rolled prior (caller normalises). Nudges Attack / CaptureCity above
+    EndTurn, and gives a big bonus to Moves that step toward an uncaptured city.
     """
     t = action.type
     if t == polyshark.ActionType.CaptureCity:    return 4.0
     if t == polyshark.ActionType.Attack:         return 2.0
     if t == polyshark.ActionType.HarvestResource:return 1.5
     if t == polyshark.ActionType.EndTurn:        return 0.5
+    if t == polyshark.ActionType.Move and _move_approaches_city(state, action):
+        return MOVE_TOWARD_CITY_PRIOR
     return 1.0
+
+
+def _move_approaches_city(state, action) -> bool:
+    """True if `action`'s destination is strictly closer (Chebyshev) to the
+    nearest uncaptured city (Village tile) than its origin is."""
+    size = state.map_size()
+    villages = [(i % size, i // size)
+                for i in range(state.map_tiles())
+                if state.tile_at(i).terrain == polyshark.TerrainType.Village]
+    if not villages:
+        return False
+
+    def nearest(tile):
+        x, y = tile % size, tile // size
+        return min(max(abs(vx - x), abs(vy - y)) for vx, vy in villages)
+
+    return nearest(action.dst) < nearest(action.src)
 
 
 # ---------------------------------------------------------------------------
