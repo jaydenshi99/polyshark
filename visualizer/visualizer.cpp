@@ -16,8 +16,11 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <sstream>
 #include <vector>
 #include <string>
+#include <unistd.h>
+#include <sys/wait.h>
 
 // 5:3 diamond (matches grass sprite 840x507); recomputed each map gen to fill MAP_CANVAS.
 static int            TILE_W   = 56;
@@ -51,7 +54,7 @@ static constexpr int MAP_OFF  = TECH_W;
 static constexpr int MAP_CANVAS = 674;
 static constexpr int MAP_PX     = MAP_CANVAS + PAD * 2 + LABEL;
 static constexpr int LOG_W      = 200;
-static constexpr int TECH_H     = 0;
+static constexpr int TECH_H     = 18;  // scrubber strip below main content
 static constexpr float TECH_PANEL_SIZE = 320.0f;  // square side of the expanded tech tree panel
 static constexpr float TECH_ICON_R     = 18.0f;   // radius of the collapsed bottom-left icon
 static constexpr int W          = TECH_W + MAP_PX + SIDEBAR + LOG_W;
@@ -1496,6 +1499,19 @@ int main(int argc, char** argv) {
     std::vector<Action>    replay_actions;  // one Action per applied step (paths populated for Move)
     std::vector<std::string> replay_log;        // one entry per action
     std::vector<LogColor>    replay_log_color;  // parallel colour per replay entry
+    std::vector<int>         replay_log_at_step; // how many log entries to show at each replay_step
+    std::vector<std::vector<float>> heatmap_steps; // sidecar: [step][r*sz+c]
+    std::vector<float>              current_heatmap; // what's displayed now ([sz*sz] or empty)
+    bool show_heatmap    = false;
+    int  heatmap_channel = -1;   // -1 = Grad-CAM, 0-31 = raw activation plane
+    // Grad-CAM coprocess (spawned when --model is passed).
+    FILE* cam_write     = nullptr;  // C++ → Python (commands)
+    FILE* cam_read      = nullptr;  // Python → C++ (heatmaps)
+    pid_t cam_pid       = -1;
+    int   cam_hmap_step = -2;       // replay_step for which current_heatmap was last filled
+    // Replay metadata needed to describe states to the coprocess.
+    uint64_t replay_seed = 0;
+    int      replay_sz   = 0;
     int replay_step = 0;
     // Previous frame's replay_step; single +1 advances animate, jumps don't.
     int last_replay_step = -1;
@@ -1509,6 +1525,12 @@ int main(int argc, char** argv) {
         reachable_tiles(pre, uid, mp_at, parent);
         encode_path_bits(parent, a.from, a.to, pre.map_size(), &a.path_bits, &a.path_steps);
     };
+    // First pass: find --model so we can spawn the coprocess before the window opens.
+    std::string cam_ckpt_path;
+    for (int i = 1; i < argc - 1; i++) {
+        if (std::string(argv[i]) == "--model") { cam_ckpt_path = argv[i + 1]; break; }
+    }
+
     for (int i = 1; i < argc - 1; i++) {
         if (std::string(argv[i]) == "--replay") {
             replay_mode = true;
@@ -1524,11 +1546,26 @@ int main(int argc, char** argv) {
                 replay_log_color.push_back(player_log_color(player));
             };
             if (first == "seed") {
-                uint64_t seed; f >> seed;
-                MapGenParams p = MapGen::drylands_defaults();
+                // Format: "seed <N> <sz>" — sz is optional, defaults to 9 for old files.
+                std::string seed_line;
+                std::getline(f, seed_line);
+                std::istringstream iss(seed_line);
+                uint64_t seed; iss >> seed;
+                int sz = 9;
+                iss >> sz;
+                replay_seed = seed;
+                replay_sz   = sz;
+                MapGenParams p = MapGenParams::for_biome(BiomeType::Drylands, sz);
                 p.seed = seed;
                 rs = MapGen(p).generate().state;
                 push_replay_header(rs.get_turn(), rs.current_player());
+                // Skip optional outcome line (new format: "outcome <v_p0> <v_p1>").
+                {
+                    auto pos = f.tellg();
+                    std::string tok; f >> tok;
+                    if (tok == "outcome") { float v0, v1; f >> v0 >> v1; }
+                    else f.seekg(pos);
+                }
             } else {
                 rs = MapGen(MapGen::drylands_defaults()).generate().state;
                 push_replay_header(rs.get_turn(), rs.current_player());
@@ -1541,13 +1578,18 @@ int main(int argc, char** argv) {
                 replay_log_color.push_back(player_log_color(rs.current_player()));
                 replay_actions.push_back(act0);
                 replay_states.push_back(rs);
+                replay_log_at_step.push_back(1);  // state 0: show only turn header
                 replay_states.push_back(rs = rs.apply_action(act0));
                 if (act0.type == ActionType::EndTurn)
                     push_replay_header(rs.get_turn(), rs.current_player());
+                replay_log_at_step.push_back((int)replay_log.size());
             }
             replay_states.push_back(rs);
+            replay_log_at_step.push_back((int)replay_log.size());  // step 0
             int t, fr, to, pa;
             while (f >> t >> fr >> to >> pa) {
+                // New format appends path_bits path_steps — consume if present.
+                { auto pos = f.tellg(); int pb, ps; if (!(f >> pb >> ps)) f.seekg(pos); }
                 Action act = {(ActionType)t, fr, to, pa, true};
                 populate_move_path(act, rs);
                 replay_log.push_back(format_action_str(act, rs.current_player(), rs.get_turn(), rs.map_size()));
@@ -1556,13 +1598,83 @@ int main(int argc, char** argv) {
                 replay_states.push_back(rs = rs.apply_action(act));
                 if (act.type == ActionType::EndTurn)
                     push_replay_header(rs.get_turn(), rs.current_player());
+                replay_log_at_step.push_back((int)replay_log.size());
             }
             initial = s = replay_states[0];
             TILE_W = iso_grid_width() / s.map_size();
             TILE_H = (TILE_W * 3) / 5;
+            // Try to load .heatmap sidecar (same path, different extension).
+            {
+                std::string hp = argv[i + 1];
+                auto dot = hp.rfind('.');
+                if (dot != std::string::npos) hp = hp.substr(0, dot);
+                hp += ".heatmap";
+                std::ifstream hf(hp, std::ios::binary);
+                if (hf) {
+                    int32_t hn, hsz;
+                    hf.read(reinterpret_cast<char*>(&hn),  4);
+                    hf.read(reinterpret_cast<char*>(&hsz), 4);
+                    heatmap_steps.resize(hn, std::vector<float>(hsz * hsz));
+                    for (int hi = 0; hi < hn; hi++)
+                        hf.read(reinterpret_cast<char*>(heatmap_steps[hi].data()),
+                                hsz * hsz * sizeof(float));
+                    fprintf(stderr, "heatmap: loaded %d frames from %s\n", hn, hp.c_str());
+                }
+            }
             break;
         }
     }
+
+    // Spawn Grad-CAM coprocess if --model was supplied.
+    if (!cam_ckpt_path.empty()) {
+        int pipe_to_py[2], pipe_from_py[2];
+        if (pipe(pipe_to_py) == 0 && pipe(pipe_from_py) == 0) {
+            cam_pid = fork();
+            if (cam_pid == 0) {
+                dup2(pipe_to_py[0],   STDIN_FILENO);
+                dup2(pipe_from_py[1], STDOUT_FILENO);
+                close(pipe_to_py[1]);  close(pipe_from_py[0]);
+                close(pipe_to_py[0]);  close(pipe_from_py[1]);
+                execlp("python3", "python3", "ai/tdl/gradcam_server.py",
+                       "--ckpt", cam_ckpt_path.c_str(), nullptr);
+                _exit(1);
+            }
+            close(pipe_to_py[0]);  close(pipe_from_py[1]);
+            cam_write = fdopen(pipe_to_py[1],  "w");
+            cam_read  = fdopen(pipe_from_py[0], "r");
+            heatmap_steps.clear();  // coprocess supersedes sidecar
+            fprintf(stderr, "gradcam: coprocess spawned (pid %d)\n", (int)cam_pid);
+        }
+    }
+
+    // Helper: fill current_heatmap for replay_step, using coprocess or sidecar.
+    auto refresh_heatmap = [&]() {
+        if (!show_heatmap) return;
+        if (cam_hmap_step == replay_step) return;  // already current
+        if (cam_write && cam_read && replay_mode && replay_seed != 0) {
+            // Send state description to coprocess.
+            int n = replay_step;
+            fprintf(cam_write, "%llu %d %d",
+                    (unsigned long long)replay_seed, replay_sz, n);
+            for (int k = 0; k < n; k++) {
+                const Action& a = replay_actions[k];
+                fprintf(cam_write, " %d %d %d %d %d %d",
+                        (int)a.type, a.from, a.to, a.param,
+                        (int)a.path_bits, (int)a.path_steps);
+            }
+            fprintf(cam_write, " %d\n", heatmap_channel);
+            fflush(cam_write);
+            int sz2 = replay_sz * replay_sz;
+            current_heatmap.resize(sz2);
+            for (int k = 0; k < sz2; k++)
+                fscanf(cam_read, "%f", &current_heatmap[k]);
+        } else if (!heatmap_steps.empty() && replay_step < (int)heatmap_steps.size()) {
+            current_heatmap = heatmap_steps[replay_step];
+        } else {
+            current_heatmap.clear();
+        }
+        cam_hmap_step = replay_step;
+    };
 
     ViewMode  view = ViewMode::Current;
 
@@ -1869,6 +1981,26 @@ int main(int argc, char** argv) {
         if (!kb_blocked && IsKeyPressed(KEY_F)) g_use_custom_font = !g_use_custom_font;
 
         if (!kb_blocked && IsKeyPressed(KEY_P)) GameState::print(s);
+      
+        if (!save_input_active && IsKeyPressed(KEY_H) &&
+                (!heatmap_steps.empty() || cam_write)) {
+            show_heatmap = !show_heatmap;
+            cam_hmap_step = -2;
+            refresh_heatmap();
+        }
+        if (show_heatmap && cam_write) {
+            int delta = IsKeyPressed(KEY_RIGHT_BRACKET) ? 1 :
+                        IsKeyPressed(KEY_LEFT_BRACKET)  ? -1 : 0;
+            if (delta) {
+                heatmap_channel = heatmap_channel + delta;
+                if (heatmap_channel > 31) heatmap_channel = -1;
+                if (heatmap_channel < -1) heatmap_channel = 31;
+                cam_hmap_step = -2;
+                refresh_heatmap();
+            }
+        }
+
+        if (!save_input_active && IsKeyPressed(KEY_P)) GameState::print(s);
 
         // Build sidebar layout (headers + action rows)
         static SidebarRow layout[512];
@@ -1949,7 +2081,7 @@ int main(int argc, char** argv) {
         // Scrubber — click or drag to jump to any replay step
         static bool scrubbing = false;
         constexpr int SCRUB_H = 18;
-        const int scrub_y = CONTENT_H - SCRUB_H;
+        const int scrub_y = CONTENT_H;  // in the TECH_H strip, below all content buttons
         if (replay_mode) {
             bool over_scrub = mouse.y >= scrub_y;
             if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && over_scrub) scrubbing = true;
@@ -1964,6 +2096,7 @@ int main(int argc, char** argv) {
                     s = replay_states[replay_step];
                     refresh_borders();
                     s.legal_actions(actions, action_count);
+                    refresh_heatmap();
                 }
             }
         }
@@ -2126,6 +2259,16 @@ int main(int argc, char** argv) {
                     draw_tile_borders(idx, ctr, self_border_owner, BORDER_DIRS_FRONT);
                 } else {
                     draw_tile_borders(idx, ctr, self_border_owner);
+                }
+
+                // Grad-CAM / activation plane heatmap overlay.
+                if (show_heatmap && idx < (int)current_heatmap.size()) {
+                    float heat = current_heatmap[idx];
+                    if (heat > 0.02f) {
+                        uint8_t a = (uint8_t)(heat * 170.0f);
+                        uint8_t g = (uint8_t)(200.0f * (1.0f - heat));
+                        draw_diamond(ctr, { 255, g, 0, a });
+                    }
                 }
 
                 // Overlays between terrain and unit so units occlude them.
@@ -2541,6 +2684,7 @@ int main(int argc, char** argv) {
                     s = replay_states[replay_step];
                     refresh_borders();
                     s.legal_actions(actions, action_count);
+                    refresh_heatmap();
                 }
             };
 
@@ -2885,7 +3029,9 @@ int main(int argc, char** argv) {
 
         // Sync log to current replay step
         if (replay_mode) {
-            int n = std::min(replay_step, (int)replay_log.size());
+            int n = (replay_step < (int)replay_log_at_step.size())
+                    ? replay_log_at_step[replay_step]
+                    : (int)replay_log.size();
             action_log.assign(replay_log.begin(), replay_log.begin() + n);
             action_log_color.assign(replay_log_color.begin(), replay_log_color.begin() + n);
         }
@@ -3166,6 +3312,15 @@ int main(int argc, char** argv) {
             const char* label = TextFormat("%d / %d", replay_step, total);
             int lw = MeasureTextC(label, 12);
             DrawTextC(label, W / 2 - lw / 2, scrub_y + 3, 12, { 200, 200, 200, 255 });
+        }
+
+        // Heatmap mode indicator (top-left of board, only when active).
+        if (show_heatmap && !current_heatmap.empty()) {
+            const char* mode = (heatmap_channel == -1)
+                ? "GRAD-CAM  [ / ] to cycle channels"
+                : TextFormat("CH %02d / 31  [ / ] to cycle", heatmap_channel);
+            DrawRectangle(MAP_OFF + PAD, TOP_HUD + 2, MeasureTextC(mode, 11) + 8, 16, { 0, 0, 0, 160 });
+            DrawTextC(mode, MAP_OFF + PAD + 4, TOP_HUD + 4, 11, { 255, 200, 80, 255 });
         }
 
         EndDrawing();
