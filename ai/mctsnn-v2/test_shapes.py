@@ -86,7 +86,7 @@ def test_full_forward():
     total = sum(p.grad.abs().sum().item() for _, p in named)
     assert total > 0 and np.isfinite(total), "bad gradient"
     # Confirm every major component actually received gradient.
-    for comp in ("entity", "unit_scatter", "city_scatter", "stem", "blocks", "global_mlp", "value_head"):
+    for comp in ("entity", "unit_scatter", "city_scatter", "stem", "blocks", "global_mlp", "trunk", "value_head"):
         g = sum(p.grad.abs().sum().item() for n, p in named if n.startswith(comp))
         assert g > 0, f"no gradient reached {comp}"
     print(f"[grad] loss={loss.item():.4f} grad_sum={total:.1f} — all components flow OK")

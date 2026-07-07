@@ -31,6 +31,7 @@ CONV_IN = BOARD_CHANNELS + 2 * SCATTER_DIM     # 18 + 16 + 16 = 50
 CONV_CH = 64
 N_RES_BLOCKS = 3
 GLOBAL_EMB = 32
+TRUNK_DIM = 256
 
 
 class EntityProjection(nn.Module):
@@ -129,10 +130,14 @@ class PolysharkNet(nn.Module):
 
         self.global_mlp = nn.Sequential(nn.Linear(GLOBAL_DIM, GLOBAL_EMB), nn.GELU())
 
-        self.value_head = nn.Sequential(
-            nn.Linear(CONV_CH + GLOBAL_EMB, 128), nn.ReLU(inplace=True),
-            nn.Linear(128, 1), nn.Tanh(),
+        # Shared trunk: fuse pooled board + globals -> 256-d shared representation.
+        # Value (and later policy-value) heads branch off this.
+        trunk_in = CONV_CH + GLOBAL_EMB  # 64 + 32 = 96
+        self.trunk = nn.Sequential(
+            nn.Linear(trunk_in, TRUNK_DIM), nn.LayerNorm(TRUNK_DIM), nn.GELU(),
+            nn.Linear(TRUNK_DIM, TRUNK_DIM), nn.LayerNorm(TRUNK_DIM), nn.GELU(),
         )
+        self.value_head = nn.Sequential(nn.Linear(TRUNK_DIM, 1), nn.Tanh())
 
     def forward(self, unit_types, unit_feats, unit_mask, unit_tiles,
                 city_feats, city_mask, city_tiles, board, globals_):
@@ -152,5 +157,6 @@ class PolysharkNet(nn.Module):
         x = x.mean(dim=(2, 3))                                     # global avg pool [B,64]
 
         g = self.global_mlp(globals_)                             # [B,32]
-        value = self.value_head(torch.cat([x, g], dim=1))         # [B,1]
+        rep = self.trunk(torch.cat([x, g], dim=1))                # [B,256] shared rep
+        value = self.value_head(rep)                              # [B,1]
         return value
