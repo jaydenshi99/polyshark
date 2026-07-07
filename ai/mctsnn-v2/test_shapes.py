@@ -68,8 +68,18 @@ def test_full_forward():
     tensors = {k: torch.from_numpy(v) for k, v in batch.items()}
 
     model = PolysharkNet()
-    value = model(*(tensors[k] for k in _MODEL_ARG_ORDER))
 
+    # Trunk cache exposes the tensors the policy/value heads read from.
+    cache = model.trunk(*(tensors[k] for k in _MODEL_ARG_ORDER))
+    Lu, Lc = tensors["unit_mask"].shape[1], tensors["city_mask"].shape[1]
+    assert cache.core.shape == (B, 256), cache.core.shape
+    assert cache.feature_map.shape == (B, 64, 11, 11), cache.feature_map.shape
+    assert cache.unit_tok.shape == (B, Lu, 128) and cache.city_tok.shape == (B, Lc, 128)
+    assert cache.unit_mask.shape == (B, Lu) and cache.city_mask.shape == (B, Lc)
+    print(f"[cache] core{tuple(cache.core.shape)} feature_map{tuple(cache.feature_map.shape)} "
+          f"unit_tok{tuple(cache.unit_tok.shape)} city_tok{tuple(cache.city_tok.shape)} OK")
+
+    value = model(*(tensors[k] for k in _MODEL_ARG_ORDER))
     assert value.shape == (B, 1), value.shape
     assert torch.isfinite(value).all(), "non-finite value (scatter/mask NaN?)"
     assert (value >= -1).all() and (value <= 1).all(), "value out of tanh range"

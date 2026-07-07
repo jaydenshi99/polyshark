@@ -13,6 +13,7 @@ Pipeline (see docs/embedding.md, docs/attention.md, docs/board.md):
 """
 
 import math
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
@@ -124,6 +125,18 @@ class ResBlock(nn.Module):
         return torch.relu(out + x)
 
 
+@dataclass
+class TrunkCache:
+    """Computed once per real state; the value + policy heads read from this.
+    Never recompute the trunk per sub-action — see docs/policy_head.md."""
+    core: torch.Tensor         # [B, 256]  shared representation
+    feature_map: torch.Tensor  # [B, 64, 11, 11]  ResBlock body, pre-pool
+    unit_tok: torch.Tensor     # [B, Lu, 128]  post-attention unit tokens
+    city_tok: torch.Tensor     # [B, Lc, 128]  post-attention city tokens
+    unit_mask: torch.Tensor    # [B, Lu]  True = real
+    city_mask: torch.Tensor    # [B, Lc]  True = real
+
+
 class PolysharkNet(nn.Module):
     def __init__(self):
         super().__init__()
@@ -151,23 +164,33 @@ class PolysharkNet(nn.Module):
             nn.Linear(64, 1), ArctanSquash(),
         )
 
-    def forward(self, unit_types, unit_feats, unit_mask, unit_tiles,
-                city_feats, city_mask, city_tiles, board, globals_):
+    def trunk(self, unit_types, unit_feats, unit_mask, unit_tiles,
+              city_feats, city_mask, city_tiles, board, globals_):
+        """One forward pass per real state -> TrunkCache the heads read from."""
         unit_tok, city_tok = self.entity(
             unit_types, unit_feats, unit_mask, city_feats, city_mask,
         )
 
         map_tiles = board.shape[-1] * board.shape[-2]
         # Zero padded rows before scatter so they contribute nothing.
-        u32 = self.unit_scatter(unit_tok) * unit_mask.unsqueeze(-1)
-        c32 = self.city_scatter(city_tok) * city_mask.unsqueeze(-1)
-        unit_plane = scatter_to_grid(u32, unit_tiles, map_tiles)   # [B,32,H,W]
-        city_plane = scatter_to_grid(c32, city_tiles, map_tiles)   # [B,32,H,W]
+        u16 = self.unit_scatter(unit_tok) * unit_mask.unsqueeze(-1)
+        c16 = self.city_scatter(city_tok) * city_mask.unsqueeze(-1)
+        unit_plane = scatter_to_grid(u16, unit_tiles, map_tiles)   # [B,16,H,W]
+        city_plane = scatter_to_grid(c16, city_tiles, map_tiles)   # [B,16,H,W]
 
         x = torch.cat([board, unit_plane, city_plane], dim=1)      # [B,50,H,W]
-        x = self.blocks(self.stem(x))                              # [B,64,H,W]
-        pooled = torch.cat([x.mean(dim=(2, 3)), x.amax(dim=(2, 3))], dim=1)  # avg+max [B,128]
+        feature_map = self.blocks(self.stem(x))                    # [B,64,H,W] (pre-pool)
+        pooled = torch.cat([feature_map.mean(dim=(2, 3)),
+                            feature_map.amax(dim=(2, 3))], dim=1)   # avg+max [B,128]
+        core = self.core(torch.cat([pooled, globals_], dim=1))     # [B,140]->[B,256]
 
-        rep = self.core(torch.cat([pooled, globals_], dim=1))      # [B,140]->[B,256] shared rep
-        value = self.value_head(rep)                               # [B,1]
-        return value
+        return TrunkCache(core, feature_map, unit_tok, city_tok, unit_mask, city_mask)
+
+    def value(self, core):
+        return self.value_head(core)                               # [B,1]
+
+    def forward(self, unit_types, unit_feats, unit_mask, unit_tiles,
+                city_feats, city_mask, city_tiles, board, globals_):
+        cache = self.trunk(unit_types, unit_feats, unit_mask, unit_tiles,
+                           city_feats, city_mask, city_tiles, board, globals_)
+        return self.value(cache.core)
