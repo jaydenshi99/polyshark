@@ -1,11 +1,11 @@
 """
-Shape + sanity checks for the entity encoder. Run:
+Shape + sanity checks for the full state->value net. Run:
 
     source .venv/bin/activate
     python ai/mctsnn-v2/test_shapes.py
 
-Drives real make_random_game states through features -> model, and asserts
-shapes, mask correctness, and gradient flow.
+Drives real make_random_game states through features -> PolysharkNet, asserting
+input shapes, a finite value in [-1,1], and gradient flow to every parameter group.
 """
 
 import os
@@ -18,8 +18,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../build/bindings
 import polyshark  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(__file__))
-from features import encode_entities, collate, UNIT_FEAT_DIM, CITY_FEAT_DIM  # noqa: E402
-from model import EntityEncoder, D_MODEL  # noqa: E402
+from features import (  # noqa: E402
+    encode_entities, encode_board, encode_globals, collate,
+    UNIT_FEAT_DIM, CITY_FEAT_DIM, BOARD_CHANNELS, GLOBAL_DIM,
+)
+from model import PolysharkNet  # noqa: E402
+
+_MODEL_ARG_ORDER = [
+    "unit_types", "unit_feats", "unit_mask", "unit_tiles",
+    "city_feats", "city_mask", "city_tiles", "board", "globals",
+]
 
 
 def _rollout_states(seed, n):
@@ -36,48 +44,55 @@ def _rollout_states(seed, n):
 
 
 def test_single_encode():
-    e = encode_entities(polyshark.make_random_game(1))
-    assert e["unit_feats"].ndim == 2 and e["unit_feats"].shape[1] == UNIT_FEAT_DIM
-    assert e["city_feats"].ndim == 2 and e["city_feats"].shape[1] == CITY_FEAT_DIM
-    assert e["unit_types"].shape[0] == e["unit_feats"].shape[0]
-    assert np.isfinite(e["unit_feats"]).all() and np.isfinite(e["city_feats"]).all()
-    print(f"[single] units={e['unit_types'].shape[0]} cities={e['city_feats'].shape[0]} OK")
+    s = polyshark.make_random_game(1)
+    e = encode_entities(s)
+    assert e["unit_feats"].shape[1] == UNIT_FEAT_DIM
+    assert e["city_feats"].shape[1] == CITY_FEAT_DIM
+    assert e["unit_tiles"].shape[0] == e["unit_types"].shape[0]
+    assert e["city_tiles"].shape[0] == e["city_feats"].shape[0]
+
+    sz = s.map_size()
+    board = encode_board(s)
+    assert board.shape == (BOARD_CHANNELS, sz, sz)
+    g = encode_globals(s)
+    assert g.shape == (GLOBAL_DIM,)
+    assert np.isfinite(board).all() and np.isfinite(g).all()
+    print(f"[single] units={e['unit_types'].shape[0]} cities={e['city_feats'].shape[0]} "
+          f"board={board.shape} globals={g.shape} OK")
 
 
-def test_batch_forward():
+def test_full_forward():
     states = _rollout_states(seed=7, n=6)
     batch = collate(states)
     B = len(states)
-    Lu, Lc = batch["unit_mask"].shape[1], batch["city_mask"].shape[1]
-
     tensors = {k: torch.from_numpy(v) for k, v in batch.items()}
-    model = EntityEncoder()
 
-    tokens, real_mask = model(
-        tensors["unit_types"], tensors["unit_feats"], tensors["unit_mask"],
-        tensors["city_feats"], tensors["city_mask"],
-    )
+    model = PolysharkNet()
+    value = model(*(tensors[k] for k in _MODEL_ARG_ORDER))
 
-    assert tokens.shape == (B, Lu + Lc, D_MODEL), tokens.shape
-    assert real_mask.shape == (B, Lu + Lc)
-    assert torch.isfinite(tokens).all(), "non-finite tokens (masking/softmax NaN?)"
-    # Every state must have >= 1 real entity (else its query rows all-mask -> NaN).
-    assert real_mask.any(dim=1).all(), "a batch element has zero real entities"
-    print(f"[batch]  B={B} L={Lu + Lc} tokens={tuple(tokens.shape)} finite OK")
+    assert value.shape == (B, 1), value.shape
+    assert torch.isfinite(value).all(), "non-finite value (scatter/mask NaN?)"
+    assert (value >= -1).all() and (value <= 1).all(), "value out of tanh range"
+    print(f"[forward] B={B} value{tuple(value.shape)} range=[{value.min():.3f},{value.max():.3f}] OK")
 
-    # Gradient flow: masked-mean over real tokens -> scalar -> backward.
-    masked = tokens * real_mask.unsqueeze(-1)
-    pooled = masked.sum(dim=1) / real_mask.sum(dim=1, keepdim=True)
-    loss = pooled.pow(2).mean()
+    # Gradient flow: pretend targets, MSE, backward.
+    target = torch.zeros(B, 1)
+    loss = torch.nn.functional.mse_loss(value, target)
     loss.backward()
-    grads = [p.grad for p in model.parameters() if p.grad is not None]
-    assert grads and all(torch.isfinite(g).all() for g in grads)
-    total = sum(g.abs().sum().item() for g in grads)
-    assert total > 0, "zero gradient — nothing learned"
-    print(f"[grad]   loss={loss.item():.4f} grad_sum={total:.2f} flows OK")
+
+    named = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
+    no_grad = [n for n, p in named if p.grad is None]
+    assert not no_grad, f"params with no grad: {no_grad[:5]}"
+    total = sum(p.grad.abs().sum().item() for _, p in named)
+    assert total > 0 and np.isfinite(total), "bad gradient"
+    # Confirm every major component actually received gradient.
+    for comp in ("entity", "unit_scatter", "city_scatter", "stem", "blocks", "global_mlp", "value_head"):
+        g = sum(p.grad.abs().sum().item() for n, p in named if n.startswith(comp))
+        assert g > 0, f"no gradient reached {comp}"
+    print(f"[grad] loss={loss.item():.4f} grad_sum={total:.1f} — all components flow OK")
 
 
 if __name__ == "__main__":
     test_single_encode()
-    test_batch_forward()
+    test_full_forward()
     print("\nAll checks passed.")

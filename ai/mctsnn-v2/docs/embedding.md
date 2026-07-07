@@ -4,7 +4,7 @@ Ground truth from engine headers. Two entity types to embed: **Unit** and **City
 
 ## Unit
 
-**Instance state** (per-unit, mutable) — [unit.h](../../engine/include/unit.h), all exposed in bindings:
+**Instance state** (per-unit, mutable) — [unit.h](../../../engine/include/unit.h), all exposed in bindings:
 
 | Field | Type | Range | Note |
 |---|---|---|---|
@@ -20,7 +20,7 @@ Ground truth from engine headers. Two entity types to embed: **Unit** and **City
 | `city_id` | reference | −1 or city id | relational link, not a scalar |
 | `last_dir` | categorical | −1, 0…7 | 8-dir, one-hot |
 
-**Type-derived stats** (constant per `type`, from [unit_def.h](../../engine/include/unit_def.h)): `hp`, `attack`, `defense`, `movement`, `range`, `cost`, `abilities`, `required_tech`. Attack/defense are NOT on the unit — only reachable via type. Choose one: embed `type` (net learns stats) OR expand into raw stats + drop type.
+**Type-derived stats** (constant per `type`, from [unit_def.h](../../../engine/include/unit_def.h)): `hp`, `attack`, `defense`, `movement`, `range`, `cost`, `abilities`, `required_tech`. Attack/defense are NOT on the unit — only reachable via type. Choose one: embed `type` (net learns stats) OR expand into raw stats + drop type.
 
 **Abilities** (5 flags, function of type): FORTIFY, DASH, ESCAPE, RANGED, STATIC.
 
@@ -30,7 +30,7 @@ Ground truth from engine headers. Two entity types to embed: **Unit** and **City
 
 ## City
 
-**Instance state** — [city.h](../../engine/include/city.h):
+**Instance state** — [city.h](../../../engine/include/city.h):
 
 | Field | Type | Range | Exposed | Note |
 |---|---|---|---|---|
@@ -86,7 +86,7 @@ the embedding subsumes them.
 
 - **owner** → binary me/opp (same as unit).
 - **level** → `log(1 + level)` (unbounded).
-- **population** → `population / (level + 1)` (threshold confirmed [city.cpp:18](../../engine/src/city.cpp#L18)).
+- **population** → `population / (level + 1)` (threshold confirmed [city.cpp:18](../../../engine/src/city.cpp#L18)).
 - **tile_index** → raw (row, col).
 - **border_radius** → boolean (1→0, 2→1; expands at level 4).
 - **units_owned** → `units_owned / unit_capacity` (cap = level+1).
