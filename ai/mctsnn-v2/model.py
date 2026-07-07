@@ -12,6 +12,8 @@ Pipeline (see docs/embedding.md, docs/attention.md, docs/board.md):
   globals [12] --MLP--> [32] ------------------------ concat -> trunk -> value (tanh)
 """
 
+import math
+
 import torch
 import torch.nn as nn
 
@@ -98,6 +100,14 @@ def scatter_to_grid(src, tiles, map_tiles):
     return plane.view(B, hw, hw, C).permute(0, 3, 1, 2).contiguous()  # [B,C,H,W]
 
 
+class ArctanSquash(nn.Module):
+    """(2/pi) * arctan(x) -> (-1, 1). Softer saturation than tanh (gradients persist
+    for confident positions)."""
+
+    def forward(self, x):
+        return (2.0 / math.pi) * torch.atan(x)
+
+
 class ResBlock(nn.Module):
     """3x3 -> BN -> ReLU -> 3x3 -> BN, + identity, -> ReLU. Zero-padded, size-preserving."""
 
@@ -135,7 +145,11 @@ class PolysharkNet(nn.Module):
             nn.Linear(CORE_IN, TRUNK_DIM), nn.LayerNorm(TRUNK_DIM), nn.GELU(),
             nn.Linear(TRUNK_DIM, TRUNK_DIM), nn.LayerNorm(TRUNK_DIM), nn.GELU(),
         )
-        self.value_head = nn.Sequential(nn.Linear(TRUNK_DIM, 1), nn.Tanh())
+        # Value head: small readout off the shared rep -> scalar in (-1, 1).
+        self.value_head = nn.Sequential(
+            nn.Linear(TRUNK_DIM, 64), nn.GELU(),
+            nn.Linear(64, 1), ArctanSquash(),
+        )
 
     def forward(self, unit_types, unit_feats, unit_mask, unit_tiles,
                 city_feats, city_mask, city_tiles, board, globals_):

@@ -39,8 +39,7 @@ Two `Linear → LayerNorm → GELU` blocks, `140 → 256 → 256`:
 
 ## Heads (branch off the [256] shared rep)
 
-**Value head** — `Linear(256 → 1) → Tanh` → value ∈ `[-1, 1]` (current player's expected
-outcome; matches the MCTS backup and win/loss target).
+**Value head** — small readout to a scalar in `(-1, 1)`. See [value_head.md](value_head.md).
 
 **Policy head (TBD)** — spatial actions need **per-cell** logits, so the policy head does
 *not* read the pooled `[256]`; it branches from the `64×11×11` feature map *before*
