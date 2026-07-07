@@ -19,12 +19,14 @@ import polyshark  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(__file__))
 from factored import FactoredActions  # noqa: E402
+from features import visible_snapshot  # noqa: E402
 from policy import (  # noqa: E402
     N_TYPES, T_MOVE, T_ATTACK, T_HARVEST, T_CAPTURE, T_TRAIN, T_RESEARCH, T_RECOVER, T_END,
 )
 
 _AT = polyshark.ActionType
 _EXCLUDED = {_AT.ConstructBuilding, _AT.DebugAddPop}
+_SPATIAL = {_AT.Move, _AT.Attack, _AT.CaptureCity, _AT.HarvestResource}
 
 
 def _sig(a):
@@ -137,7 +139,60 @@ def test_upgrade_modal():
     print(f"[modal]   UpgradingCity: {len(fa.upgrade_options)} upgrade options, tree empty OK")
 
 
+def test_visibility_filter():
+    """root_visible drops spatial actions whose target tile isn't visible at the root."""
+    # A state with real spatial actions (advance a game a few plies).
+    state = polyshark.make_random_game(3)
+    for _ in range(6):
+        la = [a for a in state.legal_actions() if a.affordable]
+        if not la:
+            break
+        state = state.apply_action(la[0])
+
+    fa_all = FactoredActions(state)
+    spatial = [(p, a) for p, a in fa_all.by_path.items() if a.type in _SPATIAL]
+    assert spatial, "test needs a spatial-target action"
+    hidden_path, hidden_act = spatial[0]
+    tgt = hidden_act.dst
+
+    # Hide exactly that target tile; everything else visible.
+    rv = [True] * state.map_tiles()
+    rv[tgt] = False
+    fa = FactoredActions(state, root_visible=rv)
+
+    assert hidden_path not in fa.by_path, "action targeting hidden tile was not filtered"
+    assert all(not (a.type in _SPATIAL and a.dst == tgt) for a in fa.by_path.values()), \
+        "a surviving spatial action still targets the hidden tile"
+
+    expected = {_sig(a) for a in state.legal_actions()
+                if _in_scope(a) and not (a.type in _SPATIAL and a.dst == tgt)}
+    stored = {_sig(a) for a in fa.by_path.values()} | {_sig(a) for a in fa.upgrade_options}
+    assert stored == expected, "round-trip broke under the visibility filter"
+    removed = len(fa_all.by_path) - len(fa.by_path)
+    print(f"[visfilter] hidden target filtered ({removed} action(s) dropped); round-trip holds OK")
+
+    # Invariant under real frozen fog: no surviving spatial action targets a hidden tile.
+    import random
+    rng = random.Random(1)
+    for seed in range(1, 15):
+        s = polyshark.make_random_game(seed)
+        for _ in range(30):
+            if s.is_terminal():
+                break
+            snap = visible_snapshot(s)
+            fa2 = FactoredActions(s, root_visible=snap)
+            for a in fa2.by_path.values():
+                if a.type in _SPATIAL:
+                    assert snap[a.dst], "surviving spatial action targets a hidden tile"
+            la = [a for a in s.legal_actions() if a.affordable]
+            if not la:
+                break
+            s = s.apply_action(rng.choice(la))
+    print("[visfilter] frozen-fog invariant holds across states OK")
+
+
 if __name__ == "__main__":
     test_roundtrip_random()
     test_upgrade_modal()
+    test_visibility_filter()
     print("\nAll factored-action checks passed.")

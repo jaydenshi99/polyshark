@@ -47,13 +47,16 @@ _SPATIAL_TARGET = (T_MOVE, T_ATTACK, T_HARVEST, T_CAPTURE)
 class FactoredActions:
     """Per-state factored view of legal_actions(): masks + path<->Action mapping."""
 
-    def __init__(self, state, encoded=None):
+    def __init__(self, state, encoded=None, root_visible=None):
         enc = encoded if encoded is not None else encode_entities(state)
         self.map_tiles = state.map_tiles()
         self.n_units = int(enc["unit_tiles"].shape[0])
         self.n_cities = int(enc["city_tiles"].shape[0])
         self._unit_slot = {int(t): i for i, t in enumerate(enc["unit_tiles"])}
         self._city_slot = {int(t): i for i, t in enumerate(enc["city_tiles"])}
+        # Frozen root fog: drop actions whose spatial target isn't root-visible (see
+        # docs/mcts.md). None = no restriction. Own units/cities are always self-visible.
+        self._root_visible = root_visible
 
         self.by_path = {}          # path tuple -> Action
         self.upgrade_options = []  # modal (UpgradingCity phase), emission order
@@ -64,9 +67,19 @@ class FactoredActions:
             if a.type == _AT.UpgradeCity:
                 self.upgrade_options.append(a)
                 continue
+            if self._target_hidden(a):
+                continue
             path = self._path_of(a)
             if path is not None:
                 self.by_path[path] = a
+
+    def _target_hidden(self, a):
+        """True if the action's spatial target tile (a.dst) isn't visible at the root."""
+        if self._root_visible is None:
+            return False
+        if _TYPE_OF.get(a.type) in _SPATIAL_TARGET:
+            return not self._root_visible[a.dst]
+        return False
 
     def _path_of(self, a):
         t = _TYPE_OF.get(a.type)

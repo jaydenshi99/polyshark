@@ -40,24 +40,30 @@ _BORDER_OFF   = 15  # 2: my_border, opp_border
 _VIS_OFF      = 17  # 1: is_visible
 
 
-def encode_entities(state):
+def encode_entities(state, me=None, visible=None):
     """
-    Returns, from the current player's perspective:
+    Returns, from `me`'s perspective (default: current player):
         unit_types : int64   [Nu]       UnitType enum index (embedding lookup)
         unit_feats : float32 [Nu, 9]
         unit_tiles : int64   [Nu]       tile index each unit sits on (for scatter)
         city_feats : float32 [Nc, 14]
         city_tiles : int64   [Nc]       tile index each city sits on (for scatter)
+
+    `me` / `visible` overrides let MCTS encode any node from the root player's frozen
+    fog (see docs/mcts.md). `visible` is a bool array [map_tiles]; None = use live fog.
     """
-    me = state.current_player()
+    if me is None:
+        me = state.current_player()
     sz = state.map_size()
     denom = max(sz - 1, 1)  # normalize row/col to [0, 1]
+    is_vis = (lambda i: bool(visible[i])) if visible is not None \
+        else (lambda i: state.is_visible(me, i))
 
     unit_types, unit_feats, unit_tiles = [], [], []
     city_feats, city_tiles = [], []
 
     for i in range(sz * sz):
-        if not state.is_visible(me, i):
+        if not is_vis(i):
             continue
         tile = state.tile_at(i)
         row, col = divmod(i, sz)
@@ -113,14 +119,18 @@ def encode_entities(state):
     }
 
 
-def encode_board(state):
-    """[18, sz, sz] non-entity spatial grid, fog-gated. Unexplored tile = all zeros."""
-    me = state.current_player()
+def encode_board(state, me=None, visible=None):
+    """[18, sz, sz] non-entity spatial grid, fog-gated. Unexplored tile = all zeros.
+    `me` / `visible` overrides: see encode_entities."""
+    if me is None:
+        me = state.current_player()
     sz = state.map_size()
+    is_vis = (lambda i: bool(visible[i])) if visible is not None \
+        else (lambda i: state.is_visible(me, i))
     board = np.zeros((BOARD_CHANNELS, sz, sz), dtype=np.float32)
 
     for i in range(sz * sz):
-        if not state.is_visible(me, i):
+        if not is_vis(i):
             continue
         row, col = divmod(i, sz)
         board[_VIS_OFF, row, col] = 1.0
@@ -152,9 +162,10 @@ def encode_board(state):
     return board
 
 
-def encode_globals(state):
-    """[12] non-spatial scalars, current player only."""
-    me = state.current_player()
+def encode_globals(state, me=None):
+    """[12] non-spatial scalars for `me` (default: current player). No fog dependency."""
+    if me is None:
+        me = state.current_player()
     sz = state.map_size()
 
     income = 0
@@ -174,6 +185,15 @@ def encode_globals(state):
         g[2 + t] = float((mask >> t) & 1)
     g[11] = 1.0 if state.phase() == polyshark.GameStateType.UpgradingCity else 0.0
     return g
+
+
+def visible_snapshot(state, me=None):
+    """Bool array [map_tiles] of tile visibility for `me` — the frozen root fog that keeps
+    a whole MCTS search encoded from the root player's knowledge (see docs/mcts.md)."""
+    if me is None:
+        me = state.current_player()
+    n = state.map_tiles()
+    return np.array([state.is_visible(me, i) for i in range(n)], dtype=bool)
 
 
 def collate(states):
