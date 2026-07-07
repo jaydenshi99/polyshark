@@ -30,8 +30,9 @@ SCATTER_DIM = 16                               # entity token -> grid plane widt
 CONV_IN = BOARD_CHANNELS + 2 * SCATTER_DIM     # 18 + 16 + 16 = 50
 CONV_CH = 64
 N_RES_BLOCKS = 3
-GLOBAL_EMB = 32
 TRUNK_DIM = 256
+# Core MLP input: avg-pool + max-pool of the body (2*64) + raw globals (12) = 140.
+CORE_IN = 2 * CONV_CH + GLOBAL_DIM
 
 
 class EntityProjection(nn.Module):
@@ -128,13 +129,10 @@ class PolysharkNet(nn.Module):
         )
         self.blocks = nn.Sequential(*[ResBlock(CONV_CH) for _ in range(N_RES_BLOCKS)])
 
-        self.global_mlp = nn.Sequential(nn.Linear(GLOBAL_DIM, GLOBAL_EMB), nn.GELU())
-
-        # Shared trunk: fuse pooled board + globals -> 256-d shared representation.
-        # Value (and later policy-value) heads branch off this.
-        trunk_in = CONV_CH + GLOBAL_EMB  # 64 + 32 = 96
-        self.trunk = nn.Sequential(
-            nn.Linear(trunk_in, TRUNK_DIM), nn.LayerNorm(TRUNK_DIM), nn.GELU(),
+        # Shared core: fuse pooled board (avg+max) + raw globals -> 256-d shared rep.
+        # Value (and later policy) heads branch off this.
+        self.core = nn.Sequential(
+            nn.Linear(CORE_IN, TRUNK_DIM), nn.LayerNorm(TRUNK_DIM), nn.GELU(),
             nn.Linear(TRUNK_DIM, TRUNK_DIM), nn.LayerNorm(TRUNK_DIM), nn.GELU(),
         )
         self.value_head = nn.Sequential(nn.Linear(TRUNK_DIM, 1), nn.Tanh())
@@ -154,9 +152,8 @@ class PolysharkNet(nn.Module):
 
         x = torch.cat([board, unit_plane, city_plane], dim=1)      # [B,50,H,W]
         x = self.blocks(self.stem(x))                              # [B,64,H,W]
-        x = x.mean(dim=(2, 3))                                     # global avg pool [B,64]
+        pooled = torch.cat([x.mean(dim=(2, 3)), x.amax(dim=(2, 3))], dim=1)  # avg+max [B,128]
 
-        g = self.global_mlp(globals_)                             # [B,32]
-        rep = self.trunk(torch.cat([x, g], dim=1))                # [B,256] shared rep
-        value = self.value_head(rep)                              # [B,1]
+        rep = self.core(torch.cat([pooled, globals_], dim=1))      # [B,140]->[B,256] shared rep
+        value = self.value_head(rep)                               # [B,1]
         return value
