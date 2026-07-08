@@ -1402,6 +1402,9 @@ int main(int argc, char** argv) {
     bool   eval_has_value   = false;
     double eval_value       = 0.0;
     int    eval_perspective = 0;
+    // Global eval: render value objectively (P0/blue-positive) instead of from the
+    // side-to-move's frame. Left = red (P1) winning, right = blue (P0) winning.
+    bool   eval_global      = false;
 
     auto refresh_eval = [&](bool log_it) {
         if (!eval_on) return;
@@ -1992,6 +1995,8 @@ int main(int argc, char** argv) {
         }
 
         if (!kb_blocked && IsKeyPressed(KEY_F)) g_use_custom_font = !g_use_custom_font;
+
+        if (!kb_blocked && IsKeyPressed(KEY_G)) eval_global = !eval_global;
 
         if (!kb_blocked && IsKeyPressed(KEY_P)) GameState::print(s);
       
@@ -3133,18 +3138,30 @@ int main(int argc, char** argv) {
                 DrawRectangle(tx, ty, 1, th, tc);
             }
 
-            // End labels and "0" label.
-            DrawTextC("0",    bar_cx - 3,        bar_y + bar_h + 6, 10, zero_tick);
-            DrawTextC("-100", bar_x - 26,        bar_y - 4,         10, Color{ 200, 90,  90, 255 });
-            DrawTextC("+100", bar_x + bar_w + 4, bar_y - 4,         10, Color{ 90,  200, 90, 255 });
+            // End labels and "0" label. In global mode the ends denote players
+            // (left = red P1 win, right = blue P0 win); otherwise they're the
+            // raw -100/+100 scale in the side-to-move's frame.
+            DrawTextC("0", bar_cx - 3, bar_y + bar_h + 6, 10, zero_tick);
+            if (eval_global) {
+                DrawTextC("RED",  bar_x - 24,        bar_y - 4, 10, COL_P1);
+                DrawTextC("BLUE", bar_x + bar_w + 4, bar_y - 4, 10, COL_P0);
+            } else {
+                DrawTextC("-100", bar_x - 26,        bar_y - 4, 10, Color{ 200, 90,  90, 255 });
+                DrawTextC("+100", bar_x + bar_w + 4, bar_y - 4, 10, Color{ 90,  200, 90, 255 });
+            }
 
             // Slider — vertical bar through the strip plus a small triangle
             // pointing down to it for legibility at the exact position.
             if (eval_has_value) {
-                double clamped = eval_value < -100.0 ? -100.0
-                               : eval_value >  100.0 ?  100.0 : eval_value;
+                // Global mode flips the side-to-move value into P0/blue-positive
+                // frame so the bar is objective regardless of whose turn it is.
+                double disp = (eval_global && eval_perspective != 0) ? -eval_value : eval_value;
+                double clamped = disp < -100.0 ? -100.0
+                               : disp >  100.0 ?  100.0 : disp;
                 int sx = bar_x + (int)((clamped + 100.0) / 200.0 * bar_w);
-                Color slider_col = (eval_perspective == 0) ? COL_P0 : COL_P1;
+                Color slider_col = eval_global
+                                 ? (disp >= 0.0 ? COL_P0 : COL_P1)
+                                 : (eval_perspective == 0 ? COL_P0 : COL_P1);
 
                 // Vertical marker bar — 3px wide, extends 8px above and below
                 // the scale so it stands out against the tick marks.
@@ -3158,7 +3175,7 @@ int main(int argc, char** argv) {
                 DrawTriangle(a, b, c, slider_col);
 
                 char buf[24];
-                snprintf(buf, sizeof(buf), "%+.3f", eval_value);
+                snprintf(buf, sizeof(buf), "%+.3f", disp);
                 int lw = MeasureTextC(buf, 10);
                 DrawTextC(buf, sx - lw / 2, bar_y - 28, 10, slider_col);
             }

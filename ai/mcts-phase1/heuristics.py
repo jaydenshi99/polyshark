@@ -66,10 +66,6 @@ RESOURCE_TECH = {
 }
 
 
-# Weight on the village-proximity diff: (enemy's nearest-village distance) minus
-# (mine). Positive when I'm closer to a village, nudging units to capture them.
-VILLAGE_DISTANCE_PENALTY = 1
-
 # action_prior bonus for a Move whose destination is closer to an uncaptured
 # city (Village tile) than its origin — pulls the tree search toward expansion.
 MOVE_TOWARD_CITY_PRIOR = 6.0
@@ -132,6 +128,7 @@ def state_value(state, player: int) -> float:
     size       = state.map_size()
     villages   = []           # (x, y) of uncaptured village tiles
     unit_xy    = [[], []]     # (x, y) of each player's units
+    city_xy    = [[], []]     # (x, y) of each player's cities
     for i in range(state.map_tiles()):
         t = state.tile_at(i)
         if t.terrain == polyshark.TerrainType.Village:
@@ -140,6 +137,7 @@ def state_value(state, player: int) -> float:
             c = state.get_city(t.city_id)
             cities[c.owner]   += 1
             stars_pt[c.owner] += c.stars_per_turn
+            city_xy[c.owner].append((i % size, i // size))
             if c.is_capital:
                 capital[c.owner] = c
         if t.has_unit:
@@ -154,23 +152,29 @@ def state_value(state, player: int) -> float:
     # Village proximity: for each player, the shortest Chebyshev distance from
     # any of their units to any uncaptured village (global min over villages).
     # The diff (theirs - mine) rewards me being closer to a village than them.
-    def nearest_village_dist(my_xy):
-        if not villages or not my_xy:
-            return 0.0
-        return min(max(abs(vx - ux), abs(vy - uy))
-                   for (vx, vy) in villages
-                   for (ux, uy) in my_xy)
+    def nearest_village_dist(p):
+        # Min over BOTH pools: any unit (+0) and any city (+1, since a fresh unit
+        # must still be trained there and step out). A nearby city can beat a
+        # distant unit even with the +1.
+        cands = [max(abs(vx - ux), abs(vy - uy)) + extra
+                 for (vx, vy) in villages
+                 for (pts, extra) in ((unit_xy[p], 0), (city_xy[p], 1))
+                 for (ux, uy) in pts]
+        dist_penalty = min(cands) if cands else size   # no units & no cities → max far
+        print("Side %d nearest village dist: %d" % (p, dist_penalty))
+        return dist_penalty
 
-    village_diff = nearest_village_dist(unit_xy[them]) - nearest_village_dist(unit_xy[me])
+    village_diff = 0.0
+    if villages:
+        village_diff = nearest_village_dist(them) - nearest_village_dist(me)
 
     # Stars term reflects income rate, not the current stockpile — a sieged
     # / captured city contributes 0 (matches City::stars_per_turn in C++).
     stars_pt  = stars_pt[me]  - stars_pt[them]
     city_diff = cities[me]    - cities[them]
     unit_diff = units[me]     - units[them]
-
-    raw =  3 * stars_pt + 5 * city_diff + unit_diff + tech_diff \
-         + VILLAGE_DISTANCE_PENALTY * village_diff
+    print(f"Breakdown: stars_pt={stars_pt:.1f}, city_diff={city_diff}, unit_diff={unit_diff:.1f}, tech_diff={tech_diff:.1f}, village_diff={village_diff:.1f}")
+    raw =  3 * stars_pt + 5 * city_diff + unit_diff + tech_diff + village_diff
     return raw
 
 
