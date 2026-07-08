@@ -180,7 +180,7 @@ Per recorded real state:
   against the head's softmax. (Type always; entity/target/categorical per schema.)
 - **Value** — the eventual **game outcome** `z ∈ {+1, −1}` from that state's current-player
   perspective (MSE against the value head). Turn-cap games without a winner use a
-  heuristic/bootstrapped value (gen-0 bootstrap — TBD in selfplay.md).
+  heuristic/bootstrapped value (gen-0 bootstrap — see [training.md](training.md)).
 
 Sample tuple: `(encoded S, {stage → visit dist}, chosen action, current_player)`, outcome
 filled at game end.

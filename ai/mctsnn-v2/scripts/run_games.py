@@ -22,8 +22,8 @@ sys.path.insert(0, os.path.join(_PKG, "src"))
 sys.path.insert(0, os.path.join(_ROOT, "build", "bindings"))
 
 import polyshark  # noqa: E402
-from arena import Agent, Arena, RandomStrategy, MCTSStrategy, write_replay  # noqa: E402
-from mcts import HeuristicEvaluator, NetworkEvaluator  # noqa: E402
+from arena import Arena, write_replay  # noqa: E402
+from agents import build_agent  # noqa: E402  (spec dict -> Agent; shared with train.py)
 
 
 # ============================================================================
@@ -85,7 +85,10 @@ from mcts import HeuristicEvaluator, NetworkEvaluator  # noqa: E402
 #       AlphaZero's "explore the opening, then play greedily."
 #
 #   "checkpoint": str   (optional, evaluator="network" only)
-#       Path to trained weights. Not loaded by default — wire it up in build_agent().
+#       Path to trained weights, RELATIVE TO THE REPO ROOT (absolute paths also work),
+#       e.g. "ai/mctsnn-v2/data/checkpoints/gen005.pt". Loaded by _make_network_evaluator.
+#       Expected format: torch.save({"net": net.state_dict(), "policy": policy.state_dict()}).
+#       If omitted, the network uses random-init weights (prints a warning; plays badly).
 #
 # Presets:
 #   - self-play data:  both agents "mcts", add_noise=True,  temperature=1.0
@@ -94,8 +97,9 @@ from mcts import HeuristicEvaluator, NetworkEvaluator  # noqa: E402
 AGENT_0 = {
     "name": "agent 0",
     "type": "mcts",
-    "evaluator": "heuristic",
-    "n_sims": 400,
+    "evaluator": "network",
+    "checkpoint": None,
+    "n_sims": 100,
     "c_puct": 1.5,
     "add_noise": False,
     "temperature": 0.0,
@@ -105,8 +109,9 @@ AGENT_0 = {
 AGENT_1 = {
     "name": "agent 1",
     "type": "mcts",
-    "evaluator": "heuristic",
-    "n_sims": 400,
+    "evaluator": "network",
+    "checkpoint": None,
+    "n_sims": 100,
     "c_puct": 1.5,
     "add_noise": False,
     "temperature": 0.0,
@@ -119,7 +124,7 @@ AGENT_1 = {
 #     "seed": 0,
 # }
 
-N_GAMES     = 4          # how many games to play
+N_GAMES     = 1          # how many games to play
 TURN_LIMIT  = 30         # max turns before a game is called (turn cap -> heuristic outcome)
 BASE_SEED   = 100        # game i uses map seed BASE_SEED + i
 SWAP_SIDES  = True       # alternate who is player 0 across games (fairness)
@@ -135,40 +140,9 @@ VERBOSE         = True    # per-game one-line summary
 # ============================================================================
 
 
-def build_agent(spec):
-    """Turn a spec dict into an Agent. Extend here to add strategy types."""
-    kind = spec["type"]
-
-    if kind == "random":
-        return Agent(spec["name"], RandomStrategy(seed=spec.get("seed")))
-
-    if kind == "mcts":
-        ev_name = spec.get("evaluator", "heuristic")
-        if ev_name == "heuristic":
-            evaluator = HeuristicEvaluator()
-        elif ev_name == "network":
-            evaluator = NetworkEvaluator()
-            # To use a trained checkpoint, load weights here, e.g.:
-            #   import torch
-            #   evaluator.net.load_state_dict(torch.load(spec["checkpoint"])["net"])
-            #   evaluator.policy.load_state_dict(torch.load(spec["checkpoint"])["policy"])
-        else:
-            raise ValueError(f"unknown evaluator {ev_name!r}")
-        return Agent(spec["name"], MCTSStrategy(
-            evaluator,
-            n_sims=spec.get("n_sims", 100),
-            c_puct=spec.get("c_puct", 1.5),
-            add_noise=spec.get("add_noise", False),
-            temperature=spec.get("temperature", 1.0),
-            temp_turns=spec.get("temp_turns", 6),
-        ))
-
-    raise ValueError(f"unknown agent type {kind!r}")
-
-
 def main():
-    agent0 = build_agent(AGENT_0)
-    agent1 = build_agent(AGENT_1)
+    agent0 = build_agent(AGENT_0, _ROOT)
+    agent1 = build_agent(AGENT_1, _ROOT)
 
     wins = {agent0.name: 0, agent1.name: 0}
     draws, all_turns, all_samples = 0, [], []
