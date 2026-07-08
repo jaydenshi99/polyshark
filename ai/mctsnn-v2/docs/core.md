@@ -12,21 +12,22 @@ The fusion point: the residual board body and the globals meet here and become a
   - max-pool `[64]` — the strongest signal anywhere (is there a critical tile at all).
   - Together they capture "general position" and "sharp local feature" — complementary,
     and cheap.
-- **Globals** `[12]` — raw non-spatial scalars (turn, stars, income, techs, phase),
+- **Globals** `[21]` — raw non-spatial scalars (turn, stars, income, techs, phase,
+  turn-exhaustion fractions, fog-gated my/opp unit-city-level counts, explored fraction),
   see [board.md](board.md) §2. Concatenated directly, no lift.
 
 ```
 board body [64,11,11] ── avg-pool ──> [64] ┐
                       └─ max-pool ──> [64] ┼─ concat ─> [128] ┐
-globals ─────────────────────────────────── [12] ───────────┼─ concat ─> [140]
+globals ─────────────────────────────────── [21] ───────────┼─ concat ─> [149]
 ```
 
 ## Core MLP
 
-Two `Linear → LayerNorm → GELU` blocks, `140 → 256 → 256`:
+Two `Linear → LayerNorm → GELU` blocks, `149 → 256 → 256`:
 
 ```
-[140] ─ Linear(140 → 256) → LayerNorm → GELU
+[149] ─ Linear(149 → 256) → LayerNorm → GELU
       ─ Linear(256 → 256) → LayerNorm → GELU
       └─> shared representation [256]
 ```

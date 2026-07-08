@@ -105,7 +105,7 @@ machinery (encode → loss → optimizer → checkpoint) — the outer loop that
 Per developed sample, from the **acting player's** perspective:
 
 - **Inputs** — `features.encode_*(state, me=player, visible=player's fog)` → entities +
-  board `[18,11,11]` + globals `[12]`.
+  board `[18,11,11]` + globals `[21]`.
 - **Policy** — for each stage the chosen action fired (type → entity → target), the
   **normalized MCTS visit counts** of that level's edges. Loss = sum of the fired stages'
   cross-entropies vs the policy head's masked softmax. **Autoregressive:** each stage is
@@ -114,6 +114,49 @@ Per developed sample, from the **acting player's** perspective:
 - **Value** — `Sample.outcome`: `z ∈ {+1,−1}` on a decisive game, heuristic `tanh` margin on
   a turn cap. Loss = MSE vs the value head. See [value_head.md](value_head.md).
 - **Total** `L = Σ stage-CE(policy) + MSE(value) [+ weight decay]`.
+
+## Regularization & anti-memorization
+
+Guards added after the end-turn collapse diagnosis (full analysis + evidence in
+[endturn_collapse.md](endturn_collapse.md)). The root problem they target: all of a game's
+states share **one** outcome label, and each map's terrain planes are a memorizable
+fingerprint — so an unguarded value head learns to *recognize games* instead of evaluating
+positions, and an unguarded policy head learns the end_turn *marginal* instead of
+conditioning on the state.
+
+**Value head:**
+
+- **Per-game value subsampling** (`value_samples_per_game`, default 16). Only ~16
+  positions per game (split across the two players) keep their value label for training;
+  `train_step` masks the MSE to those (`Sample.train_value`). AlphaGo did the same
+  (1 position/game) for the same reason: within-game states are near-duplicates of one
+  label. Policy targets are unaffected. `<=0` disables.
+- **AdamW weight decay** (`weight_decay`, default 1e-4) via `make_optimizer` — decays
+  matrix params only; biases and norm scales are exempt.
+- **Value-head input dropout** (`PolysharkNet.value_dropout`, p=0.2 on the 256-d core
+  input). Active in `net.train()` only; kept outside the `value_head` Sequential so
+  checkpoint state_dict keys are unchanged.
+- **Held-out validation seeds** (`val_games`, default 8/gen; seeds from `val_seed_base`).
+  Extra self-play games each gen that never enter the buffer, scored after training
+  (`val_value_loss` column in metrics.csv). **Read the gap, not the train loss**: train
+  falling with val flat/rising = memorization — the collapsed run would have shown this
+  from gen ~2.
+
+**Policy head:**
+
+- **Forced end_turn states never become samples.** The arena plays them agent-free
+  (`_forced_end_turn` in `arena.py`): no search, no sample — neither head trains on a
+  state with nothing to decide. (Also a self-play speedup.) These were ~13% of type-stage
+  samples and pure marginal-drift gradient toward end_turn.
+- **Single-choice stages are skipped in the policy CE** (`_policy_loss_for_sample`): any
+  stage whose legal mask has exactly one choice carries zero information (the mask already
+  decides), so its cross-entropy term is dropped. Catches forced entity/tile stages inside
+  otherwise-real decisions; the sample itself stays value-eligible.
+
+Related but not regularization: **staged per-stage search budgets** (see
+[mcts.md](mcts.md) "Staged commitment") make every fired stage's visit target carry a full
+`n_sims` budget, so deep-stage policy targets are search-improved distributions rather
+than prior + sampling noise.
 
 ## Gen-0 bootstrap
 

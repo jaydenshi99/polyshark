@@ -7,9 +7,9 @@ Pipeline (see docs/embedding.md, docs/attention.md, docs/board.md):
        |                                                              |
        |                                              project 128->32, scatter to grid
        |                                                              v
-  board [18,H,W] ----------------------------------- concat -> [82,H,W] -> conv tower
+  board [18,H,W] ----------------------------------- concat -> [50,H,W] -> conv tower
                                                                               |
-  globals [12] --MLP--> [32] ------------------------ concat -> trunk -> value (tanh)
+  globals [21] --raw concat with pooled board------------------> core -> value (tanh)
 """
 
 import math

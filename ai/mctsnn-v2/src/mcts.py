@@ -375,7 +375,7 @@ class NetworkEvaluator:
         me, vis = self.root_player, self.root_visible
         enc = features.encode_entities(state, me=me, visible=vis)
         board = features.encode_board(state, me=me, visible=vis)
-        glob = features.encode_globals(state, me=me)
+        glob = features.encode_globals(state, me=me, visible=vis)
         return enc, board, glob
 
     def evaluate(self, state):

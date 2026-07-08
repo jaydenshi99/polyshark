@@ -4,7 +4,7 @@ GameState -> input arrays (numpy). Pure, no torch.
 Three input groups, all from the current player's perspective (me/opp, fog-gated):
   - entities : per unit/city tokens (see docs/embedding.md)
   - board    : [18, sz, sz] non-entity spatial grid (see docs/board.md)
-  - globals  : [12] non-spatial scalars
+  - globals  : [21] non-spatial scalars
 
 Entities are enumerated by scanning tiles (the engine exposes no unit/city list),
 gated on is_visible(me) — which equals "explored" in this engine (permanent reveal).
@@ -21,7 +21,7 @@ import polyshark  # noqa: E402
 UNIT_FEAT_DIM = 9
 CITY_FEAT_DIM = 14
 BOARD_CHANNELS = 18
-GLOBAL_DIM = 12
+GLOBAL_DIM = 21
 NUM_UNIT_TYPES = 6  # None, Warrior, Archer, Rider, Defender, Giant (enum incl. index 0)
 
 # Base HP per UnitType index — mirror of UNIT_DEFS in engine/include/unit_def.h.
@@ -162,19 +162,58 @@ def encode_board(state, me=None, visible=None):
     return board
 
 
-def encode_globals(state, me=None):
-    """[12] non-spatial scalars for `me` (default: current player). No fog dependency."""
+def encode_globals(state, me=None, visible=None):
+    """[21] non-spatial scalars from `me`'s perspective (default: current player), fed
+    raw into the core MLP — anything here is one linear layer from every head, vs the
+    attention->scatter->conv->pool gauntlet entity features must survive.
+
+    `visible` override = frozen root snapshot (see encode_entities); opponent entities
+    are counted only on visible tiles, so nothing here leaks fog.
+
+      [0]     turn / 100
+      [1]     my stars / 30
+      [2]     my income / 20
+      [3-10]  my tech bits (Hunting .. Strategy)
+      [11]    phase == UpgradingCity
+      -- turn exhaustion (policy conditioning: "end only when spent") --
+      [12]    fraction of my units with move points remaining
+      [13]    fraction of my units that have not attacked
+      -- position summary (value conditioning; opp side fog-gated) --
+      [14]    my unit count / 10          [15]  opp visible unit count / 10
+      [16]    my city count / 5           [17]  opp visible city count / 5
+      [18]    my total city levels / 15   [19]  opp visible total city levels / 15
+      [20]    fraction of map explored
+    """
     if me is None:
         me = state.current_player()
     sz = state.map_size()
+    is_vis = (lambda i: bool(visible[i])) if visible is not None \
+        else (lambda i: state.is_visible(me, i))
 
     income = 0
+    my_units = opp_units = can_move = not_attacked = 0
+    my_cities = opp_cities = my_levels = opp_levels = 0
+    n_vis = 0
     for i in range(sz * sz):
+        if not is_vis(i):
+            continue
+        n_vis += 1
         tile = state.tile_at(i)
         if tile.has_city:
             c = state.get_city(tile.city_id)
             if c.owner == me:
-                income += c.stars_per_turn
+                my_cities += 1; my_levels += c.level; income += c.stars_per_turn
+            else:
+                opp_cities += 1; opp_levels += c.level
+        if tile.has_unit:
+            u = state.get_unit(tile.unit_id)
+            if u.is_alive:
+                if u.owner == me:
+                    my_units += 1
+                    can_move += (u.move_points > 0)
+                    not_attacked += (not u.has_attacked)
+                else:
+                    opp_units += 1
 
     g = np.zeros(GLOBAL_DIM, dtype=np.float32)
     g[0] = state.get_turn() / 100.0
@@ -184,6 +223,15 @@ def encode_globals(state, me=None):
     for t in range(1, 9):  # TechType Hunting(1) .. Strategy(8) -> idx 3..10
         g[2 + t] = float((mask >> t) & 1)
     g[11] = 1.0 if state.phase() == polyshark.GameStateType.UpgradingCity else 0.0
+    g[12] = can_move / my_units if my_units else 0.0
+    g[13] = not_attacked / my_units if my_units else 0.0
+    g[14] = my_units / 10.0
+    g[15] = opp_units / 10.0
+    g[16] = my_cities / 5.0
+    g[17] = opp_cities / 5.0
+    g[18] = my_levels / 15.0
+    g[19] = opp_levels / 15.0
+    g[20] = n_vis / (sz * sz)
     return g
 
 
