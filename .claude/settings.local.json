@@ -38,7 +38,8 @@
       "Bash(/Users/jaydenshi/Documents/Code/Projects/polyshark/.venv/bin/python -)",
       "Bash(cmake --build . --target polyshark)",
       "Bash(cmake --build . --target visualizer)",
-      "Bash(cmake --build build --target visualizer)"
+      "Bash(cmake --build build --target visualizer)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0,'build/bindings'\\); import polyshark; s=polyshark.make_random_game\\(1\\); print\\('ok map', s.map_size\\(\\), 'player', s.current_player\\(\\)\\)\")"
     ]
   }
 }
