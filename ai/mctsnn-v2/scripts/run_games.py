@@ -98,8 +98,8 @@ AGENT_0 = {
     "name": "agent 0",
     "type": "mcts",
     "evaluator": "network",
-    "checkpoint": None,
-    "n_sims": 100,
+    "checkpoint": "ai/mctsnn-v2/data/checkpoints/gen019.pt",
+    "n_sims": 1000,
     "c_puct": 1.5,
     "add_noise": False,
     "temperature": 0.0,
@@ -110,8 +110,8 @@ AGENT_1 = {
     "name": "agent 1",
     "type": "mcts",
     "evaluator": "network",
-    "checkpoint": None,
-    "n_sims": 100,
+    "checkpoint": "ai/mctsnn-v2/data/checkpoints/gen019.pt",
+    "n_sims": 1000,
     "c_puct": 1.5,
     "add_noise": False,
     "temperature": 0.0,
@@ -130,7 +130,7 @@ BASE_SEED   = 100        # game i uses map seed BASE_SEED + i
 SWAP_SIDES  = True       # alternate who is player 0 across games (fairness)
 MAX_STEPS   = 4000       # hard safety cap on actions per game
 
-COLLECT_SAMPLES = True   # record (state, action, policy targets, outcome) training rows
+COLLECT_SAMPLES = False   # record (state, action, policy targets, outcome) training rows
 WRITE_REPLAYS   = True    # dump a .replay per game for the visualiser
 REPLAY_DIR      = os.path.join(_PKG, "data", "runs")
 VERBOSE         = True    # per-game one-line summary

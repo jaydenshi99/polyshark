@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../build/bindi
 import polyshark  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(__file__))
-from mcts import MCTS, HeuristicEvaluator  # noqa: E402
+from mcts import MCTS, HeuristicEvaluator, HEURISTIC_VALUE_SCALE  # noqa: E402
 
 _AT = polyshark.ActionType
 # Engine emits these but they're not policy actions (debug / out-of-scope building).
@@ -149,10 +149,11 @@ class MatchStats:
 
 
 def heuristic_terminal_value(state, player):
-    """Value for a turn-capped (no-winner) game: squashed heuristic-score margin."""
+    """Value for a turn-capped (no-winner) game: squashed heuristic-score margin. Uses the
+    same scale as the search leaf value so labels and search agree (see mcts.py)."""
     opp = 1 - player
     diff = polyshark.heuristic_score(state, player) - polyshark.heuristic_score(state, opp)
-    return math.tanh(0.1 * diff)
+    return math.tanh(HEURISTIC_VALUE_SCALE * diff)
 
 
 def write_replay(path, result):

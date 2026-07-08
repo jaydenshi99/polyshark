@@ -214,12 +214,18 @@ PYBIND11_MODULE(polyshark, m) {
     });
 
     // Gen-0 heuristic score for one player.
-    // Components: cities, city levels, techs, units.
+    // Components: cities, city levels, techs, units, village proximity.
     m.def("heuristic_score", [](const GameState& s, int player) -> float {
         int cities = 0, total_level = 0, units = 0;
+        int sz = s.map_size();
+
+        // Collect visible uncaptured villages and this player's unit positions, so we can
+        // reward moving units toward capturable villages (each village -> nearest own unit).
+        std::vector<std::pair<int,int>> villages, my_units;
 
         for (int i = 0; i < s.map_tiles(); ++i) {
             const Tile& t = s.tile_at(i);
+            int row = i / sz, col = i % sz;
 
             if (t.has_city()) {
                 const City& c = s.get_city(t.city_id());
@@ -227,13 +233,28 @@ PYBIND11_MODULE(polyshark, m) {
             }
             if (t.has_unit()) {
                 const Unit& u = s.get_unit(t.unit_id());
-                if (u.owner() == player) { ++units; }
+                if (u.owner() == player) { ++units; my_units.push_back({row, col}); }
             }
+            if (t.terrain() == TerrainType::Village && !t.has_city() && s.is_visible(player, i))
+                villages.push_back({row, col});
+        }
+
+        // Per village: reward inversely by Manhattan distance to the nearest own unit. The
+        // per-village min encourages spreading units across villages rather than clumping.
+        float village_prox = 0.0f;
+        for (auto [vr, vc] : villages) {
+            int min_dist = 999;
+            for (auto [ur, uc] : my_units) {
+                int d = std::abs(ur - vr) + std::abs(uc - vc);
+                if (d < min_dist) min_dist = d;
+            }
+            if (min_dist < 999)
+                village_prox += 1.0f / (1.0f + min_dist);
         }
 
         int mask = s.techs_mask(player);
         int tech_bits = __builtin_popcount(mask >> 1); // skip Origin bit
-        return 3.0f * cities + total_level + 0.3f * tech_bits + 0.2f * units;
+        return 3.0f * cities + total_level + 0.3f * tech_bits + 0.2f * units + 0.5f * village_prox;
     }, py::arg("state"), py::arg("player"));
 
     m.def("make_random_game", [](uint64_t seed, int sz) {

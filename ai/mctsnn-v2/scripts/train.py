@@ -52,34 +52,40 @@ LR = 1e-3                   # Adam learning rate (net + policy jointly)
 
 # --- io ---
 BASE_SEED = 0
-CKPT_DIR  = os.path.join(_PKG, "data", "checkpoints")
+CKPT_ROOT = os.path.join(_PKG, "data", "checkpoints")  # parent; each run gets its own subfolder
+RUN_LABEL = ""             # optional suffix on the run folder, e.g. "highsim" -> run_<ts>_highsim
 
 # ============================================================================
 # end CONFIG
 # ============================================================================
 
 
+def _new_run_dir():
+    """A fresh timestamped folder under CKPT_ROOT so runs never overwrite each other."""
+    stamp = datetime.datetime.now().strftime("run_%Y%m%d_%H%M%S")
+    name = f"{stamp}_{RUN_LABEL}" if RUN_LABEL else stamp
+    run_dir = os.path.join(CKPT_ROOT, name)
+    os.makedirs(run_dir, exist_ok=True)
+    return run_dir
+
+
 def main():
-    print(f"Phase A training | {N_GENS} gens x {GAMES_PER_GEN} games x "
-          f"{TRAIN_STEPS_PER_GEN} steps | n_sims={N_SIMS} turn_limit={TURN_LIMIT}\n")
-    run_training(
-        n_gens=N_GENS,
-        games_per_gen=GAMES_PER_GEN,
-        train_steps_per_gen=TRAIN_STEPS_PER_GEN,
-        minibatch=MINIBATCH,
-        buffer_capacity=BUFFER_CAPACITY,
-        turn_limit=TURN_LIMIT,
-        n_sims=N_SIMS,
-        c_puct=C_PUCT,
-        temperature=TEMPERATURE,
-        temp_turns=TEMP_TURNS,
-        add_noise=ADD_NOISE,
-        lr=LR,
-        base_seed=BASE_SEED,
-        bootstrap_gen0=BOOTSTRAP_GEN0,
-        ckpt_dir=CKPT_DIR,
+    run_dir = _new_run_dir()
+    cfg = dict(
+        n_gens=N_GENS, games_per_gen=GAMES_PER_GEN, train_steps_per_gen=TRAIN_STEPS_PER_GEN,
+        minibatch=MINIBATCH, buffer_capacity=BUFFER_CAPACITY, turn_limit=TURN_LIMIT,
+        n_sims=N_SIMS, c_puct=C_PUCT, temperature=TEMPERATURE, temp_turns=TEMP_TURNS,
+        add_noise=ADD_NOISE, lr=LR, base_seed=BASE_SEED, bootstrap_gen0=BOOTSTRAP_GEN0,
     )
-    print(f"\ndone. checkpoints in {CKPT_DIR}")
+    # Save the run's config alongside its checkpoints so each run is self-describing.
+    with open(os.path.join(run_dir, "run_config.json"), "w") as f:
+        json.dump(cfg, f, indent=2)
+
+    print(f"Phase A training | run dir: {run_dir}")
+    print(f"  {N_GENS} gens x {GAMES_PER_GEN} games x {TRAIN_STEPS_PER_GEN} steps | "
+          f"n_sims={N_SIMS} turn_limit={TURN_LIMIT}\n")
+    run_training(ckpt_dir=run_dir, **cfg)
+    print(f"\ndone. checkpoints in {run_dir}")
 
 
 if __name__ == "__main__":

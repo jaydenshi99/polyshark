@@ -314,11 +314,18 @@ def _sample_by_visits(visits, temperature):
 
 # ------------------------------------------------------------------ evaluators
 
+# Steepness of the heuristic-margin -> (-1,1) squash: tanh(scale * point_margin). Shared by
+# the search leaf value (HeuristicEvaluator) and the turn-cap value labels
+# (arena.heuristic_terminal_value) so they stay on the same scale. Higher = the value
+# separates productive actions from doing nothing more sharply (see docs/training.md).
+HEURISTIC_VALUE_SCALE = 1.0
+
+
 class HeuristicEvaluator:
     """Value from the engine's gen-0 heuristic (squashed to (-1,1)), uniform priors.
     No torch weights involved — for exercising the search cheaply and deterministically."""
 
-    def __init__(self, scale=0.1):
+    def __init__(self, scale=HEURISTIC_VALUE_SCALE):
         self.scale = scale
         self.root_player = None
 
