@@ -35,6 +35,10 @@ TRAIN_STEPS_PER_GEN = 100    # minibatch optimizer steps each generation
 MINIBATCH           = 32     # samples per optimizer step
 BUFFER_CAPACITY     = 20000  # FIFO replay window (oldest samples drop off)
 
+# --- parallelism ---
+NUM_WORKERS = 4             # self-play worker processes (1 = in-process, no pool). Set near
+                            # your physical core count; each worker plays whole games at once.
+
 # --- self-play search (per decision) ---
 N_SIMS      = 100            # MCTS simulations per move (strength vs speed)
 C_PUCT      = 1.5           # PUCT exploration constant
@@ -46,6 +50,12 @@ TURN_LIMIT  = 30            # per-game turn cap (turn-capped games use heuristic
 # --- gen-0 bootstrap ---
 BOOTSTRAP_GEN0 = True       # gen 0 self-plays with the heuristic (meaningful data) instead
                             # of the random-init net; gens >=1 use the net being trained
+
+# --- heuristic value scale ---
+HEURISTIC_SCALE = 0.75      # steepness of tanh(scale * heuristic_margin). Higher = the value
+                            # separates productive actions from doing nothing more sharply
+                            # (lower -> more end_turn / flatter targets). Used for the gen-0
+                            # search value AND the turn-cap value labels (kept consistent).
 
 # --- optimization ---
 LR = 1e-3                   # Adam learning rate (net + policy jointly)
@@ -76,6 +86,7 @@ def main():
         minibatch=MINIBATCH, buffer_capacity=BUFFER_CAPACITY, turn_limit=TURN_LIMIT,
         n_sims=N_SIMS, c_puct=C_PUCT, temperature=TEMPERATURE, temp_turns=TEMP_TURNS,
         add_noise=ADD_NOISE, lr=LR, base_seed=BASE_SEED, bootstrap_gen0=BOOTSTRAP_GEN0,
+        heuristic_scale=HEURISTIC_SCALE, num_workers=NUM_WORKERS,
     )
     # Save the run's config alongside its checkpoints so each run is self-describing.
     with open(os.path.join(run_dir, "run_config.json"), "w") as f:

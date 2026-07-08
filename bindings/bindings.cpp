@@ -157,6 +157,23 @@ PYBIND11_MODULE(polyshark, m) {
         .def_readonly("affordable", &Action::affordable)
         .def_readonly("path_bits",  &Action::path_bits)
         .def_readonly("path_steps", &Action::path_steps)
+        // Picklable so Samples can cross process boundaries (parallel self-play).
+        .def(py::pickle(
+            [](const Action& a) {
+                return py::make_tuple((int)a.type, a.from, a.to, a.param,
+                                      a.affordable, a.path_bits, a.path_steps);
+            },
+            [](py::tuple t) {
+                Action a;
+                a.type       = static_cast<ActionType>(t[0].cast<int>());
+                a.from       = t[1].cast<int>();
+                a.to         = t[2].cast<int>();
+                a.param      = t[3].cast<int>();
+                a.affordable = t[4].cast<bool>();
+                a.path_bits  = t[5].cast<uint32_t>();
+                a.path_steps = t[6].cast<uint8_t>();
+                return a;
+            }))
         .def("__repr__", [](const Action& a) {
             return "<Action type=" + std::to_string((int)a.type)
                  + " src=" + std::to_string(a.from)
@@ -205,6 +222,10 @@ PYBIND11_MODULE(polyshark, m) {
         .def_static("deserialise", [](const std::string& json_str) {
             return GameState::deserialise(nlohmann::json::parse(json_str));
         })
+        // Picklable (via JSON serialise) so states can cross process boundaries.
+        .def(py::pickle(
+            [](const GameState& s) { return GameState::serialise(s).dump(); },
+            [](const std::string& j) { return GameState::deserialise(nlohmann::json::parse(j)); }))
         .def_static("print", &GameState::print);
 
     // Base movement per unit type, indexed by UnitType int value.

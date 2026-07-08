@@ -148,12 +148,18 @@ class MatchStats:
                 f"avg_turns={self.avg_turns:.1f} | samples={len(self.samples)}")
 
 
-def heuristic_terminal_value(state, player):
-    """Value for a turn-capped (no-winner) game: squashed heuristic-score margin. Uses the
-    same scale as the search leaf value so labels and search agree (see mcts.py)."""
-    opp = 1 - player
-    diff = polyshark.heuristic_score(state, player) - polyshark.heuristic_score(state, opp)
-    return math.tanh(HEURISTIC_VALUE_SCALE * diff)
+def make_heuristic_terminal_value(scale=HEURISTIC_VALUE_SCALE):
+    """Build a turn-cap value labeller at a given squash scale. Keep this scale equal to the
+    search leaf value's scale so labels and search agree (see mcts.py)."""
+    def terminal_value(state, player):
+        opp = 1 - player
+        diff = polyshark.heuristic_score(state, player) - polyshark.heuristic_score(state, opp)
+        return math.tanh(scale * diff)
+    return terminal_value
+
+
+# Default-scale instance (used by Arena unless a custom fn is passed).
+heuristic_terminal_value = make_heuristic_terminal_value()
 
 
 def write_replay(path, result):

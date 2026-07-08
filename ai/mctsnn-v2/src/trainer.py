@@ -1,9 +1,12 @@
 """
-Phase A trainer — the alternating self-play/train loop (see docs/training.md).
+Trainer — the self-play/train loop (see docs/training.md).
 
-One process: play a chunk of self-play games with the current network → append to a replay
-buffer → train a chunk of minibatches → checkpoint → repeat. (The concurrent two-process
-version is a later throughput optimization; the data and losses are identical.)
+Each generation: play `games_per_gen` self-play games with the current network → append to a
+replay buffer → train a chunk of minibatches → checkpoint → repeat. Self-play is parallelised
+across `num_workers` processes (Phase B): a persistent process pool plays the generation's
+games concurrently, each worker loading the current weights from a file (once per gen). The
+train step stays in the main process. Samples cross the process boundary via pickle (GameState
+and Action are picklable — see bindings.cpp). `num_workers=1` runs everything in-process.
 
 Losses per developed sample (from the acting player's perspective):
   - value  : MSE(value_head, outcome z)                          — batched.
@@ -15,8 +18,12 @@ The trunk runs once per minibatch (batched); the value head reads the batched co
 policy stages read per-sample slices of the same cache (no re-forward).
 """
 
+import csv
+import multiprocessing as mp
 import os
 import sys
+import tempfile
+import time
 
 import numpy as np
 import torch
@@ -26,8 +33,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../build/bindi
 sys.path.insert(0, os.path.dirname(__file__))
 import polyshark  # noqa: E402
 
-from arena import Agent, Arena, MCTSStrategy  # noqa: E402
-from mcts import HeuristicEvaluator, NetworkEvaluator, _UNIT_STAGE_TYPES  # noqa: E402
+from arena import Agent, Arena, MCTSStrategy, make_heuristic_terminal_value  # noqa: E402
+from mcts import (  # noqa: E402
+    HeuristicEvaluator, NetworkEvaluator, HEURISTIC_VALUE_SCALE, _UNIT_STAGE_TYPES,
+)
 from model import PolysharkNet  # noqa: E402
 from policy import PolicyHead, T_MOVE, T_ATTACK, T_TRAIN, T_RESEARCH  # noqa: E402
 from factored import FactoredActions  # noqa: E402
@@ -136,76 +145,166 @@ def train_step(net, policy, opt, batch):
     return value_loss.item(), pl
 
 
-# --------------------------------------------------------------------------- loop
+# --------------------------------------------------------------------------- self-play
 
-def _self_play_evaluator(net, policy, gen, bootstrap_gen0):
-    """Which evaluator drives self-play this generation. Gen 0 can bootstrap on the heuristic
-    (meaningful value + fog-honest visit targets) rather than the random-init net."""
-    if gen == 0 and bootstrap_gen0:
-        return HeuristicEvaluator()
-    net.eval(); policy.eval()
+def _make_agents(evaluator, cfg):
+    def mk(name):
+        return Agent(name, MCTSStrategy(
+            evaluator, n_sims=cfg["n_sims"], c_puct=cfg["c_puct"],
+            temperature=cfg["temperature"], temp_turns=cfg["temp_turns"],
+            add_noise=cfg["add_noise"]))
+    return mk("p0"), mk("p1")
+
+
+def _play_one_game(evaluator, cfg, seed):
+    """Play one self-play game; return (samples, per-game stats)."""
+    a, b = _make_agents(evaluator, cfg)
+    tvf = make_heuristic_terminal_value(cfg["heuristic_scale"])
+    t0 = time.time()
+    res = Arena([a, b], terminal_value_fn=tvf).play_game(
+        seed=seed, max_turns=cfg["turn_limit"], collect=True)
+    stats = {"seed": seed, "winner": res.winner, "reason": res.reason, "turns": res.turns,
+             "v_finals": res.v_finals, "n_samples": len(res.samples), "time": time.time() - t0}
+    return res.samples, stats
+
+
+def _build_evaluator(weights_path, heuristic_scale):
+    """Heuristic (weights_path is None) or network evaluator loaded from a weights file."""
+    if weights_path is None:
+        return HeuristicEvaluator(scale=heuristic_scale)
+    net, policy = PolysharkNet(), PolicyHead()
+    blob = torch.load(weights_path, map_location="cpu")
+    net.load_state_dict(blob["net"]); policy.load_state_dict(blob["policy"])
     return NetworkEvaluator(net, policy)
 
+
+# --- worker-process side (used only when num_workers > 1) ---
+_WORKER = {}
+
+
+def _worker_init(cfg):
+    torch.set_num_threads(1)                     # avoid BLAS oversubscription across workers
+    _WORKER.clear()
+    _WORKER["cfg"] = cfg
+    _WORKER["gen"] = None
+    _WORKER["evaluator"] = None
+
+
+def _worker_play(task):
+    seed, gen, weights_path = task
+    if _WORKER["gen"] != gen:                     # (re)load this gen's weights once per worker
+        _WORKER["evaluator"] = _build_evaluator(weights_path, _WORKER["cfg"]["heuristic_scale"])
+        _WORKER["gen"] = gen
+    return _play_one_game(_WORKER["evaluator"], _WORKER["cfg"], seed)
+
+
+# --------------------------------------------------------------------------- loop
 
 def run_training(
     n_gens=5, games_per_gen=8, train_steps_per_gen=200, minibatch=32,
     buffer_capacity=20000, turn_limit=30, n_sims=60, c_puct=1.5,
     temperature=1.0, temp_turns=6, add_noise=True, lr=1e-3,
-    base_seed=0, bootstrap_gen0=True, ckpt_dir=None, net=None, policy=None,
-    log=print,
+    base_seed=0, bootstrap_gen0=True, heuristic_scale=HEURISTIC_VALUE_SCALE,
+    num_workers=1, ckpt_dir=None, net=None, policy=None, log=print,
 ):
-    """Phase A alternating loop. Returns per-generation stats dicts and the trained modules."""
+    """Self-play/train loop with parallel self-play. Returns (history, net, policy).
+
+    num_workers > 1 plays each generation's games across a process pool; =1 runs in-process.
+    Writes per-game and per-generation logs via `log`, and a metrics.csv into ckpt_dir."""
     net = net or PolysharkNet()
     policy = policy or PolicyHead()
     opt = torch.optim.Adam(list(net.parameters()) + list(policy.parameters()), lr=lr)
     buffer = ReplayBuffer(buffer_capacity)
+    cfg = dict(n_sims=n_sims, c_puct=c_puct, temperature=temperature, temp_turns=temp_turns,
+               add_noise=add_noise, turn_limit=turn_limit, heuristic_scale=heuristic_scale)
+
+    # Weights file that parallel workers read each network generation.
+    weights_path = (os.path.join(ckpt_dir, "_worker_weights.pt") if ckpt_dir
+                    else os.path.join(tempfile.gettempdir(), f"polyshark_w_{os.getpid()}.pt"))
+
+    # metrics.csv (value/policy loss across generations) + a live handle.
+    csv_file = writer = None
+    if ckpt_dir:
+        os.makedirs(ckpt_dir, exist_ok=True)
+        csv_file = open(os.path.join(ckpt_dir, "metrics.csv"), "w", newline="")
+        writer = csv.writer(csv_file)
+        writer.writerow(["gen", "eval", "value_loss", "policy_loss", "buffer",
+                         "decisive", "selfplay_s", "train_s", "total_s"])
+
+    pool = None
+    if num_workers > 1:
+        pool = mp.get_context("spawn").Pool(num_workers, initializer=_worker_init, initargs=(cfg,))
+
     history = []
+    try:
+        for gen in range(n_gens):
+            gen_t0 = time.time()
+            use_heuristic = (gen == 0 and bootstrap_gen0)
 
-    for gen in range(n_gens):
-        # 1. SELF-PLAY with the current weights -> samples.
-        ev = _self_play_evaluator(net, policy, gen, bootstrap_gen0)
-        mk = lambda name: Agent(name, MCTSStrategy(  # noqa: E731
-            ev, n_sims=n_sims, c_puct=c_puct,
-            temperature=temperature, temp_turns=temp_turns, add_noise=add_noise))
-        a, b = mk("p0"), mk("p1")
+            # 1. SELF-PLAY (parallel across workers, or in-process).
+            sp_t0 = time.time()
+            if not use_heuristic:
+                torch.save({"net": net.state_dict(), "policy": policy.state_dict()}, weights_path)
+            gen_weights = None if use_heuristic else weights_path
+            seeds = [base_seed + gen * games_per_gen + g for g in range(games_per_gen)]
 
-        decisive, added = 0, 0
-        for g in range(games_per_gen):
-            res = Arena([a, b]).play_game(
-                seed=base_seed + gen * games_per_gen + g, max_turns=turn_limit, collect=True)
-            buffer.extend(res.samples)
-            added += len(res.samples)
-            decisive += (res.winner >= 0)
+            if pool is not None:
+                results = pool.map(_worker_play, [(s, gen, gen_weights) for s in seeds])
+            else:
+                ev = _build_evaluator(gen_weights, heuristic_scale)
+                results = [_play_one_game(ev, cfg, s) for s in seeds]
+            selfplay_s = time.time() - sp_t0
 
-        # 2. TRAIN on random minibatches from the buffer.
-        net.train(); policy.train()
-        vlosses, plosses = [], []
-        for _ in range(train_steps_per_gen):
-            mb = buffer.sample(minibatch)
-            if not mb:
-                break
-            vl, pl = train_step(net, policy, opt, mb)
-            vlosses.append(vl); plosses.append(pl)
+            decisive = 0
+            for samples, st in results:
+                buffer.extend(samples)
+                decisive += (st["winner"] >= 0)
+                who = f"p{st['winner']} wins" if st["winner"] >= 0 else "turn cap "
+                log(f"  game seed={st['seed']:<5} {who:<9} v=({st['v_finals'][0]:+.2f},"
+                    f"{st['v_finals'][1]:+.2f}) turns={st['turns']:<3} "
+                    f"samples={st['n_samples']:<4} {st['time']:.1f}s")
 
-        # 3. CHECKPOINT.
-        ckpt_path = None
-        if ckpt_dir:
-            os.makedirs(ckpt_dir, exist_ok=True)
-            ckpt_path = os.path.join(ckpt_dir, f"gen{gen:03d}.pt")
-            torch.save({"net": net.state_dict(), "policy": policy.state_dict(), "gen": gen},
-                       ckpt_path)
+            # 2. TRAIN on random minibatches from the buffer.
+            net.train(); policy.train()
+            tr_t0 = time.time()
+            vlosses, plosses = [], []
+            for _ in range(train_steps_per_gen):
+                mb = buffer.sample(minibatch)
+                if not mb:
+                    break
+                vl, pl = train_step(net, policy, opt, mb)
+                vlosses.append(vl); plosses.append(pl)
+            train_s = time.time() - tr_t0
+            vloss = float(np.mean(vlosses)) if vlosses else float("nan")
+            ploss = float(np.mean(plosses)) if plosses else float("nan")
 
-        stat = {
-            "gen": gen, "eval": type(ev).__name__, "buffer": len(buffer),
-            "samples_added": added, "decisive": decisive,
-            "value_loss": float(np.mean(vlosses)) if vlosses else float("nan"),
-            "policy_loss": float(np.mean(plosses)) if plosses else float("nan"),
-            "ckpt": ckpt_path,
-        }
-        history.append(stat)
-        log(f"gen {gen:2d} | eval={stat['eval']:<18} buffer={stat['buffer']:<6} "
-            f"decisive={decisive}/{games_per_gen} | "
-            f"value_loss={stat['value_loss']:.4f} policy_loss={stat['policy_loss']:.4f}"
-            + (f" | {ckpt_path}" if ckpt_path else ""))
+            # 3. CHECKPOINT.
+            ckpt_path = None
+            if ckpt_dir:
+                ckpt_path = os.path.join(ckpt_dir, f"gen{gen:03d}.pt")
+                torch.save({"net": net.state_dict(), "policy": policy.state_dict(), "gen": gen},
+                           ckpt_path)
+
+            total_s = time.time() - gen_t0
+            evname = "heuristic" if use_heuristic else "network"
+            log(f"gen {gen:2d} | eval={evname:<9} buffer={len(buffer):<6} "
+                f"decisive={decisive}/{games_per_gen} | value_loss={vloss:.4f} "
+                f"policy_loss={ploss:.4f} | selfplay={selfplay_s:.0f}s train={train_s:.0f}s "
+                f"total={total_s:.0f}s")
+            if writer:
+                writer.writerow([gen, evname, f"{vloss:.6f}", f"{ploss:.6f}", len(buffer),
+                                 decisive, f"{selfplay_s:.2f}", f"{train_s:.2f}", f"{total_s:.2f}"])
+                csv_file.flush()
+
+            history.append({
+                "gen": gen, "eval": evname, "buffer": len(buffer), "decisive": decisive,
+                "value_loss": vloss, "policy_loss": ploss, "selfplay_s": selfplay_s,
+                "train_s": train_s, "total_s": total_s, "ckpt": ckpt_path,
+            })
+    finally:
+        if pool is not None:
+            pool.close(); pool.join()
+        if csv_file:
+            csv_file.close()
 
     return history, net, policy

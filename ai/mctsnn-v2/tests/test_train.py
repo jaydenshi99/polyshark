@@ -78,8 +78,8 @@ def test_run_training_end_to_end():
             assert np.isfinite(h["value_loss"]), h
             assert np.isfinite(h["policy_loss"]), h
         # gen 0 bootstraps on the heuristic; gen 1 uses the network.
-        assert history[0]["eval"] == "HeuristicEvaluator", history[0]["eval"]
-        assert history[1]["eval"] == "NetworkEvaluator", history[1]["eval"]
+        assert history[0]["eval"] == "heuristic", history[0]["eval"]
+        assert history[1]["eval"] == "network", history[1]["eval"]
 
         # Checkpoint written in the {"net","policy"} format and reloadable into fresh modules.
         ckpt = history[-1]["ckpt"]
@@ -88,12 +88,37 @@ def test_run_training_end_to_end():
         assert "net" in blob and "policy" in blob, list(blob)
         PolysharkNet().load_state_dict(blob["net"])
         PolicyHead().load_state_dict(blob["policy"])
-        print(f"[loop]  2 gens ran, losses finite, checkpoint reloads OK "
+        # metrics.csv written with a row per generation.
+        csv_path = os.path.join(tmp, "metrics.csv")
+        assert os.path.exists(csv_path), "metrics.csv not written"
+        with open(csv_path) as f:
+            rows = f.read().splitlines()
+        assert rows[0].startswith("gen,"), rows[0]
+        assert len(rows) == 1 + 2, rows          # header + 2 gens
+        print(f"[loop]  2 gens ran, losses finite, checkpoint reloads, metrics.csv OK "
               f"(v={history[-1]['value_loss']:.3f} p={history[-1]['policy_loss']:.3f})")
+
+
+def test_parallel_selfplay():
+    """num_workers>1 runs self-play across processes and returns the same well-formed data."""
+    with tempfile.TemporaryDirectory() as tmp:
+        history, _, _ = run_training(
+            n_gens=2, games_per_gen=4, train_steps_per_gen=3, minibatch=8,
+            buffer_capacity=5000, turn_limit=5, n_sims=8, base_seed=200,
+            bootstrap_gen0=True, num_workers=2, ckpt_dir=tmp, log=lambda *a, **k: None,
+        )
+        assert len(history) == 2
+        for h in history:
+            assert h["buffer"] > 0, "buffer never filled (workers returned nothing?)"
+            assert np.isfinite(h["value_loss"]) and np.isfinite(h["policy_loss"]), h
+        assert history[0]["eval"] == "heuristic" and history[1]["eval"] == "network"
+        print(f"[parallel] 2 workers x 2 gens ran, samples crossed processes OK "
+              f"(buffer={history[-1]['buffer']})")
 
 
 if __name__ == "__main__":
     test_replay_buffer_ring()
     test_train_step_grads()
     test_run_training_end_to_end()
+    test_parallel_selfplay()
     print("\nAll trainer checks passed.")
