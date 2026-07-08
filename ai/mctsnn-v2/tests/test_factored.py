@@ -2,7 +2,7 @@
 Round-trip correctness for the factored legal-action helper. Run:
 
     source .venv/bin/activate
-    python ai/mctsnn-v2/test_factored.py
+    python ai/mctsnn-v2/tests/test_factored.py
 
 The gate that makes masking trustworthy:
   - bijection: the tree's stored Actions == the engine's in-scope legal Actions (both ways).
@@ -14,10 +14,10 @@ The gate that makes masking trustworthy:
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../build/bindings"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../build/bindings"))
 import polyshark  # noqa: E402
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../src"))
 from factored import FactoredActions  # noqa: E402
 from features import visible_snapshot  # noqa: E402
 from policy import (  # noqa: E402

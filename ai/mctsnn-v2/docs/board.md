@@ -10,7 +10,7 @@ The non-entity half of the state. Two raw inputs plus a fused one:
    [attention.md](attention.md)) written back onto the grid at each entity's tile, then
    concatenated onto the base board as extra channels before the conv.
 
-Perspective and fog match [features.py](../features.py): current player's view, me/opp, and a
+Perspective and fog match [features.py](../src/features.py): current player's view, me/opp, and a
 tile shows content only if `is_visible` (== explored in this engine — permanent reveal).
 
 ---

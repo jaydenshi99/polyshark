@@ -3,7 +3,7 @@ Shape / masking / gradient checks for the policy head, driven with a synthetic
 TrunkCache and synthetic legal-masks. Run:
 
     source .venv/bin/activate
-    python ai/mctsnn-v2/test_policy.py
+    python ai/mctsnn-v2/tests/test_policy.py
 
 The real masks come from the (later) legal-action helper; here we just prove each stage
 produces correctly-shaped, correctly-masked, differentiable logits.
@@ -15,7 +15,7 @@ import sys
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../src"))
 from model import TrunkCache  # noqa: E402
 from policy import (  # noqa: E402
     PolicyHead, N_TYPES, K_TRAIN_UNITS, K_TECH, BRACKET_DIM, T_MOVE, T_TRAIN,

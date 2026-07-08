@@ -2,7 +2,7 @@
 Correctness checks for the MCTS prototype (see docs/mcts.md). Run:
 
     source .venv/bin/activate
-    python ai/mctsnn-v2/test_mcts.py
+    python ai/mctsnn-v2/tests/test_mcts.py
 
 Proves the search is well-formed against the real engine: it returns a legal, applicable
 action; root visits account for every simulation; a full turn terminates on end_turn; and
@@ -15,10 +15,10 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../build/bindings"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../build/bindings"))
 import polyshark  # noqa: E402
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../src"))
 from mcts import MCTS, HeuristicEvaluator, NetworkEvaluator, play_turn, SCHEMA  # noqa: E402
 from features import visible_snapshot  # noqa: E402
 from policy import T_MOVE, T_ATTACK, T_HARVEST, T_CAPTURE, T_END  # noqa: E402

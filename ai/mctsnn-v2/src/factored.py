@@ -24,7 +24,7 @@ Field mapping per type (confirmed against engine/src/game_state/legal_actions.cp
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../build/bindings"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../build/bindings"))
 import polyshark  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(__file__))

@@ -19,8 +19,8 @@ Evaluator is pluggable:
 
 Run a demo:
     source .venv/bin/activate
-    python ai/mctsnn-v2/mcts.py            # heuristic evaluator, plays one turn
-    python ai/mctsnn-v2/mcts.py --net      # one search with the (random-init) network
+    python ai/mctsnn-v2/src/mcts.py            # heuristic evaluator, plays one turn
+    python ai/mctsnn-v2/src/mcts.py --net      # one search with the (random-init) network
 """
 
 import math
@@ -29,7 +29,7 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../build/bindings"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../build/bindings"))
 import polyshark  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(__file__))

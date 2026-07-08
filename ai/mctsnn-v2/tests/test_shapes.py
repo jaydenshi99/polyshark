@@ -2,7 +2,7 @@
 Shape + sanity checks for the full state->value net. Run:
 
     source .venv/bin/activate
-    python ai/mctsnn-v2/test_shapes.py
+    python ai/mctsnn-v2/tests/test_shapes.py
 
 Drives real make_random_game states through features -> PolysharkNet, asserting
 input shapes, a finite value in [-1,1], and gradient flow to every parameter group.
@@ -14,10 +14,10 @@ import sys
 import numpy as np
 import torch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../build/bindings"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../build/bindings"))
 import polyshark  # noqa: E402
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../src"))
 from features import (  # noqa: E402
     encode_entities, encode_board, encode_globals, collate,
     UNIT_FEAT_DIM, CITY_FEAT_DIM, BOARD_CHANNELS, GLOBAL_DIM,
