@@ -11,6 +11,13 @@ Ties together: [policy_head.md](policy_head.md) (priors), [value_head.md](value_
 
 - **Factored tree.** A move is not one edge; it is a path of sub-decisions (type, then
   entity, then target), each a tree level with the policy head supplying priors.
+- **Staged commitment — full budget per stage.** The played action is assembled one stage
+  at a time: search until the current stage node holds `n_sims` visits, commit that
+  stage's choice, **re-root at the chosen router**, top up, repeat. Without this, the
+  visit budget attenuates multiplicatively down the path (100 sims at `type` → ~40 at the
+  chosen `entity` → ~10 at its `tile`, spread over up to dozens of legal targets), so
+  deep-stage training targets are mostly prior + sampling noise. See "Staged commitment"
+  below.
 - **Turn-local, single perspective.** The search expands only the current (root) player's
   turn — a chain of actions. It never steps into the opponent's turn: selecting `end_turn`
   evaluates the *pre-`end_turn`* state rather than applying it. So every node is a
@@ -125,6 +132,41 @@ no legal choice is ever forbidden.
    edge of the turn — incrementing N and adding to W. **No negation** — the search is
    single-perspective, so every node is the root player and `v` keeps its sign throughout.
 
+## Staged commitment (per-stage budget)
+
+One `search(state, n_sims)` call commits the action stage by stage:
+
+```
+node = root (type or upgrade stage)
+loop:
+    while node.total_N() < n_sims: simulate(node)     # top up this stage's budget
+    record (node.stage, node.N)                        # full-budget training target
+    choice = sample_by_visits(node.N, temperature)     # commit this stage
+    if action fully assembled: return it
+    node = child(node, choice)                         # re-root at the committed router
+```
+
+Why this is cheap — **the re-root is a top-up, not a restart**:
+
+- The committed router already holds the visits the previous stage sent through it
+  (tree reuse), so the top-up only pays the deficit.
+- Every top-up sim flows through the committed prefix instead of being split across its
+  siblings — the budget concentrates exactly where the decision now lives.
+- Routers of one action share their real state's trunk cache, so re-rooting adds **no**
+  new encodes or value calls at the routers themselves; the only cost is evaluating the
+  new real-state leaves the extra sims reach. Measured: a 2-stage action at `n_sims=100`
+  ran 154 sims but only ~54 leaf evaluations (many sims revisit known leaves).
+
+Properties:
+
+- The root still receives exactly `n_sims` visits (top-ups never pass through it), so
+  root-level invariants and visit-target semantics are unchanged.
+- Commitment is greedy per stage — the type is locked after its `n_sims` — but that is
+  no worse than the previous design, which committed the *whole* action from the same
+  single tree; staging only adds resolution below each commitment.
+- Dirichlet noise composes correctly: all routers of the root action are noised on
+  creation (see Root exploration), so each new sub-root is already an exploration root.
+
 ## Selection — PUCT
 
 At a router, pick the child maximizing:
@@ -163,21 +205,23 @@ action:
 
 ```
 while not turn_over:
-    root = mcts_search(S, n_sims)          # fresh search rooted at S
-    record_training_sample(S, root)        # per-stage visit distributions (below)
-    action = sample_by_visits(root, temperature)
-    S = S.apply(action)                    # may be end_turn -> turn ends
+    action, targets = mcts_search(S, n_sims)   # staged search: commits stage by stage,
+    record_training_sample(S, targets)         # each fired stage topped up to n_sims
+    S = S.apply(action)                        # may be end_turn -> turn ends
 ```
 
-Each real state is one training sample; per-action re-search keeps targets fresh and gives
-clean per-decision visit distributions.
+Each real state is one training sample; per-action re-search keeps targets fresh, and the
+staged commitment inside each search gives every fired stage a full-budget visit
+distribution.
 
 ## Training targets
 
 Per recorded real state:
 - **Policy** — for each stage that fired, the **normalized visit counts** of that level's
   edges become the target distribution; loss = sum of the fired stages' cross-entropies
-  against the head's softmax. (Type always; entity/target/categorical per schema.)
+  against the head's softmax. (Type always; entity/target/categorical per schema.) With
+  staged commitment every fired stage's distribution carries the full `n_sims` budget —
+  deep stages are no longer low-resolution shadows of the type stage.
 - **Value** — the eventual **game outcome** `z ∈ {+1, −1}` from that state's current-player
   perspective (MSE against the value head). Turn-cap games without a winner use a
   heuristic/bootstrapped value (gen-0 bootstrap — see [training.md](training.md)).
@@ -190,7 +234,7 @@ filled at game end.
 | Name | Start | Note |
 |---|---|---|
 | `c_puct` | 1.5–2.5 | exploration constant |
-| `n_sims` | 100–400 self-play, more for eval | scale with turn complexity |
+| `n_sims` | 100–400 self-play, more for eval | per-stage visit budget (staged commitment); total sims per action ≤ stages × n_sims, typically far less via top-up reuse |
 | `BATCH_SIZE` (wave) | 8 → larger on GPU | leaf eval batch |
 | virtual loss | 1–3 | wave diversity |
 | Dirichlet α / ε | 0.3 / 0.25 | root type priors |

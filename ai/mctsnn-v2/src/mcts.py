@@ -4,6 +4,10 @@ Basic MCTS prototype — factored, NN-guided, turn-local (see docs/mcts.md).
 PUCT search over the factored action tree (type -> entity -> target). It is:
   - turn-local & single-perspective: only the root player's turn is expanded; `end_turn`
     is a forced leaf evaluated at the *pre-end_turn* state. No negamax negation anywhere.
+  - staged commitment: the played action is assembled one stage at a time, re-rooting the
+    search at each committed router and topping its visits up to the full budget — every
+    fired stage's training target carries n_sims visits, not the fraction that trickled
+    down from the type stage.
   - value at completed-action states only: routers (partial actions) are policy-only.
   - frozen-root-fog: every node is encoded with the root player's visibility snapshot, so
     search never cheats on tiles the root couldn't see. Spatial targets are masked to that
@@ -115,13 +119,24 @@ class MCTS:
     # -- public ------------------------------------------------------------
 
     def search(self, state, n_sims, temperature=0.0):
-        """Run `n_sims` simulations rooted at `state`, then pick one action to play.
+        """Staged search: assemble the action one stage at a time, giving every stage a
+        full `n_sims` visit budget.
+
+        Loop: run sims from the current stage node until it holds `n_sims` visits, record
+        its visit distribution (the stage's training target), commit one choice
+        (temperature-sampled), re-root at the chosen router, repeat until the action is
+        fully assembled. Tree reuse makes each re-root a *top-up*, not a restart: sims the
+        previous stage sent through the committed edge keep their visits/values, and the
+        top-up only pays the deficit — plus every new sim now flows through the committed
+        prefix instead of being split across its siblings. This removes the resolution
+        decay of deep-stage targets (a tile node no longer trains on the ~10 visits that
+        trickled down from a 100-sim root; see docs/mcts.md).
 
         Returns (action, root, targets):
           action  : concrete engine Action to apply (may be end_turn).
-          root    : the root Node (for inspection / debugging).
+          root    : the root Node (for inspection; root.total_N() == n_sims).
           targets : list of (stage_name, {choice: visit_count}) for the chosen action's
-                    fired stages — the per-stage policy training targets.
+                    fired stages — each carrying a full n_sims budget.
         """
         assert not state.is_terminal(), "search called on a terminal state"
         self.root_player = state.current_player()
@@ -134,11 +149,20 @@ class MCTS:
         if self.add_noise:
             self._inject_noise(root)           # root's type/upgrade stage
 
-        for _ in range(n_sims):
-            self._simulate(root)
+        node, path, targets = root, [], []
+        while True:
+            for _ in range(n_sims - node.total_N()):   # top up this stage's budget
+                self._simulate(node)
+            targets.append((node.stage, dict(node.N)))
+            choice = _sample_by_visits(node.N, temperature)
+            path.append(choice)
 
-        action, targets = self._select_action(root, temperature)
-        return action, root, targets
+            if node.stage == "upgrade":                # modal: completes immediately
+                return node.fa.upgrade_options[choice], root, targets
+            t = path[0]
+            if len(path) - 1 >= len(SCHEMA[t]):        # action fully assembled
+                return node.fa.action_for(tuple(path)), root, targets
+            node = self._child(node, choice)           # re-root at the committed router
 
     # -- one simulation ----------------------------------------------------
 
@@ -258,27 +282,6 @@ class MCTS:
         noise = np.random.dirichlet([self.alpha] * len(node.choices))
         for i, c in enumerate(node.choices):
             node.P[c] = (1 - self.eps) * node.P[c] + self.eps * float(noise[i])
-
-    # -- committing an action ---------------------------------------------
-
-    def _select_action(self, root, temperature):
-        """Walk the tree by visit counts to assemble one full action to play, collecting
-        the per-stage visit distributions (training targets) along the way."""
-        node = root
-        path = []
-        targets = []
-        while True:
-            targets.append((node.stage, dict(node.N)))
-            choice = _sample_by_visits(node.N, temperature)
-            path.append(choice)
-
-            if node.stage == "upgrade":
-                return node.fa.upgrade_options[choice], targets
-            t = path[0]
-            if len(path) - 1 >= len(SCHEMA[t]):            # action complete
-                action = node.fa.action_for(tuple(path))
-                return action, targets
-            node = self._child(node, choice)               # descend into the next router
 
 
 def _legal_choices(stage, path, fa):

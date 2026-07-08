@@ -1,0 +1,18 @@
+{
+  "n_gens": 50,
+  "games_per_gen": 8,
+  "train_steps_per_gen": 100,
+  "minibatch": 32,
+  "buffer_capacity": 20000,
+  "turn_limit": 30,
+  "n_sims": 100,
+  "c_puct": 1.5,
+  "temperature": 1.0,
+  "temp_turns": 6,
+  "add_noise": true,
+  "lr": 0.001,
+  "base_seed": 0,
+  "bootstrap_gen0": true,
+  "heuristic_scale": 0.75,
+  "num_workers": 4
+}

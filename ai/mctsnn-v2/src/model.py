@@ -163,6 +163,10 @@ class PolysharkNet(nn.Module):
             nn.Linear(TRUNK_DIM, 64), nn.GELU(),
             nn.Linear(64, 1), ArctanSquash(),
         )
+        # Input dropout for the value head (anti-memorization; see docs/endturn_collapse.md).
+        # Kept outside value_head so old checkpoints' state_dict keys still line up
+        # (Dropout is parameterless — no state_dict impact).
+        self.value_dropout = nn.Dropout(0.2)
 
     def trunk(self, unit_types, unit_feats, unit_mask, unit_tiles,
               city_feats, city_mask, city_tiles, board, globals_):
@@ -187,7 +191,7 @@ class PolysharkNet(nn.Module):
         return TrunkCache(core, feature_map, unit_tok, city_tok, unit_mask, city_mask)
 
     def value(self, core):
-        return self.value_head(core)                               # [B,1]
+        return self.value_head(self.value_dropout(core))           # [B,1]
 
     def forward(self, unit_types, unit_feats, unit_mask, unit_tiles,
                 city_feats, city_mask, city_tiles, board, globals_):

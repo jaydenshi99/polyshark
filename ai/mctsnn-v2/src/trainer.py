@@ -19,8 +19,10 @@ policy stages read per-sample slices of the same cache (no re-forward).
 """
 
 import csv
+import math
 import multiprocessing as mp
 import os
+import random
 import sys
 import tempfile
 import time
@@ -106,6 +108,12 @@ def _policy_loss_for_sample(policy, s, cache, b):
     for stage_name, visits in s.targets:
         if stage_name == "upgrade":
             continue
+        # Forced stage (one legal choice): the mask already decides — CE against a
+        # one-hot-by-construction target is pure marginal drift, zero information.
+        # `visits` covers every legal choice (zero-visit ones included), so its length
+        # is the stage's legal-choice count.
+        if len(visits) <= 1:
+            continue
         total = sum(visits.values())
         if total <= 0:
             continue
@@ -118,15 +126,18 @@ def _policy_loss_for_sample(policy, s, cache, b):
 
 
 def train_step(net, policy, opt, batch):
-    """One optimizer step over a minibatch of Samples. Returns (value_loss, policy_loss)."""
+    """One optimizer step over a minibatch of Samples. Returns (value_loss, policy_loss);
+    value_loss is NaN if no sample in the batch is value-eligible (see _mark_value_positions)."""
     states = [s.state for s in batch]
     tensors = {k: torch.from_numpy(v) for k, v in collate(states).items()}
     cache = net.trunk(*(tensors[k] for k in _MODEL_ARG_ORDER))
 
-    # Value: batched MSE against the outcome z.
+    # Value: batched MSE against the outcome z, over value-eligible samples only —
+    # within-game states share one label, so the trainer subsamples a few per game.
     value = net.value(cache.core).squeeze(-1)                     # [B]
     outcomes = torch.tensor([s.outcome for s in batch], dtype=torch.float32)
-    value_loss = F.mse_loss(value, outcomes)
+    vsel = torch.tensor([getattr(s, "train_value", True) for s in batch], dtype=torch.bool)
+    value_loss = F.mse_loss(value[vsel], outcomes[vsel]) if vsel.any() else torch.zeros(())
 
     # Policy: per-sample autoregressive CE, reading slices of the same cache.
     policy_terms, n_stages = None, 0
@@ -138,11 +149,66 @@ def train_step(net, policy, opt, batch):
     policy_loss = policy_terms / n_stages if n_stages else torch.zeros(())
 
     loss = value_loss + policy_loss
-    opt.zero_grad()
-    loss.backward()
-    opt.step()
+    if loss.requires_grad:                # can be all-constant (no value sample, no stage)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
     pl = policy_loss.item() if n_stages else 0.0
-    return value_loss.item(), pl
+    vl = value_loss.item() if vsel.any() else float("nan")
+    return vl, pl
+
+
+def make_optimizer(net, policy, lr, weight_decay):
+    """AdamW over net + policy. Decay only matrix params; biases and norm scales are
+    exempt (standard practice — decaying them hurts without regularizing anything)."""
+    params = list(net.parameters()) + list(policy.parameters())
+    decay = [p for p in params if p.ndim >= 2]
+    no_decay = [p for p in params if p.ndim < 2]
+    return torch.optim.AdamW(
+        [{"params": decay, "weight_decay": weight_decay},
+         {"params": no_decay, "weight_decay": 0.0}], lr=lr)
+
+
+def _mark_value_positions(samples, per_game, rng):
+    """AlphaGo-style value subsampling: keep only ~`per_game` positions of one game
+    value-eligible (split evenly across the two players), the rest train policy only.
+    All of a game's states share a single outcome label, so training the value head on
+    every state is ~90 gradient hits on one memorizable data point (see
+    docs/endturn_collapse.md). per_game <= 0 disables (everything stays eligible)."""
+    if per_game <= 0 or not samples:
+        return
+    by_player = {}
+    for s in samples:
+        s.train_value = False
+        by_player.setdefault(s.player, []).append(s)
+    k = max(per_game // len(by_player), 1)
+    for group in by_player.values():
+        keep = group if len(group) <= k else rng.sample(group, k)
+        for s in keep:
+            s.train_value = True
+
+
+def value_mse(net, samples, chunk=256):
+    """Value-head MSE over `samples` (no grad, eval mode). The held-out validation metric:
+    high train/val gap = the value head is memorizing games, not evaluating positions."""
+    if not samples:
+        return float("nan")
+    was_training = net.training
+    net.eval()
+    total, n = 0.0, 0
+    with torch.no_grad():
+        for i in range(0, len(samples), chunk):
+            part = samples[i:i + chunk]
+            tensors = {k: torch.from_numpy(v)
+                       for k, v in collate([s.state for s in part]).items()}
+            cache = net.trunk(*(tensors[k] for k in _MODEL_ARG_ORDER))
+            v = net.value(cache.core).squeeze(-1)
+            z = torch.tensor([s.outcome for s in part], dtype=torch.float32)
+            total += F.mse_loss(v, z, reduction="sum").item()
+            n += len(part)
+    if was_training:
+        net.train()
+    return total / n
 
 
 # --------------------------------------------------------------------------- self-play
@@ -203,17 +269,26 @@ def _worker_play(task):
 def run_training(
     n_gens=5, games_per_gen=8, train_steps_per_gen=200, minibatch=32,
     buffer_capacity=20000, turn_limit=30, n_sims=60, c_puct=1.5,
-    temperature=1.0, temp_turns=6, add_noise=True, lr=1e-3,
+    temperature=1.0, temp_turns=6, add_noise=True, lr=1e-3, weight_decay=1e-4,
+    value_samples_per_game=16, val_games=8, val_seed_base=1_000_000,
     base_seed=0, bootstrap_gen0=True, heuristic_scale=HEURISTIC_VALUE_SCALE,
     num_workers=1, ckpt_dir=None, net=None, policy=None, log=print,
 ):
     """Self-play/train loop with parallel self-play. Returns (history, net, policy).
 
     num_workers > 1 plays each generation's games across a process pool; =1 runs in-process.
-    Writes per-game and per-generation logs via `log`, and a metrics.csv into ckpt_dir."""
+    Writes per-game and per-generation logs via `log`, and a metrics.csv into ckpt_dir.
+
+    Value-overfit guards (see docs/endturn_collapse.md):
+      - value_samples_per_game : only this many positions per game keep their value label
+        for training (<=0 = all). Policy targets are unaffected.
+      - weight_decay           : AdamW decay on matrix params (biases/norms exempt).
+      - val_games              : per gen, this many extra self-play games on held-out seeds
+        (val_seed_base + ...) are played, kept OUT of the buffer, and scored after training
+        (val_value_loss column). Train/val gap = memorization meter. 0 disables."""
     net = net or PolysharkNet()
     policy = policy or PolicyHead()
-    opt = torch.optim.Adam(list(net.parameters()) + list(policy.parameters()), lr=lr)
+    opt = make_optimizer(net, policy, lr, weight_decay)
     buffer = ReplayBuffer(buffer_capacity)
     cfg = dict(n_sims=n_sims, c_puct=c_puct, temperature=temperature, temp_turns=temp_turns,
                add_noise=add_noise, turn_limit=turn_limit, heuristic_scale=heuristic_scale)
@@ -228,8 +303,8 @@ def run_training(
         os.makedirs(ckpt_dir, exist_ok=True)
         csv_file = open(os.path.join(ckpt_dir, "metrics.csv"), "w", newline="")
         writer = csv.writer(csv_file)
-        writer.writerow(["gen", "eval", "value_loss", "policy_loss", "buffer",
-                         "decisive", "selfplay_s", "train_s", "total_s"])
+        writer.writerow(["gen", "eval", "value_loss", "val_value_loss", "policy_loss",
+                         "buffer", "decisive", "selfplay_s", "train_s", "total_s"])
 
     pool = None
     if num_workers > 1:
@@ -247,16 +322,24 @@ def run_training(
                 torch.save({"net": net.state_dict(), "policy": policy.state_dict()}, weights_path)
             gen_weights = None if use_heuristic else weights_path
             seeds = [base_seed + gen * games_per_gen + g for g in range(games_per_gen)]
+            # Held-out validation games: same evaluator/config, disjoint seed range, never
+            # enter the buffer — scored after training as the memorization meter.
+            val_seeds = [val_seed_base + gen * val_games + g for g in range(val_games)]
 
             if pool is not None:
-                results = pool.map(_worker_play, [(s, gen, gen_weights) for s in seeds])
+                all_results = pool.map(
+                    _worker_play, [(s, gen, gen_weights) for s in seeds + val_seeds])
             else:
                 ev = _build_evaluator(gen_weights, heuristic_scale)
-                results = [_play_one_game(ev, cfg, s) for s in seeds]
+                all_results = [_play_one_game(ev, cfg, s) for s in seeds + val_seeds]
+            results, val_results = all_results[:len(seeds)], all_results[len(seeds):]
+            val_samples = [s for smp, _ in val_results for s in smp]
             selfplay_s = time.time() - sp_t0
 
             decisive = 0
             for samples, st in results:
+                _mark_value_positions(samples, value_samples_per_game,
+                                      random.Random(st["seed"]))
                 buffer.extend(samples)
                 decisive += (st["winner"] >= 0)
                 who = f"p{st['winner']} wins" if st["winner"] >= 0 else "turn cap "
@@ -273,10 +356,13 @@ def run_training(
                 if not mb:
                     break
                 vl, pl = train_step(net, policy, opt, mb)
-                vlosses.append(vl); plosses.append(pl)
+                if not math.isnan(vl):        # batch may hold no value-eligible sample
+                    vlosses.append(vl)
+                plosses.append(pl)
             train_s = time.time() - tr_t0
             vloss = float(np.mean(vlosses)) if vlosses else float("nan")
             ploss = float(np.mean(plosses)) if plosses else float("nan")
+            val_vloss = value_mse(net, val_samples)
 
             # 3. CHECKPOINT.
             ckpt_path = None
@@ -289,17 +375,19 @@ def run_training(
             evname = "heuristic" if use_heuristic else "network"
             log(f"gen {gen:2d} | eval={evname:<9} buffer={len(buffer):<6} "
                 f"decisive={decisive}/{games_per_gen} | value_loss={vloss:.4f} "
-                f"policy_loss={ploss:.4f} | selfplay={selfplay_s:.0f}s train={train_s:.0f}s "
-                f"total={total_s:.0f}s")
+                f"val={val_vloss:.4f} policy_loss={ploss:.4f} | "
+                f"selfplay={selfplay_s:.0f}s train={train_s:.0f}s total={total_s:.0f}s")
             if writer:
-                writer.writerow([gen, evname, f"{vloss:.6f}", f"{ploss:.6f}", len(buffer),
-                                 decisive, f"{selfplay_s:.2f}", f"{train_s:.2f}", f"{total_s:.2f}"])
+                writer.writerow([gen, evname, f"{vloss:.6f}", f"{val_vloss:.6f}",
+                                 f"{ploss:.6f}", len(buffer), decisive,
+                                 f"{selfplay_s:.2f}", f"{train_s:.2f}", f"{total_s:.2f}"])
                 csv_file.flush()
 
             history.append({
                 "gen": gen, "eval": evname, "buffer": len(buffer), "decisive": decisive,
-                "value_loss": vloss, "policy_loss": ploss, "selfplay_s": selfplay_s,
-                "train_s": train_s, "total_s": total_s, "ckpt": ckpt_path,
+                "value_loss": vloss, "val_value_loss": val_vloss, "policy_loss": ploss,
+                "selfplay_s": selfplay_s, "train_s": train_s, "total_s": total_s,
+                "ckpt": ckpt_path,
             })
     finally:
         if pool is not None:

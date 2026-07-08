@@ -30,17 +30,17 @@ from trainer import run_training  # noqa: E402
 
 # --- loop sizing ---
 N_GENS              = 50      # generations (self-play -> train -> checkpoint cycles)
-GAMES_PER_GEN       = 8      # self-play games appended to the buffer each generation
+GAMES_PER_GEN       = 48      # self-play games appended to the buffer each generation
 TRAIN_STEPS_PER_GEN = 100    # minibatch optimizer steps each generation
 MINIBATCH           = 32     # samples per optimizer step
 BUFFER_CAPACITY     = 20000  # FIFO replay window (oldest samples drop off)
 
 # --- parallelism ---
-NUM_WORKERS = 4             # self-play worker processes (1 = in-process, no pool). Set near
+NUM_WORKERS = 8             # self-play worker processes (1 = in-process, no pool). Set near
                             # your physical core count; each worker plays whole games at once.
 
 # --- self-play search (per decision) ---
-N_SIMS      = 100            # MCTS simulations per move (strength vs speed)
+N_SIMS      = 100           # MCTS simulations per move (strength vs speed)
 C_PUCT      = 1.5           # PUCT exploration constant
 ADD_NOISE   = True          # Dirichlet root noise (ON for self-play diversity)
 TEMPERATURE = 1.0           # opening move sampling: 1.0 ~ visits, 0.0 greedy
@@ -52,13 +52,23 @@ BOOTSTRAP_GEN0 = True       # gen 0 self-plays with the heuristic (meaningful da
                             # of the random-init net; gens >=1 use the net being trained
 
 # --- heuristic value scale ---
-HEURISTIC_SCALE = 0.75      # steepness of tanh(scale * heuristic_margin). Higher = the value
+HEURISTIC_SCALE = 0.30      # steepness of tanh(scale * heuristic_margin). Higher = the value
                             # separates productive actions from doing nothing more sharply
                             # (lower -> more end_turn / flatter targets). Used for the gen-0
                             # search value AND the turn-cap value labels (kept consistent).
 
 # --- optimization ---
-LR = 1e-3                   # Adam learning rate (net + policy jointly)
+LR = 1e-3                   # AdamW learning rate (net + policy jointly)
+WEIGHT_DECAY = 1e-4         # AdamW decay on matrix params (biases/norm scales exempt)
+
+# --- value-overfit guards (see docs/endturn_collapse.md) ---
+VALUE_SAMPLES_PER_GAME = 16 # positions per game that keep their value label for training
+                            # (split across players; the rest train policy only). <=0 = all.
+                            # A game's states all share one outcome label — training value
+                            # on every state is how the head memorizes games.
+VAL_GAMES = 8               # per gen: extra self-play games on held-out seeds, kept out of
+                            # the buffer, scored after training (val_value_loss in
+                            # metrics.csv). Train/val gap = memorization meter. 0 = off.
 
 # --- io ---
 BASE_SEED = 0
@@ -85,7 +95,9 @@ def main():
         n_gens=N_GENS, games_per_gen=GAMES_PER_GEN, train_steps_per_gen=TRAIN_STEPS_PER_GEN,
         minibatch=MINIBATCH, buffer_capacity=BUFFER_CAPACITY, turn_limit=TURN_LIMIT,
         n_sims=N_SIMS, c_puct=C_PUCT, temperature=TEMPERATURE, temp_turns=TEMP_TURNS,
-        add_noise=ADD_NOISE, lr=LR, base_seed=BASE_SEED, bootstrap_gen0=BOOTSTRAP_GEN0,
+        add_noise=ADD_NOISE, lr=LR, weight_decay=WEIGHT_DECAY,
+        value_samples_per_game=VALUE_SAMPLES_PER_GAME, val_games=VAL_GAMES,
+        base_seed=BASE_SEED, bootstrap_gen0=BOOTSTRAP_GEN0,
         heuristic_scale=HEURISTIC_SCALE, num_workers=NUM_WORKERS,
     )
     # Save the run's config alongside its checkpoints so each run is self-describing.

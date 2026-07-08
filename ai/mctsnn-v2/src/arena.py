@@ -45,6 +45,17 @@ def legal_actions(state):
     return acts
 
 
+def _forced_end_turn(state):
+    """The end_turn Action if it is the *only* legal action, else None. Such states carry
+    no decision: searching them is wasted compute and recording them poisons training —
+    the policy target is a forced 100%-end_turn marginal and the value label is a
+    duplicate of the turn's other states (see docs/endturn_collapse.md)."""
+    acts = legal_actions(state)
+    if len(acts) == 1 and acts[0].type == _AT.EndTurn:
+        return acts[0]
+    return None
+
+
 # --------------------------------------------------------------------------- pieces
 
 @dataclass
@@ -116,6 +127,8 @@ class Sample:
     action: object                       # the chosen engine Action (also the replay stream)
     targets: Optional[list]              # policy targets (None for non-search strategies)
     outcome: Optional[float] = None      # +1 win / -1 loss / heuristic on turn-cap
+    train_value: bool = True             # value-loss eligible (trainer subsamples per game —
+                                         # within-game states share one label; see training.md)
 
 
 @dataclass
@@ -207,6 +220,15 @@ class Arena:
                 reason = "turn_cap"; break
             if steps >= max_steps:
                 reason = "step_cap"; break
+
+            forced = _forced_end_turn(state)
+            if forced is not None:
+                # No decision to make or learn from: play it agent-free (no search) and
+                # record no sample — neither policy nor value trains on forced states.
+                history.append(forced)
+                state = state.apply_action(forced)
+                steps += 1
+                continue
 
             p = state.current_player()
             dec = self.agents[p].act(state)
