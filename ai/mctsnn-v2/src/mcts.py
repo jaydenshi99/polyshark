@@ -108,6 +108,9 @@ class MCTS:
         # Frozen root frame, set per search.
         self.root_player = None
         self.root_visible = None
+        # The root real state; every stage router sharing it is part of the "root action"
+        # and gets Dirichlet noise (identity compare — see _child / _inject_noise).
+        self._root_state = None
 
     # -- public ------------------------------------------------------------
 
@@ -126,9 +129,10 @@ class MCTS:
         self.ev.begin_search(self.root_player, self.root_visible)
 
         root = Node(state=state, path=())
+        self._root_state = state
         self._expand_real(root)
         if self.add_noise:
-            self._inject_noise(root)
+            self._inject_noise(root)           # root's type/upgrade stage
 
         for _ in range(n_sims):
             self._simulate(root)
@@ -193,6 +197,11 @@ class MCTS:
                 child.ctx, child.fa = node.ctx, node.fa
                 self._init_stage(child, SCHEMA[t][made])
                 child.expanded = True                      # routers need no value/eval
+                # Root-action stages (entity/target of the first action, still on the root
+                # real state) are noised too — not just the type stage. A router belongs to
+                # the root action iff it shares the root's GameState (no apply happened yet).
+                if self.add_noise and child.state is self._root_state:
+                    self._inject_noise(child)
 
         node.children[choice] = child
         return child
@@ -239,14 +248,16 @@ class MCTS:
         node.N = {c: 0 for c in node.choices}
         node.W = {c: 0.0 for c in node.choices}
 
-    def _inject_noise(self, root):
-        """Dirichlet noise on the root stage priors (self-play exploration). Basic
-        prototype noises only the root's first stage; deeper root stages are a TODO."""
-        if not root.choices:
+    def _inject_noise(self, node):
+        """Mix Dirichlet noise into one stage's priors: P = (1-eps)*P + eps*Dir(alpha).
+        Applied to every stage of the root action (type/upgrade, then entity, then target)
+        the first time each router is expanded — self-play exploration across the whole
+        first decision, not just its type. Deeper actions / later turns are never noised."""
+        if not node.choices:
             return
-        noise = np.random.dirichlet([self.alpha] * len(root.choices))
-        for i, c in enumerate(root.choices):
-            root.P[c] = (1 - self.eps) * root.P[c] + self.eps * float(noise[i])
+        noise = np.random.dirichlet([self.alpha] * len(node.choices))
+        for i, c in enumerate(node.choices):
+            node.P[c] = (1 - self.eps) * node.P[c] + self.eps * float(noise[i])
 
     # -- committing an action ---------------------------------------------
 
