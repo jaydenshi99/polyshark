@@ -232,13 +232,23 @@ def _make_terminal_value(cfg):
     return make_heuristic_terminal_value(cfg["heuristic_scale"])
 
 
-def _play_one_game(evaluator, cfg, seed):
+def turn_cap_for_gen(gen, turn_limit, turn_cap_start=None, turn_cap_grow=1.0):
+    """Curriculum horizon: the turn cap for generation `gen`. With turn_cap_start set,
+    the cap starts there and grows `turn_cap_grow` turns per gen up to `turn_limit` —
+    short horizons early make each action a large share of the outcome (strong value
+    gradient), then the horizon stretches as play earns it. None = constant turn_limit."""
+    if turn_cap_start is None:
+        return turn_limit
+    return min(turn_limit, int(turn_cap_start + gen * turn_cap_grow))
+
+
+def _play_one_game(evaluator, cfg, seed, turn_cap=None):
     """Play one self-play game; return (samples, per-game stats)."""
     a, b = _make_agents(evaluator, cfg)
     tvf = _make_terminal_value(cfg)
     t0 = time.time()
     res = Arena([a, b], terminal_value_fn=tvf).play_game(
-        seed=seed, max_turns=cfg["turn_limit"], collect=True)
+        seed=seed, max_turns=turn_cap or cfg["turn_limit"], collect=True)
     stats = {"seed": seed, "winner": res.winner, "reason": res.reason, "turns": res.turns,
              "v_finals": res.v_finals, "n_samples": len(res.samples), "time": time.time() - t0}
     return res.samples, stats
@@ -267,12 +277,12 @@ def _worker_init(cfg):
 
 
 def _worker_play(task):
-    seed, gen, weights_path = task
+    seed, gen, weights_path, turn_cap = task
     if _WORKER["gen"] != gen:                     # (re)load this gen's weights once per worker
         _WORKER["evaluator"] = _build_evaluator(
             weights_path, _WORKER["cfg"]["gen0_search_scale"])
         _WORKER["gen"] = gen
-    return _play_one_game(_WORKER["evaluator"], _WORKER["cfg"], seed)
+    return _play_one_game(_WORKER["evaluator"], _WORKER["cfg"], seed, turn_cap)
 
 
 # --------------------------------------------------------------------------- loop
@@ -283,6 +293,7 @@ def run_training(
     temperature=1.0, temp_turns=6, add_noise=True, lr=1e-3, weight_decay=1e-4,
     value_samples_per_game=16, val_games=8, val_seed_base=1_000_000,
     turn_cap_winner=True, winner_dead_zone=1.0, gen0_search_scale=1.0,
+    turn_cap_start=None, turn_cap_grow=1.0,
     base_seed=0, bootstrap_gen0=True, heuristic_scale=HEURISTIC_VALUE_SCALE,
     num_workers=1, ckpt_dir=None, net=None, policy=None, log=print,
 ):
@@ -304,7 +315,13 @@ def run_training(
         (winner_dead_zone points -> 0); the value head estimates win probability and
         mutual passing is no longer label-neutral. False = legacy tanh(heuristic_scale·m).
       - gen0_search_scale      : tanh scale of the gen-0 bootstrap SEARCH evaluator —
-        deliberately sharper than any label squash so bootstrap play is decisive."""
+        deliberately sharper than any label squash so bootstrap play is decisive.
+
+    Horizon curriculum:
+      - turn_cap_start/grow    : if start is set, gen g's games are capped at
+        min(turn_limit, start + g*grow) turns. Short horizons early = each action is a
+        big share of the outcome (strong value gradient); the cap then stretches toward
+        turn_limit as generations pass. None = constant turn_limit."""
     net = net or PolysharkNet()
     policy = policy or PolicyHead()
     opt = make_optimizer(net, policy, lr, weight_decay)
@@ -324,8 +341,9 @@ def run_training(
         os.makedirs(ckpt_dir, exist_ok=True)
         csv_file = open(os.path.join(ckpt_dir, "metrics.csv"), "w", newline="")
         writer = csv.writer(csv_file)
-        writer.writerow(["gen", "eval", "value_loss", "val_value_loss", "policy_loss",
-                         "buffer", "decisive", "selfplay_s", "train_s", "total_s"])
+        writer.writerow(["gen", "eval", "turn_cap", "value_loss", "val_value_loss",
+                         "policy_loss", "buffer", "decisive", "selfplay_s", "train_s",
+                         "total_s"])
 
     pool = None
     if num_workers > 1:
@@ -347,15 +365,18 @@ def run_training(
             # enter the buffer — scored after training as the memorization meter.
             val_seeds = [val_seed_base + gen * val_games + g for g in range(val_games)]
 
+            # Horizon curriculum: this generation's turn cap.
+            cap = turn_cap_for_gen(gen, turn_limit, turn_cap_start, turn_cap_grow)
+
             # Stream results as games finish (imap_unordered) so progress is visible
             # during the long self-play phase; training vs val games are told apart by
             # their disjoint seed ranges.
-            tasks = [(s, gen, gen_weights) for s in seeds + val_seeds]
+            tasks = [(s, gen, gen_weights, cap) for s in seeds + val_seeds]
             if pool is not None:
                 result_iter = pool.imap_unordered(_worker_play, tasks)
             else:
                 ev = _build_evaluator(gen_weights, gen0_search_scale)
-                result_iter = (_play_one_game(ev, cfg, s) for s, _, _ in tasks)
+                result_iter = (_play_one_game(ev, cfg, s, cap) for s, _, _, cap in tasks)
 
             val_seed_set = set(val_seeds)
             val_samples, decisive = [], 0
@@ -400,21 +421,21 @@ def run_training(
 
             total_s = time.time() - gen_t0
             evname = "heuristic" if use_heuristic else "network"
-            log(f"gen {gen:2d} | eval={evname:<9} buffer={len(buffer):<6} "
+            log(f"gen {gen:2d} | eval={evname:<9} cap={cap:<3} buffer={len(buffer):<6} "
                 f"decisive={decisive}/{games_per_gen} | value_loss={vloss:.4f} "
                 f"val={val_vloss:.4f} policy_loss={ploss:.4f} | "
                 f"selfplay={selfplay_s:.0f}s train={train_s:.0f}s total={total_s:.0f}s")
             if writer:
-                writer.writerow([gen, evname, f"{vloss:.6f}", f"{val_vloss:.6f}",
+                writer.writerow([gen, evname, cap, f"{vloss:.6f}", f"{val_vloss:.6f}",
                                  f"{ploss:.6f}", len(buffer), decisive,
                                  f"{selfplay_s:.2f}", f"{train_s:.2f}", f"{total_s:.2f}"])
                 csv_file.flush()
 
             history.append({
-                "gen": gen, "eval": evname, "buffer": len(buffer), "decisive": decisive,
-                "value_loss": vloss, "val_value_loss": val_vloss, "policy_loss": ploss,
-                "selfplay_s": selfplay_s, "train_s": train_s, "total_s": total_s,
-                "ckpt": ckpt_path,
+                "gen": gen, "eval": evname, "turn_cap": cap, "buffer": len(buffer),
+                "decisive": decisive, "value_loss": vloss, "val_value_loss": val_vloss,
+                "policy_loss": ploss, "selfplay_s": selfplay_s, "train_s": train_s,
+                "total_s": total_s, "ckpt": ckpt_path,
             })
     finally:
         if pool is not None:

@@ -15,6 +15,10 @@ margin labels, reached cleanly. Fixes: **±1 winner-at-cap labels**
 (`make_winner_terminal_value`, `turn_cap_winner`/`winner_dead_zone` config — value head
 now estimates win probability, which is steep where expected-margin is flat);
 **gen-0 search scale decoupled from labels** (`gen0_search_scale=1.0`, sharp bootstrap);
+**horizon curriculum** (`turn_cap_start`/`turn_cap_grow`): games start short (cap ~5,
+where one action is a big share of the outcome — strong per-action value gradient, and the
+objective is crisp: out-explore / grab a village) and the cap grows per gen toward
+`turn_limit`, stretching the horizon as play earns it;
 **exploration + aggression terms in `heuristic_score`**: +0.015/explored tile (kept small
 — the L1 Explorer upgrade reveals in bulk, so reveal count is an information reward, not
 a movement reward) and an enemy-capital proximity term (4/(1+dist) for the nearest own

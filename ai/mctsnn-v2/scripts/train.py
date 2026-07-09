@@ -46,7 +46,13 @@ C_PUCT      = 1.5           # PUCT exploration constant
 ADD_NOISE   = True          # Dirichlet root noise (ON for self-play diversity)
 TEMPERATURE = 1.0           # opening move sampling: 1.0 ~ visits, 0.0 greedy
 TEMP_TURNS  = 6             # turns temperature applies before dropping to greedy
-TURN_LIMIT  = 30            # per-game turn cap (turn-capped games use heuristic outcome)
+TURN_LIMIT  = 30            # max per-game turn cap (turn-capped games -> winner labels)
+
+# --- horizon curriculum (short games early -> strong per-action value gradient) ---
+TURN_CAP_START = 5          # gen 0 games are capped this short; None = constant TURN_LIMIT.
+                            # At cap 5 the objective is crisp: out-explore / grab a village.
+TURN_CAP_GROW  = 1.0        # turns added to the cap per generation, up to TURN_LIMIT
+                            # (5 + 1.0/gen -> full 30-turn games from gen 25 on).
 
 # --- gen-0 bootstrap ---
 BOOTSTRAP_GEN0 = True       # gen 0 self-plays with the heuristic (meaningful data) instead
@@ -105,6 +111,7 @@ def main():
         value_samples_per_game=VALUE_SAMPLES_PER_GAME, val_games=VAL_GAMES,
         turn_cap_winner=TURN_CAP_WINNER, winner_dead_zone=WINNER_DEAD_ZONE,
         gen0_search_scale=GEN0_SEARCH_SCALE,
+        turn_cap_start=TURN_CAP_START, turn_cap_grow=TURN_CAP_GROW,
         base_seed=BASE_SEED, bootstrap_gen0=BOOTSTRAP_GEN0,
         heuristic_scale=HEURISTIC_SCALE, num_workers=NUM_WORKERS,
     )
