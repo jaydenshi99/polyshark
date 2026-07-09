@@ -30,13 +30,14 @@ from trainer import run_training  # noqa: E402
 
 # --- loop sizing ---
 N_GENS              = 50      # generations (self-play -> train -> checkpoint cycles)
-GAMES_PER_GEN       = 48      # self-play games appended to the buffer each generation
-TRAIN_STEPS_PER_GEN = 100    # minibatch optimizer steps each generation
+GAMES_PER_GEN       = 30      # self-play games appended to the buffer each generation
+TRAIN_STEPS_PER_GEN = 200    # minibatch optimizer steps each generation (~1 epoch over a
+                             # gen's ~6k new samples at MINIBATCH=32)
 MINIBATCH           = 32     # samples per optimizer step
 BUFFER_CAPACITY     = 20000  # FIFO replay window (oldest samples drop off)
 
 # --- parallelism ---
-NUM_WORKERS = 8             # self-play worker processes (1 = in-process, no pool). Set near
+NUM_WORKERS = 6             # self-play worker processes (1 = in-process, no pool). Set near
                             # your physical core count; each worker plays whole games at once.
 
 # --- self-play search (per decision) ---
@@ -51,11 +52,16 @@ TURN_LIMIT  = 30            # per-game turn cap (turn-capped games use heuristic
 BOOTSTRAP_GEN0 = True       # gen 0 self-plays with the heuristic (meaningful data) instead
                             # of the random-init net; gens >=1 use the net being trained
 
-# --- heuristic value scale ---
-HEURISTIC_SCALE = 0.30      # steepness of tanh(scale * heuristic_margin). Higher = the value
-                            # separates productive actions from doing nothing more sharply
-                            # (lower -> more end_turn / flatter targets). Used for the gen-0
-                            # search value AND the turn-cap value labels (kept consistent).
+# --- turn-cap labels & gen-0 search value (see docs/endturn_collapse.md #1) ---
+TURN_CAP_WINNER  = True     # True: turn-capped games label ±1 by heuristic-margin sign
+                            # (winner declared at the cap; value head estimates win prob;
+                            # mutual passing is never label-neutral). False: legacy tanh.
+WINNER_DEAD_ZONE = 0.75     # heuristic points inside which a capped game labels 0 (a tie).
+                            # A village is ~4 points; 1.0 = tech/unit dust doesn't decide.
+GEN0_SEARCH_SCALE = 1.0     # tanh scale of the gen-0 bootstrap SEARCH evaluator. Sharp on
+                            # purpose (decisive bootstrap play); independent of the labels.
+HEURISTIC_SCALE = 0.30      # legacy tanh(scale * margin) labels, used only when
+                            # TURN_CAP_WINNER = False.
 
 # --- optimization ---
 LR = 1e-3                   # AdamW learning rate (net + policy jointly)
@@ -66,14 +72,14 @@ VALUE_SAMPLES_PER_GAME = 16 # positions per game that keep their value label for
                             # (split across players; the rest train policy only). <=0 = all.
                             # A game's states all share one outcome label — training value
                             # on every state is how the head memorizes games.
-VAL_GAMES = 8               # per gen: extra self-play games on held-out seeds, kept out of
+VAL_GAMES = 6               # per gen: extra self-play games on held-out seeds, kept out of
                             # the buffer, scored after training (val_value_loss in
                             # metrics.csv). Train/val gap = memorization meter. 0 = off.
 
 # --- io ---
 BASE_SEED = 0
 CKPT_ROOT = os.path.join(_PKG, "data", "checkpoints")  # parent; each run gets its own subfolder
-RUN_LABEL = ""             # optional suffix on the run folder, e.g. "highsim" -> run_<ts>_highsim
+RUN_LABEL = "guards"       # optional suffix on the run folder, e.g. "highsim" -> run_<ts>_highsim
 
 # ============================================================================
 # end CONFIG
@@ -97,6 +103,8 @@ def main():
         n_sims=N_SIMS, c_puct=C_PUCT, temperature=TEMPERATURE, temp_turns=TEMP_TURNS,
         add_noise=ADD_NOISE, lr=LR, weight_decay=WEIGHT_DECAY,
         value_samples_per_game=VALUE_SAMPLES_PER_GAME, val_games=VAL_GAMES,
+        turn_cap_winner=TURN_CAP_WINNER, winner_dead_zone=WINNER_DEAD_ZONE,
+        gen0_search_scale=GEN0_SEARCH_SCALE,
         base_seed=BASE_SEED, bootstrap_gen0=BOOTSTRAP_GEN0,
         heuristic_scale=HEURISTIC_SCALE, num_workers=NUM_WORKERS,
     )

@@ -242,7 +242,9 @@ PYBIND11_MODULE(polyshark, m) {
 
         // Collect visible uncaptured villages and this player's unit positions, so we can
         // reward moving units toward capturable villages (each village -> nearest own unit).
+        // Also the visible enemy capital, to pull units toward the win condition.
         std::vector<std::pair<int,int>> villages, my_units;
+        int enemy_cap_row = -1, enemy_cap_col = -1;
 
         for (int i = 0; i < s.map_tiles(); ++i) {
             const Tile& t = s.tile_at(i);
@@ -251,6 +253,9 @@ PYBIND11_MODULE(polyshark, m) {
             if (t.has_city()) {
                 const City& c = s.get_city(t.city_id());
                 if (c.owner() == player) { ++cities; total_level += c.level(); }
+                else if (c.is_capital() && s.is_visible(player, i)) {
+                    enemy_cap_row = row; enemy_cap_col = col;
+                }
             }
             if (t.has_unit()) {
                 const Unit& u = s.get_unit(t.unit_id());
@@ -273,9 +278,31 @@ PYBIND11_MODULE(polyshark, m) {
                 village_prox += 1.0f / (1.0f + min_dist);
         }
 
+        // Exploration term: revealed tiles are information. Kept small (full map ~= half
+        // a village) because the L1 Explorer upgrade reveals in bulk — movement itself is
+        // rewarded by the proximity terms, not by reveal count.
+        int explored = 0;
+        for (int i = 0; i < s.map_tiles(); ++i)
+            if (s.is_visible(player, i)) ++explored;
+
+        // Aggression term: pull the nearest own unit toward the visible enemy capital —
+        // the win condition (Domination). Adjacent ~= half a village; standing on top of
+        // it (siege/capture range) ~= a village.
+        float capital_prox = 0.0f;
+        if (enemy_cap_row >= 0) {
+            int min_dist = 999;
+            for (auto [ur, uc] : my_units) {
+                int d = std::abs(ur - enemy_cap_row) + std::abs(uc - enemy_cap_col);
+                if (d < min_dist) min_dist = d;
+            }
+            if (min_dist < 999)
+                capital_prox = 4.0f / (1.0f + min_dist);
+        }
+
         int mask = s.techs_mask(player);
         int tech_bits = __builtin_popcount(mask >> 1); // skip Origin bit
-        return 3.0f * cities + total_level + 0.3f * tech_bits + 0.2f * units + 0.5f * village_prox;
+        return 3.0f * cities + total_level + 0.3f * tech_bits + 0.2f * units
+             + 0.5f * village_prox + 0.015f * explored + capital_prox;
     }, py::arg("state"), py::arg("player"));
 
     m.def("make_random_game", [](uint64_t seed, int sz) {

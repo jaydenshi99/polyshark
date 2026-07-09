@@ -171,6 +171,25 @@ def make_heuristic_terminal_value(scale=HEURISTIC_VALUE_SCALE):
     return terminal_value
 
 
+def make_winner_terminal_value(dead_zone=1.0):
+    """Turn-cap labeller that declares a WINNER: ±1 by the sign of the heuristic margin
+    (0 only inside the dead zone). The value head then estimates win probability — which
+    moves sharply with position between equal opponents — instead of an expected-margin
+    squash that is nearly flat within a turn. Crucially, mutual passing stops being
+    label-neutral: any activity edge at the cap banks a full ±1
+    (docs/endturn_collapse.md, actionable #1). `dead_zone` is in heuristic points
+    (a village capture is ~4; ~1.0 means tech/unit dust doesn't decide a game)."""
+    def terminal_value(state, player):
+        opp = 1 - player
+        diff = polyshark.heuristic_score(state, player) - polyshark.heuristic_score(state, opp)
+        if diff > dead_zone:
+            return 1.0
+        if diff < -dead_zone:
+            return -1.0
+        return 0.0
+    return terminal_value
+
+
 # Default-scale instance (used by Arena unless a custom fn is passed).
 heuristic_terminal_value = make_heuristic_terminal_value()
 

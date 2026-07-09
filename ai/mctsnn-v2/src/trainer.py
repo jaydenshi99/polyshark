@@ -35,7 +35,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../build/bindi
 sys.path.insert(0, os.path.dirname(__file__))
 import polyshark  # noqa: E402
 
-from arena import Agent, Arena, MCTSStrategy, make_heuristic_terminal_value  # noqa: E402
+from arena import (  # noqa: E402
+    Agent, Arena, MCTSStrategy, make_heuristic_terminal_value, make_winner_terminal_value,
+)
 from mcts import (  # noqa: E402
     HeuristicEvaluator, NetworkEvaluator, HEURISTIC_VALUE_SCALE, _UNIT_STAGE_TYPES,
 )
@@ -222,10 +224,18 @@ def _make_agents(evaluator, cfg):
     return mk("p0"), mk("p1")
 
 
+def _make_terminal_value(cfg):
+    """Turn-cap labeller from config: ±1 winner-by-margin (default; see
+    docs/endturn_collapse.md actionable #1) or the legacy tanh margin."""
+    if cfg.get("turn_cap_winner", True):
+        return make_winner_terminal_value(cfg.get("winner_dead_zone", 1.0))
+    return make_heuristic_terminal_value(cfg["heuristic_scale"])
+
+
 def _play_one_game(evaluator, cfg, seed):
     """Play one self-play game; return (samples, per-game stats)."""
     a, b = _make_agents(evaluator, cfg)
-    tvf = make_heuristic_terminal_value(cfg["heuristic_scale"])
+    tvf = _make_terminal_value(cfg)
     t0 = time.time()
     res = Arena([a, b], terminal_value_fn=tvf).play_game(
         seed=seed, max_turns=cfg["turn_limit"], collect=True)
@@ -259,7 +269,8 @@ def _worker_init(cfg):
 def _worker_play(task):
     seed, gen, weights_path = task
     if _WORKER["gen"] != gen:                     # (re)load this gen's weights once per worker
-        _WORKER["evaluator"] = _build_evaluator(weights_path, _WORKER["cfg"]["heuristic_scale"])
+        _WORKER["evaluator"] = _build_evaluator(
+            weights_path, _WORKER["cfg"]["gen0_search_scale"])
         _WORKER["gen"] = gen
     return _play_one_game(_WORKER["evaluator"], _WORKER["cfg"], seed)
 
@@ -271,6 +282,7 @@ def run_training(
     buffer_capacity=20000, turn_limit=30, n_sims=60, c_puct=1.5,
     temperature=1.0, temp_turns=6, add_noise=True, lr=1e-3, weight_decay=1e-4,
     value_samples_per_game=16, val_games=8, val_seed_base=1_000_000,
+    turn_cap_winner=True, winner_dead_zone=1.0, gen0_search_scale=1.0,
     base_seed=0, bootstrap_gen0=True, heuristic_scale=HEURISTIC_VALUE_SCALE,
     num_workers=1, ckpt_dir=None, net=None, policy=None, log=print,
 ):
@@ -285,13 +297,22 @@ def run_training(
       - weight_decay           : AdamW decay on matrix params (biases/norms exempt).
       - val_games              : per gen, this many extra self-play games on held-out seeds
         (val_seed_base + ...) are played, kept OUT of the buffer, and scored after training
-        (val_value_loss column). Train/val gap = memorization meter. 0 disables."""
+        (val_value_loss column). Train/val gap = memorization meter. 0 disables.
+
+    Turn-cap labelling (actionable #1):
+      - turn_cap_winner        : True (default) = ±1 by heuristic-margin sign at the cap
+        (winner_dead_zone points -> 0); the value head estimates win probability and
+        mutual passing is no longer label-neutral. False = legacy tanh(heuristic_scale·m).
+      - gen0_search_scale      : tanh scale of the gen-0 bootstrap SEARCH evaluator —
+        deliberately sharper than any label squash so bootstrap play is decisive."""
     net = net or PolysharkNet()
     policy = policy or PolicyHead()
     opt = make_optimizer(net, policy, lr, weight_decay)
     buffer = ReplayBuffer(buffer_capacity)
     cfg = dict(n_sims=n_sims, c_puct=c_puct, temperature=temperature, temp_turns=temp_turns,
-               add_noise=add_noise, turn_limit=turn_limit, heuristic_scale=heuristic_scale)
+               add_noise=add_noise, turn_limit=turn_limit, heuristic_scale=heuristic_scale,
+               turn_cap_winner=turn_cap_winner, winner_dead_zone=winner_dead_zone,
+               gen0_search_scale=gen0_search_scale)
 
     # Weights file that parallel workers read each network generation.
     weights_path = (os.path.join(ckpt_dir, "_worker_weights.pt") if ckpt_dir
@@ -326,26 +347,32 @@ def run_training(
             # enter the buffer — scored after training as the memorization meter.
             val_seeds = [val_seed_base + gen * val_games + g for g in range(val_games)]
 
+            # Stream results as games finish (imap_unordered) so progress is visible
+            # during the long self-play phase; training vs val games are told apart by
+            # their disjoint seed ranges.
+            tasks = [(s, gen, gen_weights) for s in seeds + val_seeds]
             if pool is not None:
-                all_results = pool.map(
-                    _worker_play, [(s, gen, gen_weights) for s in seeds + val_seeds])
+                result_iter = pool.imap_unordered(_worker_play, tasks)
             else:
-                ev = _build_evaluator(gen_weights, heuristic_scale)
-                all_results = [_play_one_game(ev, cfg, s) for s in seeds + val_seeds]
-            results, val_results = all_results[:len(seeds)], all_results[len(seeds):]
-            val_samples = [s for smp, _ in val_results for s in smp]
-            selfplay_s = time.time() - sp_t0
+                ev = _build_evaluator(gen_weights, gen0_search_scale)
+                result_iter = (_play_one_game(ev, cfg, s) for s, _, _ in tasks)
 
-            decisive = 0
-            for samples, st in results:
-                _mark_value_positions(samples, value_samples_per_game,
-                                      random.Random(st["seed"]))
-                buffer.extend(samples)
-                decisive += (st["winner"] >= 0)
+            val_seed_set = set(val_seeds)
+            val_samples, decisive = [], 0
+            for samples, st in result_iter:
+                is_val = st["seed"] in val_seed_set
+                if is_val:
+                    val_samples.extend(samples)          # held out: never enters the buffer
+                else:
+                    _mark_value_positions(samples, value_samples_per_game,
+                                          random.Random(st["seed"]))
+                    buffer.extend(samples)
+                    decisive += (st["winner"] >= 0)
                 who = f"p{st['winner']} wins" if st["winner"] >= 0 else "turn cap "
-                log(f"  game seed={st['seed']:<5} {who:<9} v=({st['v_finals'][0]:+.2f},"
-                    f"{st['v_finals'][1]:+.2f}) turns={st['turns']:<3} "
-                    f"samples={st['n_samples']:<4} {st['time']:.1f}s")
+                log(f"  {'val ' if is_val else 'game'} seed={st['seed']:<7} {who:<9} "
+                    f"v=({st['v_finals'][0]:+.2f},{st['v_finals'][1]:+.2f}) "
+                    f"turns={st['turns']:<3} samples={st['n_samples']:<4} {st['time']:.1f}s")
+            selfplay_s = time.time() - sp_t0
 
             # 2. TRAIN on random minibatches from the buffer.
             net.train(); policy.train()

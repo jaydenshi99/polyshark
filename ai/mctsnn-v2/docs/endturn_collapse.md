@@ -5,7 +5,22 @@ AdamW weight decay + value-head input dropout, held-out validation seeds with a
 `val_value_loss` metrics column, more games per gen (actionable #2 below); forced
 end_turn states skipped agent-free in the arena (no sample for either head) and
 single-choice stages skipped in the policy loss (actionable #3); staged per-stage
-search budgets (see mcts.md "Staged commitment").
+search budgets (see mcts.md "Staged commitment"); turn-exhaustion + position-summary
+globals (actionable #4).
+
+**2026-07-09 — actionable #1 applied** after the `guards` run (50 gens, all guards on)
+still converged to passing: no memorization (V calibrated ~0, priors near-uniform), but
+dV within a turn → 0.0000 and V → 0 everywhere — the mutual-passing fixed point of the
+margin labels, reached cleanly. Fixes: **±1 winner-at-cap labels**
+(`make_winner_terminal_value`, `turn_cap_winner`/`winner_dead_zone` config — value head
+now estimates win probability, which is steep where expected-margin is flat);
+**gen-0 search scale decoupled from labels** (`gen0_search_scale=1.0`, sharp bootstrap);
+**exploration + aggression terms in `heuristic_score`**: +0.015/explored tile (kept small
+— the L1 Explorer upgrade reveals in bulk, so reveal count is an information reward, not
+a movement reward) and an enemy-capital proximity term (4/(1+dist) for the nearest own
+unit once the capital is visible ≈ a village when adjacent) that pulls troops toward the
+Domination win condition — movement is encouraged by proximity-to-objective terms
+(villages, then the capital), not by fog cleared.
 **Run analysed:** `data/checkpoints/decaying_to_end_turn` (20 gens, config in its `run_config.json`).
 
 Later generations converge on playing `end_turn` immediately every turn (gen19 greedy
