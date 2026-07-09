@@ -301,8 +301,11 @@ PYBIND11_MODULE(polyshark, m) {
 
         int mask = s.techs_mask(player);
         int tech_bits = __builtin_popcount(mask >> 1); // skip Origin bit
-        return 3.0f * cities + total_level + 0.3f * tech_bits + 0.2f * units
-             + 0.5f * village_prox + 0.015f * explored + capital_prox;
+        // Weights sized against the winner-label dead zone (see train.py): a kill (0.5)
+        // and village adjacency (1.5/(1+1)=0.75) must clear it so combat/positioning can
+        // decide capped games. Unit spam is bounded by city capacity (level+1).
+        return 3.0f * cities + total_level + 0.3f * tech_bits + 0.5f * units
+             + 1.5f * village_prox + 0.015f * explored + capital_prox;
     }, py::arg("state"), py::arg("player"));
 
     m.def("make_random_game", [](uint64_t seed, int sz) {

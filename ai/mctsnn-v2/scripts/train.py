@@ -51,7 +51,7 @@ TURN_LIMIT  = 30            # max per-game turn cap (turn-capped games -> winner
 # --- horizon curriculum (short games early -> strong per-action value gradient) ---
 TURN_CAP_START = 5          # gen 0 games are capped this short; None = constant TURN_LIMIT.
                             # At cap 5 the objective is crisp: out-explore / grab a village.
-TURN_CAP_GROW  = 0.25       # turns added to the cap per generation, up to TURN_LIMIT.
+TURN_CAP_GROW  = 0.15       # turns added to the cap per generation, up to TURN_LIMIT.
                             # 0.25 -> +1 cap every 4 gens; reaching 30 from 5 takes 100
                             # gens (at N_GENS=50 the run tops out at cap 17).
 
@@ -63,7 +63,7 @@ BOOTSTRAP_GEN0 = True       # gen 0 self-plays with the heuristic (meaningful da
 TURN_CAP_WINNER  = True     # True: turn-capped games label ±1 by heuristic-margin sign
                             # (winner declared at the cap; value head estimates win prob;
                             # mutual passing is never label-neutral). False: legacy tanh.
-WINNER_DEAD_ZONE = 0.75     # heuristic points inside which a capped game labels 0 (a tie).
+WINNER_DEAD_ZONE = 0.25     # heuristic points inside which a capped game labels 0 (a tie).
                             # A village is ~4 points; 1.0 = tech/unit dust doesn't decide.
 GEN0_SEARCH_SCALE = 1.0     # tanh scale of the gen-0 bootstrap SEARCH evaluator. Sharp on
                             # purpose (decisive bootstrap play); independent of the labels.
