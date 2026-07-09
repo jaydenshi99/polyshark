@@ -51,8 +51,9 @@ TURN_LIMIT  = 30            # max per-game turn cap (turn-capped games -> winner
 # --- horizon curriculum (short games early -> strong per-action value gradient) ---
 TURN_CAP_START = 5          # gen 0 games are capped this short; None = constant TURN_LIMIT.
                             # At cap 5 the objective is crisp: out-explore / grab a village.
-TURN_CAP_GROW  = 1.0        # turns added to the cap per generation, up to TURN_LIMIT
-                            # (5 + 1.0/gen -> full 30-turn games from gen 25 on).
+TURN_CAP_GROW  = 0.25       # turns added to the cap per generation, up to TURN_LIMIT.
+                            # 0.25 -> +1 cap every 4 gens; reaching 30 from 5 takes 100
+                            # gens (at N_GENS=50 the run tops out at cap 17).
 
 # --- gen-0 bootstrap ---
 BOOTSTRAP_GEN0 = True       # gen 0 self-plays with the heuristic (meaningful data) instead

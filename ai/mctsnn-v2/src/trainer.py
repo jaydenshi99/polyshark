@@ -172,18 +172,24 @@ def make_optimizer(net, policy, lr, weight_decay):
 
 
 def _mark_value_positions(samples, per_game, rng):
-    """AlphaGo-style value subsampling: keep only ~`per_game` positions of one game
+    """AlphaGo-style value subsampling: keep only a few positions of one game
     value-eligible (split evenly across the two players), the rest train policy only.
     All of a game's states share a single outcome label, so training the value head on
     every state is ~90 gradient hits on one memorizable data point (see
-    docs/endturn_collapse.md). per_game <= 0 disables (everything stays eligible)."""
+    docs/endturn_collapse.md). per_game <= 0 disables (everything stays eligible).
+
+    The budget scales with game length — min(per_game, ~1/8 of the game's samples) —
+    so short curriculum games (see turn_cap_for_gen) keep the same *fraction* eligible
+    instead of quietly marking most of the game (at 130+ samples/game, len//8 ≈ 16,
+    matching the historical per_game default)."""
     if per_game <= 0 or not samples:
         return
+    budget = min(per_game, max(4, len(samples) // 8))
     by_player = {}
     for s in samples:
         s.train_value = False
         by_player.setdefault(s.player, []).append(s)
-    k = max(per_game // len(by_player), 1)
+    k = max(budget // len(by_player), 1)
     for group in by_player.values():
         keep = group if len(group) <= k else rng.sample(group, k)
         for s in keep:
@@ -395,11 +401,15 @@ def run_training(
                     f"turns={st['turns']:<3} samples={st['n_samples']:<4} {st['time']:.1f}s")
             selfplay_s = time.time() - sp_t0
 
-            # 2. TRAIN on random minibatches from the buffer.
+            # 2. TRAIN on random minibatches from the buffer. Steps are throttled to at
+            # most ~2 epochs over the current buffer so a small buffer (short curriculum
+            # games, early gens) isn't hammered 5-10x per gen — that reuse is how the
+            # value head memorizes. At full buffer the configured step count applies.
+            steps = min(train_steps_per_gen, max(1, (2 * len(buffer)) // minibatch))
             net.train(); policy.train()
             tr_t0 = time.time()
             vlosses, plosses = [], []
-            for _ in range(train_steps_per_gen):
+            for _ in range(steps):
                 mb = buffer.sample(minibatch)
                 if not mb:
                     break
