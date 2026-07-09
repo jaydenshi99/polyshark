@@ -111,8 +111,12 @@ Per developed sample, from the **acting player's** perspective:
   cross-entropies vs the policy head's masked softmax. **Autoregressive:** each stage is
   scored conditioned on the earlier chosen sub-choices, so training replays the chosen path
   (recoverable from `Sample.action` via `FactoredActions`). See [policy_head.md](policy_head.md).
-- **Value** — `Sample.outcome`: `z ∈ {+1,−1}` on a decisive game, heuristic `tanh` margin on
-  a turn cap. Loss = MSE vs the value head. See [value_head.md](value_head.md).
+- **Value** — mixed target `(1−w)·z + w·v̂`: `z` is the game outcome (±1 decisive; ±1
+  winner-by-margin at a turn cap), `v̂` is the search root value recorded at the decision
+  (`Sample.search_value`). `w` (`search_value_weight`, ~0.3) is annealed from 0 over the
+  first gens. Pure `z` gives every state of a game one shared label (no within-game
+  credit); `v̂` differs per state and encodes what the search found, including unplayed
+  lines. Validation always scores against pure `z`. Loss = MSE vs the value head.
 - **Total** `L = Σ stage-CE(policy) + MSE(value) [+ weight decay]`.
 
 ## Regularization & anti-memorization

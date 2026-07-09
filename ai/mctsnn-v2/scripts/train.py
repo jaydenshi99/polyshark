@@ -45,15 +45,19 @@ N_SIMS      = 100           # MCTS simulations per move (strength vs speed)
 C_PUCT      = 1.5           # PUCT exploration constant
 ADD_NOISE   = True          # Dirichlet root noise (ON for self-play diversity)
 TEMPERATURE = 1.0           # opening move sampling: 1.0 ~ visits, 0.0 greedy
-TEMP_TURNS  = 6             # turns temperature applies before dropping to greedy
+TEMP_FRAC   = 0.20          # temperature applies to the first 20% of each game's turn cap
+                            # (scales with the curriculum; cap 5 -> 1 turn, cap 30 -> 6),
+                            # then greedy. Keeps ±1 winner labels reflecting intent, not
+                            # sampling luck (AZ plays ~85% of the game greedily too).
+TEMP_TURNS  = 6             # fixed-turn fallback, used only if TEMP_FRAC is None
 TURN_LIMIT  = 30            # max per-game turn cap (turn-capped games -> winner labels)
 
 # --- horizon curriculum (short games early -> strong per-action value gradient) ---
 TURN_CAP_START = 5          # gen 0 games are capped this short; None = constant TURN_LIMIT.
                             # At cap 5 the objective is crisp: out-explore / grab a village.
 TURN_CAP_GROW  = 0.15       # turns added to the cap per generation, up to TURN_LIMIT.
-                            # 0.25 -> +1 cap every 4 gens; reaching 30 from 5 takes 100
-                            # gens (at N_GENS=50 the run tops out at cap 17).
+                            # 0.15 -> +1 cap every ~7 gens; at N_GENS=50 the run tops out
+                            # at cap 12 (deliberate — the target behaviors live below 12).
 
 # --- gen-0 bootstrap ---
 BOOTSTRAP_GEN0 = True       # gen 0 self-plays with the heuristic (meaningful data) instead
@@ -64,11 +68,21 @@ TURN_CAP_WINNER  = True     # True: turn-capped games label ±1 by heuristic-mar
                             # (winner declared at the cap; value head estimates win prob;
                             # mutual passing is never label-neutral). False: legacy tanh.
 WINNER_DEAD_ZONE = 0.25     # heuristic points inside which a capped game labels 0 (a tie).
-                            # A village is ~4 points; 1.0 = tech/unit dust doesn't decide.
+                            # At 0.25 every achievement tier decides a game: kill/train
+                            # 0.5, tech 0.3, village-adjacent 0.75, capture ~2.5 (see the
+                            # weights in bindings.cpp heuristic_score).
 GEN0_SEARCH_SCALE = 1.0     # tanh scale of the gen-0 bootstrap SEARCH evaluator. Sharp on
                             # purpose (decisive bootstrap play); independent of the labels.
 HEURISTIC_SCALE = 0.30      # legacy tanh(scale * margin) labels, used only when
                             # TURN_CAP_WINNER = False.
+
+# --- mixed value targets (see trainer._mix_search_values) ---
+SEARCH_VALUE_WEIGHT = 0.3   # w in: target = (1-w)·outcome + w·(search root value v̂).
+                            # Per-state credit (approach moves etc.) + damps the
+                            # "unplayed states drift -> played less" oscillation.
+                            # Kept modest: v̂ is turn-local (no opponent lookahead).
+SEARCH_VALUE_ANNEAL_GENS = 10  # w ramps 0 -> max over this many gens (early nets'
+                            # search values are noise; don't bootstrap into them).
 
 # --- optimization ---
 LR = 1e-3                   # AdamW learning rate (net + policy jointly)
@@ -86,7 +100,7 @@ VAL_GAMES = 6               # per gen: extra self-play games on held-out seeds, 
 # --- io ---
 BASE_SEED = 0
 CKPT_ROOT = os.path.join(_PKG, "data", "checkpoints")  # parent; each run gets its own subfolder
-RUN_LABEL = "guards"       # optional suffix on the run folder, e.g. "highsim" -> run_<ts>_highsim
+RUN_LABEL = "dz025_reweight"  # optional suffix on the run folder, e.g. "highsim" -> run_<ts>_highsim
 
 # ============================================================================
 # end CONFIG
@@ -108,11 +122,13 @@ def main():
         n_gens=N_GENS, games_per_gen=GAMES_PER_GEN, train_steps_per_gen=TRAIN_STEPS_PER_GEN,
         minibatch=MINIBATCH, buffer_capacity=BUFFER_CAPACITY, turn_limit=TURN_LIMIT,
         n_sims=N_SIMS, c_puct=C_PUCT, temperature=TEMPERATURE, temp_turns=TEMP_TURNS,
-        add_noise=ADD_NOISE, lr=LR, weight_decay=WEIGHT_DECAY,
+        temp_frac=TEMP_FRAC, add_noise=ADD_NOISE, lr=LR, weight_decay=WEIGHT_DECAY,
         value_samples_per_game=VALUE_SAMPLES_PER_GAME, val_games=VAL_GAMES,
         turn_cap_winner=TURN_CAP_WINNER, winner_dead_zone=WINNER_DEAD_ZONE,
         gen0_search_scale=GEN0_SEARCH_SCALE,
         turn_cap_start=TURN_CAP_START, turn_cap_grow=TURN_CAP_GROW,
+        search_value_weight=SEARCH_VALUE_WEIGHT,
+        search_value_anneal_gens=SEARCH_VALUE_ANNEAL_GENS,
         base_seed=BASE_SEED, bootstrap_gen0=BOOTSTRAP_GEN0,
         heuristic_scale=HEURISTIC_SCALE, num_workers=NUM_WORKERS,
     )

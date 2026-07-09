@@ -15,6 +15,9 @@ margin labels, reached cleanly. Fixes: **±1 winner-at-cap labels**
 (`make_winner_terminal_value`, `turn_cap_winner`/`winner_dead_zone` config — value head
 now estimates win probability, which is steep where expected-margin is flat);
 **gen-0 search scale decoupled from labels** (`gen0_search_scale=1.0`, sharp bootstrap);
+**mixed value targets** (`search_value_weight=0.3`, annealed over 10 gens): per-state
+targets `(1−w)·z + w·v̂` give within-game credit and damp the recurring "unplayed states
+drift negative → played even less" opening-move oscillation;
 **horizon curriculum** (`turn_cap_start`/`turn_cap_grow`): games start short (cap ~5,
 where one action is a big share of the outcome — strong per-action value gradient, and the
 objective is crisp: out-explore / grab a village) and the cap grows per gen toward

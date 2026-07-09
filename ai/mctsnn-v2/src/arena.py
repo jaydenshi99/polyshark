@@ -63,6 +63,8 @@ class Decision:
     """What a strategy returns for one decision."""
     action: object                       # concrete engine Action to apply
     targets: Optional[list] = None       # per-stage visit dists (policy targets) or None
+    search_value: Optional[float] = None  # search root value ΣW/ΣN, acting player's frame
+                                          # (the v̂ for mixed value targets; None = no search)
 
 
 class Strategy:
@@ -99,8 +101,10 @@ class MCTSStrategy(Strategy):
 
     def act(self, state):
         temp = self.temperature if state.get_turn() < self.temp_turns else 0.0
-        action, _root, targets = self.mcts.search(state, self.n_sims, temperature=temp)
-        return Decision(action, targets)
+        action, root, targets = self.mcts.search(state, self.n_sims, temperature=temp)
+        n = root.total_N()
+        sv = sum(root.W.values()) / n if n else None   # search-improved value of this state
+        return Decision(action, targets, search_value=sv)
 
 
 @dataclass
@@ -129,6 +133,8 @@ class Sample:
     outcome: Optional[float] = None      # +1 win / -1 loss / heuristic on turn-cap
     train_value: bool = True             # value-loss eligible (trainer subsamples per game —
                                          # within-game states share one label; see training.md)
+    search_value: Optional[float] = None  # v̂: search root value at this decision (acting
+                                          # player's frame) — trainer mixes it into `outcome`
 
 
 @dataclass
@@ -252,7 +258,8 @@ class Arena:
             p = state.current_player()
             dec = self.agents[p].act(state)
             if collect:
-                samples.append(Sample(state, p, dec.action, dec.targets))
+                samples.append(Sample(state, p, dec.action, dec.targets,
+                                      search_value=dec.search_value))
             history.append(dec.action)          # always: the replay stream
             state = state.apply_action(dec.action)
             steps += 1

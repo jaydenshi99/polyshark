@@ -196,14 +196,37 @@ def _mark_value_positions(samples, per_game, rng):
             s.train_value = True
 
 
-def value_mse(net, samples, chunk=256):
-    """Value-head MSE over `samples` (no grad, eval mode). The held-out validation metric:
-    high train/val gap = the value head is memorizing games, not evaluating positions."""
+def _mix_search_values(samples, weight):
+    """Mixed value targets: outcome <- (1-w)·z + w·v̂ where v̂ is the search root value
+    recorded at the decision (Sample.search_value, acting player's frame).
+
+    Pure outcome labels give every state of a game the SAME target — no within-game
+    contrast, so credit for e.g. approach moves only accrues across games (slow, noisy;
+    see docs/endturn_collapse.md). v̂ differs per state and encodes what the search
+    *found* there (including unplayed lines), which also severs the "unplayed states
+    drift negative -> played even less" oscillation. w is annealed from 0 (early nets'
+    search values are noise) up to its configured maximum. Val samples are never mixed —
+    validation must score against the true outcome."""
+    if weight <= 0:
+        return
+    for s in samples:
+        if s.outcome is not None and getattr(s, "search_value", None) is not None:
+            s.outcome = (1.0 - weight) * s.outcome + weight * s.search_value
+
+
+def value_metrics(net, samples, chunk=256):
+    """Value-head validation metrics over `samples` (no grad, eval mode): (mse, sign_acc).
+
+    - mse      : high train/val gap = memorizing games, not evaluating positions.
+    - sign_acc : fraction of DECISIVE (±1-labelled) samples where sign(V) == sign(z).
+      Far more sensitive early than MSE: with ±1 labels, a timid-but-correct head
+      (|V|~0.1, right sign 60% of the time) still scores ~0.97 MSE — indistinguishable
+      from no skill — while sign_acc reads 0.60 immediately. 0.5 = coin flip."""
     if not samples:
-        return float("nan")
+        return float("nan"), float("nan")
     was_training = net.training
     net.eval()
-    total, n = 0.0, 0
+    total, n, sign_hits, n_decisive = 0.0, 0, 0, 0
     with torch.no_grad():
         for i in range(0, len(samples), chunk):
             part = samples[i:i + chunk]
@@ -214,18 +237,32 @@ def value_mse(net, samples, chunk=256):
             z = torch.tensor([s.outcome for s in part], dtype=torch.float32)
             total += F.mse_loss(v, z, reduction="sum").item()
             n += len(part)
+            decisive = z.abs() > 0.5
+            sign_hits += int(((v > 0) == (z > 0))[decisive].sum().item())
+            n_decisive += int(decisive.sum().item())
     if was_training:
         net.train()
-    return total / n
+    mse = total / n
+    acc = sign_hits / n_decisive if n_decisive else float("nan")
+    return mse, acc
 
 
 # --------------------------------------------------------------------------- self-play
 
-def _make_agents(evaluator, cfg):
+def _make_agents(evaluator, cfg, turn_cap=None):
+    # temp_frac scales the exploratory opening with the curriculum cap (e.g. 0.2 ->
+    # temperature on for the first 20% of the game, greedy after). A fixed temp_turns
+    # near the cap means almost the whole game is sampled play, and the ±1 winner label
+    # then mostly records sampling luck — poison for the value head. None = fixed turns.
+    if cfg.get("temp_frac") is not None and turn_cap:
+        temp_turns = max(1, round(cfg["temp_frac"] * turn_cap))
+    else:
+        temp_turns = cfg["temp_turns"]
+
     def mk(name):
         return Agent(name, MCTSStrategy(
             evaluator, n_sims=cfg["n_sims"], c_puct=cfg["c_puct"],
-            temperature=cfg["temperature"], temp_turns=cfg["temp_turns"],
+            temperature=cfg["temperature"], temp_turns=temp_turns,
             add_noise=cfg["add_noise"]))
     return mk("p0"), mk("p1")
 
@@ -250,7 +287,7 @@ def turn_cap_for_gen(gen, turn_limit, turn_cap_start=None, turn_cap_grow=1.0):
 
 def _play_one_game(evaluator, cfg, seed, turn_cap=None):
     """Play one self-play game; return (samples, per-game stats)."""
-    a, b = _make_agents(evaluator, cfg)
+    a, b = _make_agents(evaluator, cfg, turn_cap)
     tvf = _make_terminal_value(cfg)
     t0 = time.time()
     res = Arena([a, b], terminal_value_fn=tvf).play_game(
@@ -296,10 +333,11 @@ def _worker_play(task):
 def run_training(
     n_gens=5, games_per_gen=8, train_steps_per_gen=200, minibatch=32,
     buffer_capacity=20000, turn_limit=30, n_sims=60, c_puct=1.5,
-    temperature=1.0, temp_turns=6, add_noise=True, lr=1e-3, weight_decay=1e-4,
+    temperature=1.0, temp_turns=6, temp_frac=None, add_noise=True, lr=1e-3, weight_decay=1e-4,
     value_samples_per_game=16, val_games=8, val_seed_base=1_000_000,
     turn_cap_winner=True, winner_dead_zone=1.0, gen0_search_scale=1.0,
     turn_cap_start=None, turn_cap_grow=1.0,
+    search_value_weight=0.0, search_value_anneal_gens=10,
     base_seed=0, bootstrap_gen0=True, heuristic_scale=HEURISTIC_VALUE_SCALE,
     num_workers=1, ckpt_dir=None, net=None, policy=None, log=print,
 ):
@@ -327,15 +365,21 @@ def run_training(
       - turn_cap_start/grow    : if start is set, gen g's games are capped at
         min(turn_limit, start + g*grow) turns. Short horizons early = each action is a
         big share of the outcome (strong value gradient); the cap then stretches toward
-        turn_limit as generations pass. None = constant turn_limit."""
+        turn_limit as generations pass. None = constant turn_limit.
+
+    Mixed value targets (see _mix_search_values):
+      - search_value_weight    : w in target = (1-w)·z + w·v̂ (v̂ = search root value per
+        state). Per-state credit + oscillation damping. 0 disables (pure outcomes).
+      - search_value_anneal_gens : w ramps linearly from 0 to its maximum over this many
+        gens (early nets' search values are noise; don't bootstrap into them)."""
     net = net or PolysharkNet()
     policy = policy or PolicyHead()
     opt = make_optimizer(net, policy, lr, weight_decay)
     buffer = ReplayBuffer(buffer_capacity)
     cfg = dict(n_sims=n_sims, c_puct=c_puct, temperature=temperature, temp_turns=temp_turns,
-               add_noise=add_noise, turn_limit=turn_limit, heuristic_scale=heuristic_scale,
-               turn_cap_winner=turn_cap_winner, winner_dead_zone=winner_dead_zone,
-               gen0_search_scale=gen0_search_scale)
+               temp_frac=temp_frac, add_noise=add_noise, turn_limit=turn_limit,
+               heuristic_scale=heuristic_scale, turn_cap_winner=turn_cap_winner,
+               winner_dead_zone=winner_dead_zone, gen0_search_scale=gen0_search_scale)
 
     # Weights file that parallel workers read each network generation.
     weights_path = (os.path.join(ckpt_dir, "_worker_weights.pt") if ckpt_dir
@@ -347,9 +391,9 @@ def run_training(
         os.makedirs(ckpt_dir, exist_ok=True)
         csv_file = open(os.path.join(ckpt_dir, "metrics.csv"), "w", newline="")
         writer = csv.writer(csv_file)
-        writer.writerow(["gen", "eval", "turn_cap", "value_loss", "val_value_loss",
-                         "policy_loss", "buffer", "decisive", "selfplay_s", "train_s",
-                         "total_s"])
+        writer.writerow(["gen", "eval", "turn_cap", "mix_w", "value_loss",
+                         "val_value_loss", "val_sign_acc", "policy_loss", "buffer",
+                         "decisive", "selfplay_s", "train_s", "total_s"])
 
     pool = None
     if num_workers > 1:
@@ -373,6 +417,8 @@ def run_training(
 
             # Horizon curriculum: this generation's turn cap.
             cap = turn_cap_for_gen(gen, turn_limit, turn_cap_start, turn_cap_grow)
+            # Mixed-target weight, annealed 0 -> max over the first anneal_gens.
+            mix_w = search_value_weight * min(1.0, gen / max(search_value_anneal_gens, 1))
 
             # Stream results as games finish (imap_unordered) so progress is visible
             # during the long self-play phase; training vs val games are told apart by
@@ -389,10 +435,11 @@ def run_training(
             for samples, st in result_iter:
                 is_val = st["seed"] in val_seed_set
                 if is_val:
-                    val_samples.extend(samples)          # held out: never enters the buffer
+                    val_samples.extend(samples)          # held out: never mixed, never buffered
                 else:
                     _mark_value_positions(samples, value_samples_per_game,
                                           random.Random(st["seed"]))
+                    _mix_search_values(samples, mix_w)
                     buffer.extend(samples)
                     decisive += (st["winner"] >= 0)
                 who = f"p{st['winner']} wins" if st["winner"] >= 0 else "turn cap "
@@ -420,7 +467,7 @@ def run_training(
             train_s = time.time() - tr_t0
             vloss = float(np.mean(vlosses)) if vlosses else float("nan")
             ploss = float(np.mean(plosses)) if plosses else float("nan")
-            val_vloss = value_mse(net, val_samples)
+            val_vloss, val_sign_acc = value_metrics(net, val_samples)
 
             # 3. CHECKPOINT.
             ckpt_path = None
@@ -431,12 +478,13 @@ def run_training(
 
             total_s = time.time() - gen_t0
             evname = "heuristic" if use_heuristic else "network"
-            log(f"gen {gen:2d} | eval={evname:<9} cap={cap:<3} buffer={len(buffer):<6} "
+            log(f"gen {gen:2d} | eval={evname:<9} cap={cap:<3} mix={mix_w:.2f} buffer={len(buffer):<6} "
                 f"decisive={decisive}/{games_per_gen} | value_loss={vloss:.4f} "
-                f"val={val_vloss:.4f} policy_loss={ploss:.4f} | "
+                f"val={val_vloss:.4f} val_sign={val_sign_acc:.2f} policy_loss={ploss:.4f} | "
                 f"selfplay={selfplay_s:.0f}s train={train_s:.0f}s total={total_s:.0f}s")
             if writer:
-                writer.writerow([gen, evname, cap, f"{vloss:.6f}", f"{val_vloss:.6f}",
+                writer.writerow([gen, evname, cap, f"{mix_w:.3f}", f"{vloss:.6f}",
+                                 f"{val_vloss:.6f}", f"{val_sign_acc:.4f}",
                                  f"{ploss:.6f}", len(buffer), decisive,
                                  f"{selfplay_s:.2f}", f"{train_s:.2f}", f"{total_s:.2f}"])
                 csv_file.flush()
@@ -444,6 +492,7 @@ def run_training(
             history.append({
                 "gen": gen, "eval": evname, "turn_cap": cap, "buffer": len(buffer),
                 "decisive": decisive, "value_loss": vloss, "val_value_loss": val_vloss,
+                "val_sign_acc": val_sign_acc,
                 "policy_loss": ploss, "selfplay_s": selfplay_s, "train_s": train_s,
                 "total_s": total_s, "ckpt": ckpt_path,
             })
