@@ -177,7 +177,14 @@ for the failure modes these answer):
   degeneration from compounding across generations. Gate games use a paired (duplicate)
   design — each seed played twice with seats swapped — so map luck and first-mover
   advantage cancel within the pair; equal nets score ~exactly 0.5 (greedy determinism)
-  and never spuriously promote.
+  and never spuriously promote. A bounded margin bonus (`gate_margin_weight` ~0.03 per
+  game, capped well below one win across the match) gives fight-from-behind variation
+  selection pressure without letting margins buy promotions.
+- **Reference matches** (`ref_every`, `ref_games`): every N gens the candidate plays the
+  frozen heuristic agent (paired seats); `ref_score`/`ref_margin` in metrics.csv. The
+  ABSOLUTE yardstick: relative gates are structurally blind to population-shared flaws
+  (both sides of a gate resign identically, so resignation never costs a point) — a
+  fixed external reference exposes them.
 - **Tie contempt** (`winner_tie_value` ≈ −0.2): dead-zone games label slightly negative
   for both players — mutual passivity is strictly losing even in a perfect mirror.
 - **Graded winner labels** (`winner_margin_weight` ≈ 0.2): labels = ±(1−β) + β·tanh(m/4)
