@@ -348,10 +348,16 @@ def _play_gate_game(ev_cand, ev_opp, cfg, seed, turn_cap, cand_seat,
         cand_pts = 0.5                   # (graded ties differ slightly; don't score dust)
     else:
         cand_pts = 1.0 if v_cand > v_opp else 0.0
+    m_cand = res.final_margin if cand_seat == 0 else -res.final_margin
     if kind == "gate":
-        cand_pts += cfg.get("gate_margin_weight", 0.0) * (v_cand - v_opp)
+        # Margin bonus on the MARGIN COMPONENT ONLY (tanh(m/4) in (-1,1)), not on the
+        # label difference — v_cand - v_opp is dominated by the win/loss sign flip and
+        # would just double-count wins. At w=0.2 a candidate that systematically fights
+        # losses down (|m| 8 -> 2) earns ~0.1/game — enough to flip a borderline
+        # promotion across a match, never enough to outvote actual wins.
+        cand_pts += cfg.get("gate_margin_weight", 0.0) * math.tanh(m_cand / 4.0)
     stats = {"seed": seed, "winner": res.winner, "turns": res.turns, "kind": kind,
-             "cand_pts": cand_pts, "v_diff": v_cand - v_opp, "v_finals": res.v_finals,
+             "cand_pts": cand_pts, "margin": m_cand, "v_finals": res.v_finals,
              "n_samples": len(res.samples), "time": time.time() - t0}
     return res.samples, stats
 
@@ -612,9 +618,9 @@ def run_training(
                         f"turns={st['turns']:<3} {st['time']:.1f}s")
                     continue
                 if st.get("kind") == "ref":
-                    ref_pts.append(st["cand_pts"]); ref_diffs.append(st["v_diff"])
+                    ref_pts.append(st["cand_pts"]); ref_diffs.append(st["margin"])
                     log(f"  ref  seed={st['seed']:<7} cand_pts={st['cand_pts']:.1f} "
-                        f"vdiff={st['v_diff']:+.2f} turns={st['turns']:<3} {st['time']:.1f}s")
+                        f"margin={st['margin']:+.2f} turns={st['turns']:<3} {st['time']:.1f}s")
                     continue
                 is_val = st["seed"] in val_seed_set
                 if is_val:

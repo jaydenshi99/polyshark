@@ -149,6 +149,7 @@ class GameResult:
     history: list                        # ordered applied Actions (the replay stream)
     v_finals: tuple                      # (outcome_p0, outcome_p1) from each player's frame
     samples: list = field(default_factory=list)
+    final_margin: float = 0.0            # heuristic margin p0 - p1 at the final state
 
 
 @dataclass
@@ -284,8 +285,10 @@ class Arena:
         winner = state.winner() if reason == "capital" else -1
         v_finals = self._outcomes(state, winner)
         self._label(samples, v_finals)
+        margin = (polyshark.heuristic_score(state, 0)
+                  - polyshark.heuristic_score(state, 1))
         return GameResult(winner, state.get_turn(), steps, reason,
-                          seed, sz, history, v_finals, samples)
+                          seed, sz, history, v_finals, samples, final_margin=margin)
 
     def _outcomes(self, final_state, winner):
         """(outcome_p0, outcome_p1) — ±1 on a decisive game, heuristic margin on turn-cap."""

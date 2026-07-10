@@ -57,9 +57,9 @@ GATING         = True
 GATE_GAMES     = 16          # paired: each seed played twice, seats swapped (keep even);
                              # map luck + seat advantage cancel per pair. Doubles as val set
 GATE_THRESHOLD = 0.55        # promote at >= this score (win=1, tie=0.5)
-GATE_MARGIN_WEIGHT = 0.03    # bounded margin bonus per gate game (+w*(v_cand - v_opp)):
-                             # fighting-from-behind earns selection pressure; capped well
-                             # below one win so margins can't buy promotions
+GATE_MARGIN_WEIGHT = 0.2     # margin bonus per gate game: +w*tanh(margin/4). Systematic
+                             # fight-back (losing by 2 instead of 8) earns ~0.1/game —
+                             # can flip borderline promotions, can't outvote wins
 
 # --- absolute yardstick (relative gates are blind to population-shared flaws) ---
 REF_EVERY = 5                # every N gens: candidate vs the FROZEN heuristic agent

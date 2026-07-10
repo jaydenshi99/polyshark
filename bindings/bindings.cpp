@@ -237,7 +237,7 @@ PYBIND11_MODULE(polyshark, m) {
     // Gen-0 heuristic score for one player.
     // Components: cities, city levels, techs, units, village proximity.
     m.def("heuristic_score", [](const GameState& s, int player) -> float {
-        int cities = 0, total_level = 0, units = 0;
+        int cities = 0, total_level = 0, units = 0, income = 0;
         int sz = s.map_size();
 
         // Collect visible uncaptured villages and this player's unit positions, so we can
@@ -252,7 +252,9 @@ PYBIND11_MODULE(polyshark, m) {
 
             if (t.has_city()) {
                 const City& c = s.get_city(t.city_id());
-                if (c.owner() == player) { ++cities; total_level += c.level(); }
+                if (c.owner() == player) {
+                    ++cities; total_level += c.level(); income += c.stars_per_turn();
+                }
                 else if (c.is_capital() && s.is_visible(player, i)) {
                     enemy_cap_row = row; enemy_cap_col = col;
                 }
@@ -304,11 +306,14 @@ PYBIND11_MODULE(polyshark, m) {
 
         int mask = s.techs_mask(player);
         int tech_bits = __builtin_popcount(mask >> 1); // skip Origin bit
-        // Weights sized against the winner-label dead zone (see train.py): a kill (0.5)
-        // and village adjacency (1.5/(1+1)=0.75) must clear it so combat/positioning can
-        // decide capped games. Unit spam is bounded by city capacity (level+1).
+        // Weights sized against the winner-label dead zone (see train.py): a kill (0.5),
+        // village adjacency (0.75), and a workshop (+1 spt = 0.3) must clear it so
+        // combat/positioning/economy can decide capped games. Income partially
+        // double-counts levels (1 spt/level) on purpose — a level is worth its prestige
+        // AND its economy; income is a flow, so star HOARDING still earns nothing.
+        // Unit spam is bounded by city capacity (level+1).
         return 3.0f * cities + total_level + 0.3f * tech_bits + 0.5f * units
-             + 1.5f * village_prox + 0.005f * explored + capital_prox;
+             + 1.5f * village_prox + 0.005f * explored + 0.3f * income + capital_prox;
     }, py::arg("state"), py::arg("player"));
 
     m.def("make_random_game", [](uint64_t seed, int sz) {
