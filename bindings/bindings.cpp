@@ -278,9 +278,12 @@ PYBIND11_MODULE(polyshark, m) {
                 village_prox += 1.0f / (1.0f + min_dist);
         }
 
-        // Exploration term: revealed tiles are information. Kept small (full map ~= half
-        // a village) because the L1 Explorer upgrade reveals in bulk — movement itself is
-        // rewarded by the proximity terms, not by reveal count.
+        // Exploration term: revealed tiles are information — a TIEBREAKER, not a win
+        // condition. At 0.005/tile a typical 20-tile lead (~0.10) sits inside the winner
+        // dead zone (0.25), so exploration alone almost never decides a capped game;
+        // captures (+2.5), village adjacency (0.75), kills (0.5) outrank it. At the old
+        // 0.015 it decided most capture-less games -> units beelined to map corners and
+        // even walked OFF villages to keep revealing.
         int explored = 0;
         for (int i = 0; i < s.map_tiles(); ++i)
             if (s.is_visible(player, i)) ++explored;
@@ -305,7 +308,7 @@ PYBIND11_MODULE(polyshark, m) {
         // and village adjacency (1.5/(1+1)=0.75) must clear it so combat/positioning can
         // decide capped games. Unit spam is bounded by city capacity (level+1).
         return 3.0f * cities + total_level + 0.3f * tech_bits + 0.5f * units
-             + 1.5f * village_prox + 0.015f * explored + capital_prox;
+             + 1.5f * village_prox + 0.005f * explored + capital_prox;
     }, py::arg("state"), py::arg("player"));
 
     m.def("make_random_game", [](uint64_t seed, int sz) {

@@ -22,7 +22,7 @@ drift negative → played even less" opening-move oscillation;
 where one action is a big share of the outcome — strong per-action value gradient, and the
 objective is crisp: out-explore / grab a village) and the cap grows per gen toward
 `turn_limit`, stretching the horizon as play earns it;
-**exploration + aggression terms in `heuristic_score`**: +0.015/explored tile (kept small
+**exploration + aggression terms in `heuristic_score`**: +0.005/explored tile (nerfed from 0.015 after corner-seeking/village-abandonment emerged — exploration must be a tiebreaker, not a win condition; kept small
 — the L1 Explorer upgrade reveals in bulk, so reveal count is an information reward, not
 a movement reward) and an enemy-capital proximity term (4/(1+dist) for the nearest own
 unit once the capital is visible ≈ a village when adjacent) that pulls troops toward the

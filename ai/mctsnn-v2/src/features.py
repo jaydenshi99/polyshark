@@ -244,6 +244,62 @@ def visible_snapshot(state, me=None):
     return np.array([state.is_visible(me, i) for i in range(n)], dtype=bool)
 
 
+# ------------------------------------------------------------- D8 symmetry (value aug)
+
+_D8_CACHE = {}
+
+
+def d8_perms(sz):
+    """The 8 board symmetries (4 rotations x optional horizontal flip) for an sz x sz
+    grid. Returns (perms, ops): perms[g][old_tile] = new_tile (int64 [8, sz*sz]);
+    ops[g] = (k, flip) — the matching np.rot90/fliplr recipe for spatial planes."""
+    if sz not in _D8_CACHE:
+        idx = np.arange(sz * sz).reshape(sz, sz)
+        perms, ops = [], []
+        for k in range(4):
+            for flip in (False, True):
+                t = np.rot90(idx, k)
+                if flip:
+                    t = np.fliplr(t)
+                old_at_new = t.flatten()
+                new_of_old = np.empty(sz * sz, dtype=np.int64)
+                new_of_old[old_at_new] = np.arange(sz * sz)
+                perms.append(new_of_old)
+                ops.append((k, flip))
+        _D8_CACHE[sz] = (np.stack(perms), ops)
+    return _D8_CACHE[sz]
+
+
+def d8_transform(tensors, g, rows=None):
+    """Apply board symmetry g (0..7; 0 = identity) to a collated batch (numpy dict from
+    collate()), optionally restricted to `rows` of the batch. Returns a new dict.
+
+    Transforms every spatial input consistently: board planes (rot/flip), entity tile
+    indices (permutation), and the row/col columns of the entity features (recomputed
+    from the transformed tiles, so they can never drift out of sync). Globals, masks,
+    types are orientation-free. Game rules are D8-invariant and so are value targets —
+    this is the value head's data augmentation (docs/training.md)."""
+    sz = tensors["board"].shape[-1]
+    perms, ops = d8_perms(sz)
+    k, flip = ops[g]
+    out = {key: (v[rows] if rows is not None else v).copy() for key, v in tensors.items()}
+
+    b = np.rot90(out["board"], k, axes=(2, 3))
+    if flip:
+        b = b[:, :, :, ::-1]
+    out["board"] = np.ascontiguousarray(b)
+
+    perm = perms[g]
+    out["unit_tiles"] = perm[out["unit_tiles"]]
+    out["city_tiles"] = perm[out["city_tiles"]]
+    denom = max(sz - 1, 1)
+    for feats, tiles in (("unit_feats", "unit_tiles"), ("city_feats", "city_tiles")):
+        r, c = np.divmod(out[tiles], sz)
+        out[feats][:, :, 1] = r / denom     # row feature column
+        out[feats][:, :, 2] = c / denom     # col feature column
+    return out
+
+
 def collate(states):
     """
     Batch a list of states into padded arrays for the model.

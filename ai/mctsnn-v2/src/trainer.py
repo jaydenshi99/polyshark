@@ -44,7 +44,7 @@ from mcts import (  # noqa: E402
 from model import PolysharkNet  # noqa: E402
 from policy import PolicyHead, T_MOVE, T_ATTACK, T_TRAIN, T_RESEARCH  # noqa: E402
 from factored import FactoredActions  # noqa: E402
-from features import collate, encode_entities  # noqa: E402
+from features import collate, d8_transform, encode_entities  # noqa: E402
 from replay_buffer import ReplayBuffer  # noqa: E402
 
 _MODEL_ARG_ORDER = [
@@ -127,19 +127,34 @@ def _policy_loss_for_sample(policy, s, cache, b):
     return loss, n
 
 
-def train_step(net, policy, opt, batch):
+def train_step(net, policy, opt, batch, value_symmetry=False):
     """One optimizer step over a minibatch of Samples. Returns (value_loss, policy_loss);
-    value_loss is NaN if no sample in the batch is value-eligible (see _mark_value_positions)."""
+    value_loss is NaN if no sample in the batch is value-eligible (see _mark_value_positions).
+
+    value_symmetry=True trains the value head on a random D8 transform of the eligible
+    rows (targets are rotation/flip-invariant) — ~8x effective value data and it deletes
+    the map-fingerprint memorization channel. Policy stays in the original orientation
+    (its targets live in board coordinates)."""
     states = [s.state for s in batch]
-    tensors = {k: torch.from_numpy(v) for k, v in collate(states).items()}
+    raw = collate(states)
+    tensors = {k: torch.from_numpy(v) for k, v in raw.items()}
     cache = net.trunk(*(tensors[k] for k in _MODEL_ARG_ORDER))
 
     # Value: batched MSE against the outcome z, over value-eligible samples only —
     # within-game states share one label, so the trainer subsamples a few per game.
-    value = net.value(cache.core).squeeze(-1)                     # [B]
     outcomes = torch.tensor([s.outcome for s in batch], dtype=torch.float32)
     vsel = torch.tensor([getattr(s, "train_value", True) for s in batch], dtype=torch.bool)
-    value_loss = F.mse_loss(value[vsel], outcomes[vsel]) if vsel.any() else torch.zeros(())
+    if not vsel.any():
+        value_loss = torch.zeros(())
+    elif value_symmetry:
+        rows = np.flatnonzero(vsel.numpy())
+        aug = {k: torch.from_numpy(np.ascontiguousarray(v))
+               for k, v in d8_transform(raw, random.randrange(8), rows=rows).items()}
+        vcache = net.trunk(*(aug[k] for k in _MODEL_ARG_ORDER))
+        value_loss = F.mse_loss(net.value(vcache.core).squeeze(-1), outcomes[vsel])
+    else:
+        value = net.value(cache.core).squeeze(-1)                 # [B]
+        value_loss = F.mse_loss(value[vsel], outcomes[vsel])
 
     # Policy: per-sample autoregressive CE, reading slices of the same cache.
     policy_terms, n_stages = None, 0
@@ -178,13 +193,14 @@ def _mark_value_positions(samples, per_game, rng):
     every state is ~90 gradient hits on one memorizable data point (see
     docs/endturn_collapse.md). per_game <= 0 disables (everything stays eligible).
 
-    The budget scales with game length — min(per_game, ~1/8 of the game's samples) —
+    The budget scales with game length — min(per_game, ~1/4 of the game's samples;
+    relaxed from 1/8 once mixed targets gave every state its own label) —
     so short curriculum games (see turn_cap_for_gen) keep the same *fraction* eligible
     instead of quietly marking most of the game (at 130+ samples/game, len//8 ≈ 16,
     matching the historical per_game default)."""
     if per_game <= 0 or not samples:
         return
-    budget = min(per_game, max(4, len(samples) // 8))
+    budget = min(per_game, max(4, len(samples) // 4))
     by_player = {}
     for s in samples:
         s.train_value = False
@@ -337,7 +353,8 @@ def run_training(
     value_samples_per_game=16, val_games=8, val_seed_base=1_000_000,
     turn_cap_winner=True, winner_dead_zone=1.0, gen0_search_scale=1.0,
     turn_cap_start=None, turn_cap_grow=1.0,
-    search_value_weight=0.0, search_value_anneal_gens=10,
+    search_value_weight=0.0, search_value_anneal_gens=10, lr_final=None,
+    value_symmetry=False,
     base_seed=0, bootstrap_gen0=True, heuristic_scale=HEURISTIC_VALUE_SCALE,
     num_workers=1, ckpt_dir=None, net=None, policy=None, log=print,
 ):
@@ -371,7 +388,13 @@ def run_training(
       - search_value_weight    : w in target = (1-w)·z + w·v̂ (v̂ = search root value per
         state). Per-state credit + oscillation damping. 0 disables (pure outcomes).
       - search_value_anneal_gens : w ramps linearly from 0 to its maximum over this many
-        gens (early nets' search values are noise; don't bootstrap into them)."""
+        gens (early nets' search values are noise; don't bootstrap into them).
+
+    LR schedule:
+      - lr_final : if set, cosine-decay the learning rate from `lr` (gen 0) to `lr_final`
+        (last gen). Damps late-run value sloshing (the dV oscillation is partly optimizer
+        noise: 200 steps at 1e-3 on batch-32 can swing value regions each gen). None =
+        constant `lr`."""
     net = net or PolysharkNet()
     policy = policy or PolicyHead()
     opt = make_optimizer(net, policy, lr, weight_decay)
@@ -419,6 +442,14 @@ def run_training(
             cap = turn_cap_for_gen(gen, turn_limit, turn_cap_start, turn_cap_grow)
             # Mixed-target weight, annealed 0 -> max over the first anneal_gens.
             mix_w = search_value_weight * min(1.0, gen / max(search_value_anneal_gens, 1))
+            # Cosine LR decay lr -> lr_final across the run (None = constant).
+            if lr_final is not None and n_gens > 1:
+                cur_lr = lr_final + 0.5 * (lr - lr_final) * (
+                    1 + math.cos(math.pi * gen / (n_gens - 1)))
+            else:
+                cur_lr = lr
+            for pg in opt.param_groups:
+                pg["lr"] = cur_lr
 
             # Stream results as games finish (imap_unordered) so progress is visible
             # during the long self-play phase; training vs val games are told apart by
@@ -460,7 +491,7 @@ def run_training(
                 mb = buffer.sample(minibatch)
                 if not mb:
                     break
-                vl, pl = train_step(net, policy, opt, mb)
+                vl, pl = train_step(net, policy, opt, mb, value_symmetry=value_symmetry)
                 if not math.isnan(vl):        # batch may hold no value-eligible sample
                     vlosses.append(vl)
                 plosses.append(pl)
@@ -478,7 +509,8 @@ def run_training(
 
             total_s = time.time() - gen_t0
             evname = "heuristic" if use_heuristic else "network"
-            log(f"gen {gen:2d} | eval={evname:<9} cap={cap:<3} mix={mix_w:.2f} buffer={len(buffer):<6} "
+            log(f"gen {gen:2d} | eval={evname:<9} cap={cap:<3} mix={mix_w:.2f} lr={cur_lr:.1e} "
+                f"buffer={len(buffer):<6} "
                 f"decisive={decisive}/{games_per_gen} | value_loss={vloss:.4f} "
                 f"val={val_vloss:.4f} val_sign={val_sign_acc:.2f} policy_loss={ploss:.4f} | "
                 f"selfplay={selfplay_s:.0f}s train={train_s:.0f}s total={total_s:.0f}s")

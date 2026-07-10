@@ -130,11 +130,19 @@ conditioning on the state.
 
 **Value head:**
 
-- **Per-game value subsampling** (`value_samples_per_game`, default 16). Only ~16
-  positions per game (split across the two players) keep their value label for training;
-  `train_step` masks the MSE to those (`Sample.train_value`). AlphaGo did the same
-  (1 position/game) for the same reason: within-game states are near-duplicates of one
-  label. Policy targets are unaffected. `<=0` disables.
+- **Per-game value subsampling** (`value_samples_per_game`). A budget of
+  min(per_game, ~1/4 of the game's samples) positions per game keeps its value label
+  for training; `train_step` masks the MSE to those (`Sample.train_value`). Originally
+  1/8 (within-game states were near-duplicates of one shared label — AlphaGo used
+  1 position/game); relaxed after mixed targets gave every state its own target.
+  Policy targets are unaffected. `<=0` disables.
+- **D8 symmetry augmentation** (`value_symmetry`): each train step, the value head
+  trains on a random rotation/flip of the eligible rows (`features.d8_transform` —
+  board planes, tile indices, and row/col feature columns transformed consistently;
+  targets are invariant). ~8x effective value data and it deletes the map-fingerprint
+  memorization channel. Policy stays in the original orientation (its targets live in
+  board coordinates); extending augmentation to policy targets needs mask/slot/visit
+  permutation and is deferred.
 - **AdamW weight decay** (`weight_decay`, default 1e-4) via `make_optimizer` — decays
   matrix params only; biases and norm scales are exempt.
 - **Value-head input dropout** (`PolysharkNet.value_dropout`, p=0.2 on the 256-d core

@@ -29,7 +29,7 @@ from trainer import run_training  # noqa: E402
 # ============================================================================
 
 # --- loop sizing ---
-N_GENS              = 50      # generations (self-play -> train -> checkpoint cycles)
+N_GENS              = 100      # generations (self-play -> train -> checkpoint cycles)
 GAMES_PER_GEN       = 30      # self-play games appended to the buffer each generation
 TRAIN_STEPS_PER_GEN = 200    # minibatch optimizer steps each generation (~1 epoch over a
                              # gen's ~6k new samples at MINIBATCH=32)
@@ -50,12 +50,12 @@ TEMP_FRAC   = 0.20          # temperature applies to the first 20% of each game'
                             # then greedy. Keeps ±1 winner labels reflecting intent, not
                             # sampling luck (AZ plays ~85% of the game greedily too).
 TEMP_TURNS  = 6             # fixed-turn fallback, used only if TEMP_FRAC is None
-TURN_LIMIT  = 30            # max per-game turn cap (turn-capped games -> winner labels)
+TURN_LIMIT  = 10            # max per-game turn cap (turn-capped games -> winner labels)
 
 # --- horizon curriculum (short games early -> strong per-action value gradient) ---
 TURN_CAP_START = 5          # gen 0 games are capped this short; None = constant TURN_LIMIT.
                             # At cap 5 the objective is crisp: out-explore / grab a village.
-TURN_CAP_GROW  = 0.15       # turns added to the cap per generation, up to TURN_LIMIT.
+TURN_CAP_GROW  = 0.10       # turns added to the cap per generation, up to TURN_LIMIT.
                             # 0.15 -> +1 cap every ~7 gens; at N_GENS=50 the run tops out
                             # at cap 12 (deliberate — the target behaviors live below 12).
 
@@ -85,11 +85,18 @@ SEARCH_VALUE_ANNEAL_GENS = 10  # w ramps 0 -> max over this many gens (early net
                             # search values are noise; don't bootstrap into them).
 
 # --- optimization ---
-LR = 1e-3                   # AdamW learning rate (net + policy jointly)
+LR = 1e-3                   # AdamW learning rate at gen 0 (net + policy jointly)
+LR_FINAL = 3e-4             # cosine-decay target by the last gen (None = constant LR).
+                            # Damps late-run value sloshing once the cap dwells; won't
+                            # lower the loss plateaus (those are floors, not thrash).
 WEIGHT_DECAY = 1e-4         # AdamW decay on matrix params (biases/norm scales exempt)
 
 # --- value-overfit guards (see docs/endturn_collapse.md) ---
-VALUE_SAMPLES_PER_GAME = 16 # positions per game that keep their value label for training
+VALUE_SYMMETRY = True       # train the value head on a random D8 board transform per step
+                            # (rotations/flips; targets invariant). ~8x effective value
+                            # data + kills map-fingerprint memorization. Policy stays in
+                            # original orientation (its targets live in board coords).
+VALUE_SAMPLES_PER_GAME = 32 # positions per game that keep their value label for training
                             # (split across players; the rest train policy only). <=0 = all.
                             # A game's states all share one outcome label — training value
                             # on every state is how the head memorizes games.
@@ -100,7 +107,7 @@ VAL_GAMES = 6               # per gen: extra self-play games on held-out seeds, 
 # --- io ---
 BASE_SEED = 0
 CKPT_ROOT = os.path.join(_PKG, "data", "checkpoints")  # parent; each run gets its own subfolder
-RUN_LABEL = "dz025_reweight"  # optional suffix on the run folder, e.g. "highsim" -> run_<ts>_highsim
+RUN_LABEL = "mix03"  # optional suffix on the run folder, e.g. "highsim" -> run_<ts>_highsim
 
 # ============================================================================
 # end CONFIG
@@ -122,13 +129,15 @@ def main():
         n_gens=N_GENS, games_per_gen=GAMES_PER_GEN, train_steps_per_gen=TRAIN_STEPS_PER_GEN,
         minibatch=MINIBATCH, buffer_capacity=BUFFER_CAPACITY, turn_limit=TURN_LIMIT,
         n_sims=N_SIMS, c_puct=C_PUCT, temperature=TEMPERATURE, temp_turns=TEMP_TURNS,
-        temp_frac=TEMP_FRAC, add_noise=ADD_NOISE, lr=LR, weight_decay=WEIGHT_DECAY,
+        temp_frac=TEMP_FRAC, add_noise=ADD_NOISE, lr=LR, lr_final=LR_FINAL,
+        weight_decay=WEIGHT_DECAY,
         value_samples_per_game=VALUE_SAMPLES_PER_GAME, val_games=VAL_GAMES,
         turn_cap_winner=TURN_CAP_WINNER, winner_dead_zone=WINNER_DEAD_ZONE,
         gen0_search_scale=GEN0_SEARCH_SCALE,
         turn_cap_start=TURN_CAP_START, turn_cap_grow=TURN_CAP_GROW,
         search_value_weight=SEARCH_VALUE_WEIGHT,
         search_value_anneal_gens=SEARCH_VALUE_ANNEAL_GENS,
+        value_symmetry=VALUE_SYMMETRY,
         base_seed=BASE_SEED, bootstrap_gen0=BOOTSTRAP_GEN0,
         heuristic_scale=HEURISTIC_SCALE, num_workers=NUM_WORKERS,
     )

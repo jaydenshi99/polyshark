@@ -17,7 +17,9 @@ Give it one or more checkpoints and it reports, per probe state:
 Usage (repo root, venv active):
 
     python ai/mctsnn-v2/scripts/probe.py <ckpt.pt> [<ckpt2.pt> ...]
-        [--seeds 999 1234]   probe map seeds (default: 999; never train on these)
+        [--seeds 500001 500002]  probe map seeds (default 500001). Use the 100k-900k band:
+                                 training covers base_seed..~n_gens*games (0..~3000) and
+                                 validation uses 1,000,000+ — stay clear of both
         [--sims 200]         search budget for measurement 4
         [--midgame 8]        also probe a developed state (heuristic self-play advances
                              this many turns first; 0 = fresh state only)
@@ -111,8 +113,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("checkpoints", nargs="+", help="checkpoint .pt path(s), oldest first")
-    ap.add_argument("--seeds", type=int, nargs="+", default=[999],
-                    help="probe map seeds (use seeds the run never trained on)")
+    ap.add_argument("--seeds", type=int, nargs="+", default=[500001],
+                    help="probe map seeds. Training uses base_seed..~n_gens*games_per_gen "
+                         "(0..~3000 typically) and validation uses 1,000,000+; pick seeds "
+                         "in the 100k-900k band so they can never collide with either")
     ap.add_argument("--sims", type=int, default=200, help="search budget for the dump")
     ap.add_argument("--midgame", type=int, default=0,
                     help="also probe a state this many turns into a heuristic game")
