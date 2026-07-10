@@ -1,13 +1,12 @@
 """
-Phase A training runner — configure the block below and run (from repo root, venv active):
+Phase A training runner — edit CONFIG, then run (from repo root, venv active):
 
     source .venv/bin/activate
     python ai/mctsnn-v2/scripts/train.py
 
-No CLI flags — everything is in CONFIG. This is the alternating self-play/train loop
-(see docs/training.md): each generation plays GAMES_PER_GEN self-play games with the current
-network, appends them to a replay buffer, runs TRAIN_STEPS_PER_GEN minibatch updates, and
-writes a checkpoint. Config front-end only; the loop lives in src/trainer.py.
+Config front-end only; the loop lives in src/trainer.py (see docs/training.md).
+Knobs not listed here (add_noise, temperature, gen0 bootstrap/scale, anneal windows,
+legacy tanh labels, ...) use run_training's defaults.
 """
 
 import datetime
@@ -29,102 +28,49 @@ from trainer import run_training  # noqa: E402
 # ============================================================================
 
 # --- loop sizing ---
-N_GENS              = 100      # generations (self-play -> train -> checkpoint cycles)
-GAMES_PER_GEN       = 30      # self-play games appended to the buffer each generation
-TRAIN_STEPS_PER_GEN = 200    # minibatch optimizer steps each generation (~1 epoch over a
-                             # gen's ~6k new samples at MINIBATCH=32)
-MINIBATCH           = 32     # samples per optimizer step
-BUFFER_CAPACITY     = 20000  # FIFO replay window (oldest samples drop off)
+N_GENS              = 100    # self-play -> train -> gate -> checkpoint cycles
+GAMES_PER_GEN       = 32     # self-play games appended to the buffer each gen
+TRAIN_STEPS_PER_GEN = 200    # optimizer steps/gen (auto-throttled on small buffers)
+MINIBATCH           = 32
+BUFFER_CAPACITY     = 20000  # FIFO sample window (~8-10 gens at cap 10)
+NUM_WORKERS         = 4      # self-play processes; set near physical core count
 
-# --- parallelism ---
-NUM_WORKERS = 6             # self-play worker processes (1 = in-process, no pool). Set near
-                            # your physical core count; each worker plays whole games at once.
+# --- search (per decision) ---
+N_SIMS    = 100              # sims per subaction stage (staged commitment)
+C_PUCT    = 1.5
+TEMP_FRAC = 0.20             # temperature on the first 20% of each game's cap, then greedy
 
-# --- self-play search (per decision) ---
-N_SIMS      = 100           # MCTS simulations per move (strength vs speed)
-C_PUCT      = 1.5           # PUCT exploration constant
-ADD_NOISE   = True          # Dirichlet root noise (ON for self-play diversity)
-TEMPERATURE = 1.0           # opening move sampling: 1.0 ~ visits, 0.0 greedy
-TEMP_FRAC   = 0.20          # temperature applies to the first 20% of each game's turn cap
-                            # (scales with the curriculum; cap 5 -> 1 turn, cap 30 -> 6),
-                            # then greedy. Keeps ±1 winner labels reflecting intent, not
-                            # sampling luck (AZ plays ~85% of the game greedily too).
-TEMP_TURNS  = 6             # fixed-turn fallback, used only if TEMP_FRAC is None
-TURN_LIMIT  = 10            # max per-game turn cap (turn-capped games -> winner labels)
+# --- horizon curriculum ---
+TURN_LIMIT     = 10          # max turn cap; also the curriculum ceiling
+TURN_CAP_START = 5           # gen-0 cap; None = constant TURN_LIMIT
+TURN_CAP_GROW  = 0.10        # cap growth per gen (0.10 -> +1 every 10 gens)
 
-# --- horizon curriculum (short games early -> strong per-action value gradient) ---
-TURN_CAP_START = 5          # gen 0 games are capped this short; None = constant TURN_LIMIT.
-                            # At cap 5 the objective is crisp: out-explore / grab a village.
-TURN_CAP_GROW  = 0.10       # turns added to the cap per generation, up to TURN_LIMIT.
-                            # 0.15 -> +1 cap every ~7 gens; at N_GENS=50 the run tops out
-                            # at cap 12 (deliberate — the target behaviors live below 12).
+# --- turn-cap winner labels ---
+WINNER_DEAD_ZONE = 0.25      # margin (heuristic pts) below which a capped game is a tie;
+                             # weights in bindings.cpp heuristic_score set the tiers
+WINNER_TIE_VALUE = -0.15     # tie contempt: ties label negative for BOTH players
 
-# --- gen-0 bootstrap ---
-BOOTSTRAP_GEN0 = True       # gen 0 self-plays with the heuristic (meaningful data) instead
-                            # of the random-init net; gens >=1 use the net being trained
+# --- gating (candidate must beat incumbent to generate data) ---
+GATING         = True
+GATE_GAMES     = 16          # greedy candidate-vs-incumbent games; double as the val set
+GATE_THRESHOLD = 0.55        # promote at >= this score (win=1, tie=0.5)
 
-# --- turn-cap labels & gen-0 search value (see docs/endturn_collapse.md #1) ---
-TURN_CAP_WINNER  = True     # True: turn-capped games label ±1 by heuristic-margin sign
-                            # (winner declared at the cap; value head estimates win prob;
-                            # mutual passing is never label-neutral). False: legacy tanh.
-WINNER_DEAD_ZONE = 0.25     # heuristic points inside which a capped game labels 0 (a tie).
-                            # At 0.25 every achievement tier decides a game: kill/train
-                            # 0.5, tech 0.3, village-adjacent 0.75, capture ~2.5 (see the
-                            # weights in bindings.cpp heuristic_score).
-WINNER_TIE_VALUE = -0.2     # tie contempt: dead-zone games label this for BOTH players —
-                            # mutual passivity is strictly losing, even in a perfect
-                            # mirror. Small, so legit tied active games aren't over-taxed.
-GEN0_SEARCH_SCALE = 1.0     # tanh scale of the gen-0 bootstrap SEARCH evaluator. Sharp on
-                            # purpose (decisive bootstrap play); independent of the labels.
-HEURISTIC_SCALE = 0.30      # legacy tanh(scale * margin) labels, used only when
-                            # TURN_CAP_WINNER = False.
-
-# --- gating (AlphaGo-Zero evaluator: candidate must beat incumbent to make data) ---
-GATING         = True       # self-play uses the last PROMOTED weights; each gen the
-                            # trained candidate plays GATE_GAMES greedy games vs them and
-                            # is promoted only on a win rate >= GATE_THRESHOLD. A drifting
-                            # candidate can't poison future self-play data (the ratchet).
-GATE_GAMES     = 15         # candidate-vs-incumbent games per gen (seats alternate).
-                            # These double as the held-out validation set — no extra cost.
-GATE_THRESHOLD = 0.55       # promote at >= this score (win=1, tie=0.5).
-
-# --- early-run KL anchor (priors can't drift while the value head is young) ---
-KL_ANCHOR_GENS   = 5        # for gens 1..N, pull the type head toward the frozen
-                            # post-gen0 policy (the bootstrap distribution). 0 = off.
-KL_ANCHOR_WEIGHT = 0.3      # weight of that anchor CE term in the policy loss.
-
-# --- mixed value targets (see trainer._mix_search_values) ---
-SEARCH_VALUE_WEIGHT = 0.3   # w in: target = (1-w)·outcome + w·(search root value v̂).
-                            # Per-state credit (approach moves etc.) + damps the
-                            # "unplayed states drift -> played less" oscillation.
-                            # Kept modest: v̂ is turn-local (no opponent lookahead).
-SEARCH_VALUE_ANNEAL_GENS = 10  # w ramps 0 -> max over this many gens (early nets'
-                            # search values are noise; don't bootstrap into them).
+# --- anti-collapse / anti-overfit (docs/endturn_collapse.md) ---
+KL_ANCHOR_GENS         = 5     # gens 1..N: hold type head near the post-gen0 policy
+SEARCH_VALUE_WEIGHT    = 0.3   # mixed value targets: (1-w)*outcome + w*search root value
+VALUE_SYMMETRY         = True  # value head trains on random D8 board transforms
+VALUE_SAMPLES_PER_GAME = 32    # value-eligible positions per game (<=0 = all)
+VAL_GAMES              = 6     # held-out val games — used only at gen 0 / when GATING off
 
 # --- optimization ---
-LR = 1e-3                   # AdamW learning rate at gen 0 (net + policy jointly)
-LR_FINAL = 3e-4             # cosine-decay target by the last gen (None = constant LR).
-                            # Damps late-run value sloshing once the cap dwells; won't
-                            # lower the loss plateaus (those are floors, not thrash).
-WEIGHT_DECAY = 1e-4         # AdamW decay on matrix params (biases/norm scales exempt)
-
-# --- value-overfit guards (see docs/endturn_collapse.md) ---
-VALUE_SYMMETRY = True       # train the value head on a random D8 board transform per step
-                            # (rotations/flips; targets invariant). ~8x effective value
-                            # data + kills map-fingerprint memorization. Policy stays in
-                            # original orientation (its targets live in board coords).
-VALUE_SAMPLES_PER_GAME = 32 # positions per game that keep their value label for training
-                            # (split across players; the rest train policy only). <=0 = all.
-                            # A game's states all share one outcome label — training value
-                            # on every state is how the head memorizes games.
-VAL_GAMES = 6               # per gen: extra self-play games on held-out seeds, kept out of
-                            # the buffer, scored after training (val_value_loss in
-                            # metrics.csv). Train/val gap = memorization meter. 0 = off.
+LR           = 1e-3
+LR_FINAL     = 3e-4          # cosine decay target by the last gen (None = constant)
+WEIGHT_DECAY = 1e-4          # AdamW, matrix params only
 
 # --- io ---
 BASE_SEED = 0
-CKPT_ROOT = os.path.join(_PKG, "data", "checkpoints")  # parent; each run gets its own subfolder
-RUN_LABEL = "mix03"  # optional suffix on the run folder, e.g. "highsim" -> run_<ts>_highsim
+CKPT_ROOT = os.path.join(_PKG, "data", "checkpoints")
+RUN_LABEL = "gated_cap10"    # suffix on the run folder — name each run distinctly
 
 # ============================================================================
 # end CONFIG
@@ -144,23 +90,19 @@ def main():
     run_dir = _new_run_dir()
     cfg = dict(
         n_gens=N_GENS, games_per_gen=GAMES_PER_GEN, train_steps_per_gen=TRAIN_STEPS_PER_GEN,
-        minibatch=MINIBATCH, buffer_capacity=BUFFER_CAPACITY, turn_limit=TURN_LIMIT,
-        n_sims=N_SIMS, c_puct=C_PUCT, temperature=TEMPERATURE, temp_turns=TEMP_TURNS,
-        temp_frac=TEMP_FRAC, add_noise=ADD_NOISE, lr=LR, lr_final=LR_FINAL,
-        weight_decay=WEIGHT_DECAY,
-        value_samples_per_game=VALUE_SAMPLES_PER_GAME, val_games=VAL_GAMES,
-        turn_cap_winner=TURN_CAP_WINNER, winner_dead_zone=WINNER_DEAD_ZONE,
-        gen0_search_scale=GEN0_SEARCH_SCALE,
-        turn_cap_start=TURN_CAP_START, turn_cap_grow=TURN_CAP_GROW,
-        search_value_weight=SEARCH_VALUE_WEIGHT,
-        search_value_anneal_gens=SEARCH_VALUE_ANNEAL_GENS,
-        value_symmetry=VALUE_SYMMETRY, winner_tie_value=WINNER_TIE_VALUE,
+        minibatch=MINIBATCH, buffer_capacity=BUFFER_CAPACITY, num_workers=NUM_WORKERS,
+        n_sims=N_SIMS, c_puct=C_PUCT, temp_frac=TEMP_FRAC,
+        turn_limit=TURN_LIMIT, turn_cap_start=TURN_CAP_START, turn_cap_grow=TURN_CAP_GROW,
+        winner_dead_zone=WINNER_DEAD_ZONE, winner_tie_value=WINNER_TIE_VALUE,
         gating=GATING, gate_games=GATE_GAMES, gate_threshold=GATE_THRESHOLD,
-        kl_anchor_gens=KL_ANCHOR_GENS, kl_anchor_weight=KL_ANCHOR_WEIGHT,
-        base_seed=BASE_SEED, bootstrap_gen0=BOOTSTRAP_GEN0,
-        heuristic_scale=HEURISTIC_SCALE, num_workers=NUM_WORKERS,
+        kl_anchor_gens=KL_ANCHOR_GENS, search_value_weight=SEARCH_VALUE_WEIGHT,
+        value_symmetry=VALUE_SYMMETRY, value_samples_per_game=VALUE_SAMPLES_PER_GAME,
+        val_games=VAL_GAMES,
+        lr=LR, lr_final=LR_FINAL, weight_decay=WEIGHT_DECAY,
+        base_seed=BASE_SEED,
     )
-    # Save the run's config alongside its checkpoints so each run is self-describing.
+    # Save the run's config alongside its checkpoints so each run is self-describing
+    # (explicitly-set knobs only; everything else is run_training's defaults).
     with open(os.path.join(run_dir, "run_config.json"), "w") as f:
         json.dump(cfg, f, indent=2)
 
