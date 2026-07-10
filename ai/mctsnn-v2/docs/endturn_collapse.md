@@ -28,6 +28,22 @@ a movement reward) and an enemy-capital proximity term (4/(1+dist) for the neare
 unit once the capital is visible ≈ a village when adjacent) that pulls troops toward the
 Domination win condition — movement is encouraged by proximity-to-objective terms
 (villages, then the capital), not by fog cleared.
+**2026-07-09 (later) — anti-collapse machinery batch**, after the mix03 run's
+label-saturation collapse (exploration term dominated labels, map saturates by turn ~12,
+labels became seat noise at cap 13+, P(end) prior broke its 0.25–0.30 band at gen ~70 and
+locked by gen 90 — see "the prior always drifts toward end_turn; the value signal holds it
+up"). New machinery, all in `run_training`:
+**gating** (AlphaGo-Zero evaluator: incumbent generates data, candidate promoted only on
+gate_games greedy wins ≥ threshold — degeneration can't compound);
+**tie contempt** (`winner_tie_value` ≈ −0.2: mirrored passivity strictly loses);
+**early KL anchor** (gens 1..N type head pulled to the frozen post-gen0 policy);
+**policy target pruning** (KataGo-style: exploration-forced visit floor subtracted from
+recorded targets — removes the marginal-drift gradient at its source, `mcts.prune_targets`);
+**D8 value symmetry augmentation** + relaxed value subsampling (~20x effective value data,
+map-fingerprint memorization structurally dead); **LR cosine decay** (`lr_final`);
+**exploration term nerfed to tiebreaker** (0.005/tile). Curriculum guidance: hold the cap
+at/below ~12 until decisive play exists; watch P(end)'s 0.25–0.30 band in the gen sweep.
+
 **Run analysed:** `data/checkpoints/decaying_to_end_turn` (20 gens, config in its `run_config.json`).
 
 Later generations converge on playing `end_turn` immediately every turn (gen19 greedy

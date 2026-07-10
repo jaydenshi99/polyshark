@@ -71,10 +71,27 @@ WINNER_DEAD_ZONE = 0.25     # heuristic points inside which a capped game labels
                             # At 0.25 every achievement tier decides a game: kill/train
                             # 0.5, tech 0.3, village-adjacent 0.75, capture ~2.5 (see the
                             # weights in bindings.cpp heuristic_score).
+WINNER_TIE_VALUE = -0.2     # tie contempt: dead-zone games label this for BOTH players —
+                            # mutual passivity is strictly losing, even in a perfect
+                            # mirror. Small, so legit tied active games aren't over-taxed.
 GEN0_SEARCH_SCALE = 1.0     # tanh scale of the gen-0 bootstrap SEARCH evaluator. Sharp on
                             # purpose (decisive bootstrap play); independent of the labels.
 HEURISTIC_SCALE = 0.30      # legacy tanh(scale * margin) labels, used only when
                             # TURN_CAP_WINNER = False.
+
+# --- gating (AlphaGo-Zero evaluator: candidate must beat incumbent to make data) ---
+GATING         = True       # self-play uses the last PROMOTED weights; each gen the
+                            # trained candidate plays GATE_GAMES greedy games vs them and
+                            # is promoted only on a win rate >= GATE_THRESHOLD. A drifting
+                            # candidate can't poison future self-play data (the ratchet).
+GATE_GAMES     = 15         # candidate-vs-incumbent games per gen (seats alternate).
+                            # These double as the held-out validation set — no extra cost.
+GATE_THRESHOLD = 0.55       # promote at >= this score (win=1, tie=0.5).
+
+# --- early-run KL anchor (priors can't drift while the value head is young) ---
+KL_ANCHOR_GENS   = 5        # for gens 1..N, pull the type head toward the frozen
+                            # post-gen0 policy (the bootstrap distribution). 0 = off.
+KL_ANCHOR_WEIGHT = 0.3      # weight of that anchor CE term in the policy loss.
 
 # --- mixed value targets (see trainer._mix_search_values) ---
 SEARCH_VALUE_WEIGHT = 0.3   # w in: target = (1-w)·outcome + w·(search root value v̂).
@@ -137,7 +154,9 @@ def main():
         turn_cap_start=TURN_CAP_START, turn_cap_grow=TURN_CAP_GROW,
         search_value_weight=SEARCH_VALUE_WEIGHT,
         search_value_anneal_gens=SEARCH_VALUE_ANNEAL_GENS,
-        value_symmetry=VALUE_SYMMETRY,
+        value_symmetry=VALUE_SYMMETRY, winner_tie_value=WINNER_TIE_VALUE,
+        gating=GATING, gate_games=GATE_GAMES, gate_threshold=GATE_THRESHOLD,
+        kl_anchor_gens=KL_ANCHOR_GENS, kl_anchor_weight=KL_ANCHOR_WEIGHT,
         base_seed=BASE_SEED, bootstrap_gen0=BOOTSTRAP_GEN0,
         heuristic_scale=HEURISTIC_SCALE, num_workers=NUM_WORKERS,
     )

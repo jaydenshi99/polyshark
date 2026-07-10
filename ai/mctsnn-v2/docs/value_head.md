@@ -12,7 +12,8 @@ shared rep [256] ─ Linear(256 → 64) → GELU
 ```
 
 Small on purpose — the shared core already did the heavy lifting; the head is just a
-readout with a touch of nonlinearity.
+readout with a touch of nonlinearity. A Dropout(0.2) on its input (kept outside the
+Sequential so checkpoint keys are stable) regularizes it during training.
 
 ## Output activation: scaled arctan
 
@@ -25,5 +26,10 @@ readout with a touch of nonlinearity.
 
 ## Training target
 
-MSE against the game outcome from the current player's perspective (`+1` win / `-1`
-loss), or a bootstrapped MCTS value — set when the self-play loop is built.
+MSE against the **mixed target** `(1−w)·z + w·v̂` from the acting player's perspective:
+`z` = game outcome (±1 on capital capture; ±1 winner-by-margin at the turn cap, with a
+small negative tie-contempt label inside the dead zone), `v̂` = the search root value
+recorded at the decision. `w` (`search_value_weight` ≈ 0.3) is annealed from 0 over the
+first gens. See [training.md](training.md) for why pure per-game outcomes collapse
+(no within-game credit) and for the anti-memorization guards around this head
+(value subsampling, dropout, D8 symmetry augmentation, held-out validation).

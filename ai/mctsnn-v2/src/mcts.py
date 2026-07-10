@@ -103,12 +103,13 @@ class MCTS:
     """One configured searcher. Call `search(state, n_sims)` per real decision state."""
 
     def __init__(self, evaluator, c_puct=1.5, add_noise=False,
-                 dirichlet_alpha=0.3, dirichlet_eps=0.25):
+                 dirichlet_alpha=0.3, dirichlet_eps=0.25, prune_targets=True):
         self.ev = evaluator
         self.c_puct = c_puct
         self.add_noise = add_noise
         self.alpha = dirichlet_alpha
         self.eps = dirichlet_eps
+        self.prune_targets = prune_targets
         # Frozen root frame, set per search.
         self.root_player = None
         self.root_visible = None
@@ -153,8 +154,10 @@ class MCTS:
         while True:
             for _ in range(n_sims - node.total_N()):   # top up this stage's budget
                 self._simulate(node)
-            targets.append((node.stage, dict(node.N)))
             choice = _sample_by_visits(node.N, temperature)
+            targets.append((node.stage,
+                            self._pruned_visits(node, choice) if self.prune_targets
+                            else dict(node.N)))
             path.append(choice)
 
             if node.stage == "upgrade":                # modal: completes immediately
@@ -163,6 +166,26 @@ class MCTS:
             if len(path) - 1 >= len(SCHEMA[t]):        # action fully assembled
                 return node.fa.action_for(tuple(path)), root, targets
             node = self._child(node, choice)           # re-root at the committed router
+
+    def _pruned_visits(self, node, chosen):
+        """KataGo-style policy target pruning. Exploration (PUCT's U term + Dirichlet
+        noise) guarantees every legal child a floor of visits regardless of merit; left
+        in the targets, that floor teaches the policy an unconditional marginal (the
+        measured P(end_turn) creep — docs/endturn_collapse.md). Subtract each non-chosen,
+        non-best child's exploration-forced share (~sqrt(2·P·N), the visits PUCT grants
+        on prior pressure alone) and zero it if nothing genuine remains. Keys are kept
+        (zero-visit entries included) so the trainer's legal-choice counting still works.
+        The SEARCH keeps its noise — only the recorded target is cleaned."""
+        total = node.total_N()
+        best = max(node.N, key=node.N.get)
+        out = {}
+        for c, n in node.N.items():
+            if c == chosen or c == best:
+                out[c] = n
+                continue
+            forced = math.sqrt(2.0 * node.P[c] * total)
+            out[c] = int(n - forced) if n - forced >= 1.0 else 0
+        return out
 
     # -- one simulation ----------------------------------------------------
 

@@ -18,6 +18,7 @@ The trunk runs once per minibatch (batched); the value head reads the batched co
 policy stages read per-sample slices of the same cache (no re-forward).
 """
 
+import copy
 import csv
 import math
 import multiprocessing as mp
@@ -87,10 +88,14 @@ def _stage_logits(policy, stage, path, fa, core, unit_tok, city_tok, feature_map
     raise ValueError(f"unknown stage {stage}")
 
 
-def _policy_loss_for_sample(policy, s, cache, b):
+def _policy_loss_for_sample(policy, s, cache, b, anchor=None):
     """Summed cross-entropy over the fired stages of sample `s`'s chosen action, using row
     `b` of the batched trunk cache. Returns (loss_tensor, n_stages). The upgrade modal is
-    skipped (its head isn't wired into the search yet — see docs/policy_head.md)."""
+    skipped (its head isn't wired into the search yet — see docs/policy_head.md).
+
+    `anchor` = (anchor_cache, anchor_policy, weight): adds weight * CE(current type head
+    vs the frozen anchor's type distribution) — the early-run KL anchor that stops the
+    priors drifting off the bootstrap distribution while the value head is young."""
     if s.targets is None or int(s.action.type) == int(_UPGRADE):
         return None, 0
     # Rebuild FactoredActions with the same (default) encoding collate used, so entity slot
@@ -124,21 +129,38 @@ def _policy_loss_for_sample(policy, s, cache, b):
         ce = -sum((v / total) * logq[0, c] for c, v in visits.items())
         loss = ce if loss is None else loss + ce
         n += 1
+        if anchor is not None and stage_name == "type":
+            acache, apolicy, aw = anchor
+            with torch.no_grad():
+                amask = torch.tensor([fa.type_mask()], dtype=torch.bool)
+                aprobs = torch.softmax(
+                    apolicy.type_logits(acache.core[b:b + 1], amask), dim=-1)
+            loss = loss + aw * -(aprobs[0] * logq[0]).sum()
     return loss, n
 
 
-def train_step(net, policy, opt, batch, value_symmetry=False):
+def train_step(net, policy, opt, batch, value_symmetry=False, anchor=None, anchor_weight=0.0):
     """One optimizer step over a minibatch of Samples. Returns (value_loss, policy_loss);
     value_loss is NaN if no sample in the batch is value-eligible (see _mark_value_positions).
 
     value_symmetry=True trains the value head on a random D8 transform of the eligible
     rows (targets are rotation/flip-invariant) — ~8x effective value data and it deletes
     the map-fingerprint memorization channel. Policy stays in the original orientation
-    (its targets live in board coordinates)."""
+    (its targets live in board coordinates).
+
+    anchor = (anchor_net, anchor_policy): KL-anchor the type head to this frozen policy
+    with weight anchor_weight (early gens only — see run_training kl_anchor_gens)."""
     states = [s.state for s in batch]
     raw = collate(states)
     tensors = {k: torch.from_numpy(v) for k, v in raw.items()}
     cache = net.trunk(*(tensors[k] for k in _MODEL_ARG_ORDER))
+
+    anchor_ctx = None
+    if anchor is not None and anchor_weight > 0:
+        anet, apolicy = anchor
+        with torch.no_grad():
+            acache = anet.trunk(*(tensors[k] for k in _MODEL_ARG_ORDER))
+        anchor_ctx = (acache, apolicy, anchor_weight)
 
     # Value: batched MSE against the outcome z, over value-eligible samples only —
     # within-game states share one label, so the trainer subsamples a few per game.
@@ -159,7 +181,7 @@ def train_step(net, policy, opt, batch, value_symmetry=False):
     # Policy: per-sample autoregressive CE, reading slices of the same cache.
     policy_terms, n_stages = None, 0
     for b, s in enumerate(batch):
-        term, n = _policy_loss_for_sample(policy, s, cache, b)
+        term, n = _policy_loss_for_sample(policy, s, cache, b, anchor=anchor_ctx)
         if term is not None:
             policy_terms = term if policy_terms is None else policy_terms + term
             n_stages += n
@@ -279,16 +301,43 @@ def _make_agents(evaluator, cfg, turn_cap=None):
         return Agent(name, MCTSStrategy(
             evaluator, n_sims=cfg["n_sims"], c_puct=cfg["c_puct"],
             temperature=cfg["temperature"], temp_turns=temp_turns,
-            add_noise=cfg["add_noise"]))
+            add_noise=cfg["add_noise"], prune_targets=cfg.get("prune_targets", True)))
     return mk("p0"), mk("p1")
 
 
 def _make_terminal_value(cfg):
-    """Turn-cap labeller from config: ±1 winner-by-margin (default; see
-    docs/endturn_collapse.md actionable #1) or the legacy tanh margin."""
+    """Turn-cap labeller from config: ±1 winner-by-margin with tie contempt (default;
+    see docs/endturn_collapse.md actionable #1) or the legacy tanh margin."""
     if cfg.get("turn_cap_winner", True):
-        return make_winner_terminal_value(cfg.get("winner_dead_zone", 1.0))
+        return make_winner_terminal_value(cfg.get("winner_dead_zone", 1.0),
+                                          cfg.get("winner_tie_value", 0.0))
     return make_heuristic_terminal_value(cfg["heuristic_scale"])
+
+
+def _play_gate_game(ev_cand, ev_inc, cfg, seed, turn_cap, cand_seat):
+    """One gating-match game: candidate vs incumbent, greedy and noise-free (honest
+    strength, AlphaGo-Zero-style evaluator). Returns (samples, stats) — the samples
+    double as the held-out validation set, so gating costs no extra games. `cand_pts`:
+    1 win / 0.5 tie / 0 loss for the candidate, by capital capture or margin sign."""
+    def mk(name, ev):
+        return Agent(name, MCTSStrategy(ev, n_sims=cfg["n_sims"], c_puct=cfg["c_puct"],
+                                        temperature=0.0, temp_turns=0, add_noise=False))
+    cand, inc = mk("cand", ev_cand), mk("inc", ev_inc)
+    order = [cand, inc] if cand_seat == 0 else [inc, cand]
+    t0 = time.time()
+    res = Arena(order, terminal_value_fn=_make_terminal_value(cfg)).play_game(
+        seed=seed, max_turns=turn_cap, collect=True)
+    v0, v1 = res.v_finals
+    if res.winner >= 0:
+        cand_pts = 1.0 if res.winner == cand_seat else 0.0
+    elif v0 == v1:                       # dead-zone tie (contempt labels are equal)
+        cand_pts = 0.5
+    else:
+        cand_pts = 1.0 if (v0 > v1) == (cand_seat == 0) else 0.0
+    stats = {"seed": seed, "winner": res.winner, "turns": res.turns, "gate": True,
+             "cand_pts": cand_pts, "v_finals": res.v_finals,
+             "n_samples": len(res.samples), "time": time.time() - t0}
+    return res.samples, stats
 
 
 def turn_cap_for_gen(gen, turn_limit, turn_cap_start=None, turn_cap_grow=1.0):
@@ -332,16 +381,25 @@ def _worker_init(cfg):
     _WORKER.clear()
     _WORKER["cfg"] = cfg
     _WORKER["gen"] = None
-    _WORKER["evaluator"] = None
+    _WORKER["evs"] = {}
+
+
+def _worker_ev(path):
+    """Per-worker evaluator cache, reset each gen (weights files are rewritten)."""
+    if path not in _WORKER["evs"]:
+        _WORKER["evs"][path] = _build_evaluator(path, _WORKER["cfg"]["gen0_search_scale"])
+    return _WORKER["evs"][path]
 
 
 def _worker_play(task):
-    seed, gen, weights_path, turn_cap = task
+    kind, seed, gen, turn_cap, path_a, path_b, cand_seat = task
     if _WORKER["gen"] != gen:                     # (re)load this gen's weights once per worker
-        _WORKER["evaluator"] = _build_evaluator(
-            weights_path, _WORKER["cfg"]["gen0_search_scale"])
+        _WORKER["evs"] = {}
         _WORKER["gen"] = gen
-    return _play_one_game(_WORKER["evaluator"], _WORKER["cfg"], seed, turn_cap)
+    if kind == "gate":
+        return _play_gate_game(_worker_ev(path_a), _worker_ev(path_b),
+                               _WORKER["cfg"], seed, turn_cap, cand_seat)
+    return _play_one_game(_worker_ev(path_a), _WORKER["cfg"], seed, turn_cap)
 
 
 # --------------------------------------------------------------------------- loop
@@ -354,7 +412,9 @@ def run_training(
     turn_cap_winner=True, winner_dead_zone=1.0, gen0_search_scale=1.0,
     turn_cap_start=None, turn_cap_grow=1.0,
     search_value_weight=0.0, search_value_anneal_gens=10, lr_final=None,
-    value_symmetry=False,
+    value_symmetry=False, winner_tie_value=0.0,
+    gating=False, gate_games=15, gate_threshold=0.55,
+    kl_anchor_gens=0, kl_anchor_weight=0.3,
     base_seed=0, bootstrap_gen0=True, heuristic_scale=HEURISTIC_VALUE_SCALE,
     num_workers=1, ckpt_dir=None, net=None, policy=None, log=print,
 ):
@@ -394,7 +454,21 @@ def run_training(
       - lr_final : if set, cosine-decay the learning rate from `lr` (gen 0) to `lr_final`
         (last gen). Damps late-run value sloshing (the dV oscillation is partly optimizer
         noise: 200 steps at 1e-3 on batch-32 can swing value regions each gen). None =
-        constant `lr`."""
+        constant `lr`.
+
+    Gating (AlphaGo-Zero evaluator; anti-collapse ratchet):
+      - gating=True : self-play data is generated by the INCUMBENT weights; the trained
+        candidate must score >= gate_threshold over gate_games greedy games vs the
+        incumbent to be promoted to data generator. A drifting/degenerating candidate
+        can't poison future data. Gate games double as the held-out validation set
+        (val_games is only used at gen 0 / when gating is off).
+      - winner_tie_value : tie contempt — dead-zone games label this for BOTH players
+        (small negative makes mutual passivity strictly losing).
+
+    KL anchor (early-run safety net):
+      - kl_anchor_gens/weight : for gens 1..N, add weight * CE(type head vs the frozen
+        post-gen0 policy) so the priors can't drift off the bootstrap distribution while
+        the value head is too young to hold them up."""
     net = net or PolysharkNet()
     policy = policy or PolicyHead()
     opt = make_optimizer(net, policy, lr, weight_decay)
@@ -402,11 +476,16 @@ def run_training(
     cfg = dict(n_sims=n_sims, c_puct=c_puct, temperature=temperature, temp_turns=temp_turns,
                temp_frac=temp_frac, add_noise=add_noise, turn_limit=turn_limit,
                heuristic_scale=heuristic_scale, turn_cap_winner=turn_cap_winner,
-               winner_dead_zone=winner_dead_zone, gen0_search_scale=gen0_search_scale)
+               winner_dead_zone=winner_dead_zone, winner_tie_value=winner_tie_value,
+               gen0_search_scale=gen0_search_scale)
 
-    # Weights file that parallel workers read each network generation.
+    # Weights files the workers read: candidate (trained every gen) and, under gating,
+    # the incumbent (last promoted candidate — the self-play data generator).
     weights_path = (os.path.join(ckpt_dir, "_worker_weights.pt") if ckpt_dir
                     else os.path.join(tempfile.gettempdir(), f"polyshark_w_{os.getpid()}.pt"))
+    incumbent_path = weights_path.replace(".pt", "_incumbent.pt")
+    have_incumbent = False
+    anchor = None
 
     # metrics.csv (value/policy loss across generations) + a live handle.
     csv_file = writer = None
@@ -414,9 +493,10 @@ def run_training(
         os.makedirs(ckpt_dir, exist_ok=True)
         csv_file = open(os.path.join(ckpt_dir, "metrics.csv"), "w", newline="")
         writer = csv.writer(csv_file)
-        writer.writerow(["gen", "eval", "turn_cap", "mix_w", "value_loss",
-                         "val_value_loss", "val_sign_acc", "policy_loss", "buffer",
-                         "decisive", "selfplay_s", "train_s", "total_s"])
+        writer.writerow(["gen", "eval", "turn_cap", "mix_w", "gate_score",
+                         "promoted", "value_loss", "val_value_loss", "val_sign_acc",
+                         "policy_loss", "buffer", "decisive", "selfplay_s", "train_s",
+                         "total_s"])
 
     pool = None
     if num_workers > 1:
@@ -432,11 +512,22 @@ def run_training(
             sp_t0 = time.time()
             if not use_heuristic:
                 torch.save({"net": net.state_dict(), "policy": policy.state_dict()}, weights_path)
-            gen_weights = None if use_heuristic else weights_path
+            gate_this_gen = gating and have_incumbent and not use_heuristic
+            # Data generator: the incumbent under gating, else the candidate (or the
+            # gen-0 heuristic).
+            if use_heuristic:
+                gen_weights = None
+            elif gate_this_gen:
+                gen_weights = incumbent_path
+            else:
+                gen_weights = weights_path
             seeds = [base_seed + gen * games_per_gen + g for g in range(games_per_gen)]
-            # Held-out validation games: same evaluator/config, disjoint seed range, never
-            # enter the buffer — scored after training as the memorization meter.
-            val_seeds = [val_seed_base + gen * val_games + g for g in range(val_games)]
+            # Held-out games on a disjoint seed range, never buffered. Under gating these
+            # are the gate match (candidate vs incumbent, greedy) and double as the
+            # validation set; otherwise plain self-play val games.
+            n_held = gate_games if gate_this_gen else val_games
+            val_seeds = [val_seed_base + gen * max(gate_games, val_games) + g
+                         for g in range(n_held)]
 
             # Horizon curriculum: this generation's turn cap.
             cap = turn_cap_for_gen(gen, turn_limit, turn_cap_start, turn_cap_grow)
@@ -451,19 +542,38 @@ def run_training(
             for pg in opt.param_groups:
                 pg["lr"] = cur_lr
 
-            # Stream results as games finish (imap_unordered) so progress is visible
-            # during the long self-play phase; training vs val games are told apart by
-            # their disjoint seed ranges.
-            tasks = [(s, gen, gen_weights, cap) for s in seeds + val_seeds]
+            # Stream results as games finish (imap_unordered) so progress is visible.
+            # Task: (kind, seed, gen, cap, weights_a, weights_b, cand_seat).
+            tasks = [("sp", s, gen, cap, gen_weights, None, 0) for s in seeds]
+            if gate_this_gen:
+                tasks += [("gate", vs, gen, cap, weights_path, incumbent_path, i % 2)
+                          for i, vs in enumerate(val_seeds)]
+            else:
+                tasks += [("sp", vs, gen, cap, gen_weights, None, 0) for vs in val_seeds]
             if pool is not None:
                 result_iter = pool.imap_unordered(_worker_play, tasks)
             else:
-                ev = _build_evaluator(gen_weights, gen0_search_scale)
-                result_iter = (_play_one_game(ev, cfg, s, cap) for s, _, _, cap in tasks)
+                _evs = {}
+                def _ev_for(path):
+                    if path not in _evs:
+                        _evs[path] = _build_evaluator(path, gen0_search_scale)
+                    return _evs[path]
+                result_iter = (
+                    _play_gate_game(_ev_for(pa), _ev_for(pb), cfg, s, cp, seat)
+                    if kind == "gate" else _play_one_game(_ev_for(pa), cfg, s, cp)
+                    for kind, s, _, cp, pa, pb, seat in tasks)
 
             val_seed_set = set(val_seeds)
             val_samples, decisive = [], 0
+            gate_pts, n_gate = 0.0, 0
             for samples, st in result_iter:
+                if st.get("gate"):
+                    val_samples.extend(samples)          # gate games double as val set
+                    gate_pts += st["cand_pts"]; n_gate += 1
+                    log(f"  gate seed={st['seed']:<7} cand_pts={st['cand_pts']:.1f} "
+                        f"v=({st['v_finals'][0]:+.2f},{st['v_finals'][1]:+.2f}) "
+                        f"turns={st['turns']:<3} {st['time']:.1f}s")
+                    continue
                 is_val = st["seed"] in val_seed_set
                 if is_val:
                     val_samples.extend(samples)          # held out: never mixed, never buffered
@@ -479,6 +589,17 @@ def run_training(
                     f"turns={st['turns']:<3} samples={st['n_samples']:<4} {st['time']:.1f}s")
             selfplay_s = time.time() - sp_t0
 
+            # GATE: promote the candidate to data generator only if it beats the
+            # incumbent (AlphaGo-Zero evaluator). Decided before training so next gen's
+            # self-play uses the freshest promoted weights.
+            gate_score, promoted = float("nan"), 0
+            if gate_this_gen and n_gate:
+                gate_score = gate_pts / n_gate
+                if gate_score >= gate_threshold:
+                    torch.save({"net": net.state_dict(), "policy": policy.state_dict()},
+                               incumbent_path)
+                    promoted = 1
+
             # 2. TRAIN on random minibatches from the buffer. Steps are throttled to at
             # most ~2 epochs over the current buffer so a small buffer (short curriculum
             # games, early gens) isn't hammered 5-10x per gen — that reuse is how the
@@ -487,11 +608,20 @@ def run_training(
             net.train(); policy.train()
             tr_t0 = time.time()
             vlosses, plosses = [], []
+            use_anchor = anchor if 1 <= gen <= kl_anchor_gens else None
             for _ in range(steps):
                 mb = buffer.sample(minibatch)
                 if not mb:
                     break
-                vl, pl = train_step(net, policy, opt, mb, value_symmetry=value_symmetry)
+                if not any(getattr(s, "train_value", True) for s in mb):
+                    # Subsampling makes eligible samples a minority; with small batches/
+                    # buffers a draw can miss them entirely (nan value_loss for the gen
+                    # in the worst case). Guarantee one per batch.
+                    elig = [s for s in buffer.buf if getattr(s, "train_value", True)]
+                    if elig:
+                        mb[0] = random.choice(elig)
+                vl, pl = train_step(net, policy, opt, mb, value_symmetry=value_symmetry,
+                                    anchor=use_anchor, anchor_weight=kl_anchor_weight)
                 if not math.isnan(vl):        # batch may hold no value-eligible sample
                     vlosses.append(vl)
                 plosses.append(pl)
@@ -499,6 +629,16 @@ def run_training(
             vloss = float(np.mean(vlosses)) if vlosses else float("nan")
             ploss = float(np.mean(plosses)) if plosses else float("nan")
             val_vloss, val_sign_acc = value_metrics(net, val_samples)
+
+            # First trained candidate becomes the initial incumbent (gating) and the
+            # frozen KL anchor (early-run prior safety net).
+            if gen == 0:
+                if gating:
+                    torch.save({"net": net.state_dict(), "policy": policy.state_dict()},
+                               incumbent_path)
+                    have_incumbent = True
+                if kl_anchor_gens > 0:
+                    anchor = (copy.deepcopy(net).eval(), copy.deepcopy(policy).eval())
 
             # 3. CHECKPOINT.
             ckpt_path = None
@@ -509,13 +649,15 @@ def run_training(
 
             total_s = time.time() - gen_t0
             evname = "heuristic" if use_heuristic else "network"
+            gate_str = f"gate={gate_score:.2f}{'^' if promoted else ' '}" if gate_this_gen else "gate=--  "
             log(f"gen {gen:2d} | eval={evname:<9} cap={cap:<3} mix={mix_w:.2f} lr={cur_lr:.1e} "
-                f"buffer={len(buffer):<6} "
+                f"{gate_str} buffer={len(buffer):<6} "
                 f"decisive={decisive}/{games_per_gen} | value_loss={vloss:.4f} "
                 f"val={val_vloss:.4f} val_sign={val_sign_acc:.2f} policy_loss={ploss:.4f} | "
                 f"selfplay={selfplay_s:.0f}s train={train_s:.0f}s total={total_s:.0f}s")
             if writer:
-                writer.writerow([gen, evname, cap, f"{mix_w:.3f}", f"{vloss:.6f}",
+                writer.writerow([gen, evname, cap, f"{mix_w:.3f}", f"{gate_score:.3f}",
+                                 promoted, f"{vloss:.6f}",
                                  f"{val_vloss:.6f}", f"{val_sign_acc:.4f}",
                                  f"{ploss:.6f}", len(buffer), decisive,
                                  f"{selfplay_s:.2f}", f"{train_s:.2f}", f"{total_s:.2f}"])
@@ -524,7 +666,7 @@ def run_training(
             history.append({
                 "gen": gen, "eval": evname, "turn_cap": cap, "buffer": len(buffer),
                 "decisive": decisive, "value_loss": vloss, "val_value_loss": val_vloss,
-                "val_sign_acc": val_sign_acc,
+                "val_sign_acc": val_sign_acc, "gate_score": gate_score, "promoted": promoted,
                 "policy_loss": ploss, "selfplay_s": selfplay_s, "train_s": train_s,
                 "total_s": total_s, "ckpt": ckpt_path,
             })

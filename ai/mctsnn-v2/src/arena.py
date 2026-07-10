@@ -93,8 +93,9 @@ class MCTSStrategy(Strategy):
     greedy afterwards (self-play). Set `add_noise=True` for self-play root exploration."""
 
     def __init__(self, evaluator, n_sims=100, c_puct=1.5,
-                 temperature=1.0, temp_turns=6, add_noise=True):
-        self.mcts = MCTS(evaluator, c_puct=c_puct, add_noise=add_noise)
+                 temperature=1.0, temp_turns=6, add_noise=True, prune_targets=True):
+        self.mcts = MCTS(evaluator, c_puct=c_puct, add_noise=add_noise,
+                         prune_targets=prune_targets)
         self.n_sims = n_sims
         self.temperature = temperature
         self.temp_turns = temp_turns
@@ -177,14 +178,19 @@ def make_heuristic_terminal_value(scale=HEURISTIC_VALUE_SCALE):
     return terminal_value
 
 
-def make_winner_terminal_value(dead_zone=1.0):
+def make_winner_terminal_value(dead_zone=1.0, tie_value=0.0):
     """Turn-cap labeller that declares a WINNER: ±1 by the sign of the heuristic margin
-    (0 only inside the dead zone). The value head then estimates win probability — which
-    moves sharply with position between equal opponents — instead of an expected-margin
-    squash that is nearly flat within a turn. Crucially, mutual passing stops being
-    label-neutral: any activity edge at the cap banks a full ±1
+    (`tie_value` for both inside the dead zone). The value head then estimates win
+    probability — which moves sharply with position between equal opponents — instead of
+    an expected-margin squash that is nearly flat within a turn. Crucially, mutual
+    passing stops being label-neutral: any activity edge at the cap banks a full ±1
     (docs/endturn_collapse.md, actionable #1). `dead_zone` is in heuristic points
-    (a village capture is ~4; ~1.0 means tech/unit dust doesn't decide a game)."""
+    (a village capture is ~4; ~1.0 means tech/unit dust doesn't decide a game).
+
+    `tie_value` < 0 is TIE CONTEMPT (chess-engine tradition): a dead-zone game labels
+    slightly negative for BOTH players, so even a perfectly mirrored passive game is
+    strictly losing — the mutual-passing fixed point stops being label-neutral entirely.
+    Keep it small (~-0.2): it also taxes legitimately tied active games."""
     def terminal_value(state, player):
         opp = 1 - player
         diff = polyshark.heuristic_score(state, player) - polyshark.heuristic_score(state, opp)
@@ -192,7 +198,7 @@ def make_winner_terminal_value(dead_zone=1.0):
             return 1.0
         if diff < -dead_zone:
             return -1.0
-        return 0.0
+        return tie_value
     return terminal_value
 
 

@@ -118,6 +118,19 @@ type,unit` = `to`s matching `(type, from)`.
 
 ## Training targets
 
+Three target hygiene rules (all born from the end-turn collapse — see
+[endturn_collapse.md](endturn_collapse.md)):
+
+- **Forced end_turn states are never sampled** — the arena plays them agent-free.
+- **Single-choice stages are skipped in the CE** — the mask already decides; training on
+  them is pure marginal drift.
+- **Targets are noise-pruned (KataGo-style)** — before recording, each non-chosen,
+  non-best child's visits are reduced by its exploration-forced share (~sqrt(2·P·N)) and
+  zeroed if nothing genuine remains. The Dirichlet/U-term visit floor otherwise teaches
+  every legal action (notably end_turn) an unconditional minimum probability.
+
+### Original spec
+
 - Each stage: cross-entropy between its softmax and the **normalized MCTS visit counts**
   of that branch level.
 - Factored policy loss = sum of the fired stages' cross-entropies (only stages the chosen

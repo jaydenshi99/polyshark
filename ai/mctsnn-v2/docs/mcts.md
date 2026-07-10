@@ -196,7 +196,14 @@ is a ~4× per-state win), then expand + back up the whole wave and undo virtual 
   stage's legal count (larger for the 8-way `type`, smaller for the up-to-121 `tile`
   stage — AZ scales α inversely with branching). Self-play only.
 - **Temperature** on the final visit counts when choosing the played action: τ=1 for the
-  first few plies (sample ∝ N), then τ→0 (argmax N).
+  opening fraction of the game (`temp_frac`, ~20% of the turn cap — outcomes must reflect
+  intent, not sampling luck), then τ→0 (argmax N).
+- **Policy target pruning** (`prune_targets`, default on): noise/U-term exploration
+  guarantees every legal child a visit floor; recorded targets subtract each non-chosen,
+  non-best child's exploration-forced share (~sqrt(2·P·N)) so the policy head learns the
+  search's genuine preference, not the exploration schedule. The search itself keeps its
+  noise — only the recorded target is cleaned. (KataGo's forced-playouts/target-pruning,
+  adapted to the staged tree; anti-end_turn-marginal — see endturn_collapse.md.)
 
 ## Playing a turn (self-play driver)
 
