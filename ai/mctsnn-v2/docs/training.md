@@ -180,6 +180,11 @@ for the failure modes these answer):
   and never spuriously promote.
 - **Tie contempt** (`winner_tie_value` ≈ −0.2): dead-zone games label slightly negative
   for both players — mutual passivity is strictly losing even in a perfect mirror.
+- **Graded winner labels** (`winner_margin_weight` ≈ 0.2): labels = ±(1−β) + β·tanh(m/4)
+  instead of pure ±1, so a losing player keeps margin gradient — pure ±1 makes loser
+  actions label-irrelevant and breeds resignation-by-passing in lost positions (see the
+  conditional-resignation entry in endturn_collapse.md). Gate scoring stays discrete
+  win/tie/loss — margins don't buy promotions.
 - **Early KL anchor** (`kl_anchor_gens`, `kl_anchor_weight`): for gens 1..N the type head
   is pulled toward the frozen post-gen0 policy, so priors can't drift off the bootstrap
   distribution before the value head can hold them up.

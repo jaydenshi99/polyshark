@@ -44,6 +44,39 @@ map-fingerprint memorization structurally dead); **LR cosine decay** (`lr_final`
 **exploration term nerfed to tiebreaker** (0.005/tile). Curriculum guidance: hold the cap
 at/below ~12 until decisive play exists; watch P(end)'s 0.25–0.30 band in the gen sweep.
 
+**2026-07-10 — CONDITIONAL RESIGNATION discovered and fixed** (third distinct disease,
+found at `gated_cap10` gen074 — the run's best, 23-times-promoted model — by *watching
+replays*; every automated instrument missed it). The bot passes in LOSING positions
+while playing hyperactively in winning ones. Measured over 579 voluntary decisions from
+8 self-play games: end-turn rate **30.1%** when the net believes it is losing (V<-0.2)
+vs **2.2%** when winning (V>0.2) — a 14x ratio, z=9.2; winners average 3.9 actions/turn,
+losers 2.4.
+
+**Mechanism — the temporal-slope confound**: under pure ±1 winner labels, a losing
+player's actions are label-irrelevant (the label is -1 no matter what they do), so the
+value head learns the within-game slope of V instead: positions later in a losing game
+are more surely lost, every action advances the clock, hence dV(any action) < 0 when
+behind and > 0 when ahead. Q(end)=V(s) then tops everything in lost positions. The
+policy prior is also conditional: P(end) ~0.05 at neutral states but 0.35-0.51 at
+losing states.
+
+**Why the guards were blind**: the gate measures relative strength within a lineage
+that *shares the flaw* — both sides resign when losing, so resignation never costs a
+gate point (a lost game counts the same resigned or fought). Fresh-state probes miss it
+because it is conditional on being behind. Moral: guards protect the optimization
+process; they cannot protect the objective specification. All three diseases (passivity
+collapse, corner meta, resignation) were the optimizer being RIGHT about a reward that
+was WRONG.
+
+**Fix — graded winner labels** (`winner_margin_weight` ~0.2): label =
+±(1-β) + β·tanh(margin/4) (ties: tie_value + grade). Closing the margin always improves
+your label, from either side — losers regain gradient, winners keep pressing. Sign
+semantics preserved (|winner| > 0.8), all labels inside (-1,1) (the arctan value head
+cannot exceed it), capital captures stay exactly ±1 (the win condition keeps its
+premium). Gate scoring deliberately stays discrete W/T/L — margins must not buy
+promotions. Regression metric for the next run: end-rate-by-V-bin at gen ~30 (losing-bin
+rate should collapse from 30% toward ~2-4%).
+
 **Run analysed:** `data/checkpoints/decaying_to_end_turn` (20 gens, config in its `run_config.json`).
 
 Later generations converge on playing `end_turn` immediately every turn (gen19 greedy

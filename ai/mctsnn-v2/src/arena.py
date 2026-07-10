@@ -178,7 +178,7 @@ def make_heuristic_terminal_value(scale=HEURISTIC_VALUE_SCALE):
     return terminal_value
 
 
-def make_winner_terminal_value(dead_zone=1.0, tie_value=0.0):
+def make_winner_terminal_value(dead_zone=1.0, tie_value=0.0, margin_weight=0.0):
     """Turn-cap labeller that declares a WINNER: ±1 by the sign of the heuristic margin
     (`tie_value` for both inside the dead zone). The value head then estimates win
     probability — which moves sharply with position between equal opponents — instead of
@@ -190,15 +190,26 @@ def make_winner_terminal_value(dead_zone=1.0, tie_value=0.0):
     `tie_value` < 0 is TIE CONTEMPT (chess-engine tradition): a dead-zone game labels
     slightly negative for BOTH players, so even a perfectly mirrored passive game is
     strictly losing — the mutual-passing fixed point stops being label-neutral entirely.
-    Keep it small (~-0.2): it also taxes legitimately tied active games."""
+    Keep it small (~-0.2): it also taxes legitimately tied active games.
+
+    `margin_weight` (β, ~0.2) GRADES the labels by margin size so LOSERS keep gradient:
+    winner = +(1-β) + β·tanh(m/4), loser = -(1-β) + β·tanh(m/4), tie = tie_value +
+    β·tanh(m/4). Pure ±1 makes a losing player's actions label-irrelevant — the value
+    head then learns "acting while behind is pointless" and the bot RESIGNS-BY-PASSING
+    in lost positions (observed at gen074 of gated_cap10). Grading means closing the
+    margin always improves your label, from either side. Sign semantics preserved
+    (winner > +0.6, loser < -0.6, tie near tie_value); everything stays inside (-1, 1)
+    since the value head's arctan cannot exceed it. Capital captures remain exactly ±1
+    (Arena._outcomes) — the true win condition keeps its premium over cap wins."""
     def terminal_value(state, player):
         opp = 1 - player
         diff = polyshark.heuristic_score(state, player) - polyshark.heuristic_score(state, opp)
+        grade = margin_weight * math.tanh(diff / 4.0)
         if diff > dead_zone:
-            return 1.0
+            return (1.0 - margin_weight) + grade
         if diff < -dead_zone:
-            return -1.0
-        return tie_value
+            return -(1.0 - margin_weight) + grade
+        return tie_value + grade
     return terminal_value
 
 

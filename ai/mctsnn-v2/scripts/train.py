@@ -49,12 +49,22 @@ TURN_CAP_GROW  = 0.10        # cap growth per gen (0.10 -> +1 every 10 gens)
 WINNER_DEAD_ZONE = 0.25      # margin (heuristic pts) below which a capped game is a tie;
                              # weights in bindings.cpp heuristic_score set the tiers
 WINNER_TIE_VALUE = -0.15     # tie contempt: ties label negative for BOTH players
+WINNER_MARGIN_WEIGHT = 0.2   # grade labels by margin: closing the gap always improves
+                             # your label, even when losing — kills resign-by-passing
 
 # --- gating (candidate must beat incumbent to generate data) ---
 GATING         = True
 GATE_GAMES     = 16          # paired: each seed played twice, seats swapped (keep even);
                              # map luck + seat advantage cancel per pair. Doubles as val set
 GATE_THRESHOLD = 0.55        # promote at >= this score (win=1, tie=0.5)
+GATE_MARGIN_WEIGHT = 0.03    # bounded margin bonus per gate game (+w*(v_cand - v_opp)):
+                             # fighting-from-behind earns selection pressure; capped well
+                             # below one win so margins can't buy promotions
+
+# --- absolute yardstick (relative gates are blind to population-shared flaws) ---
+REF_EVERY = 5                # every N gens: candidate vs the FROZEN heuristic agent
+REF_SEEDS = 5                # seeds per occurrence, each played from both seats (2x games);
+                             # ref_score (win rate) + ref_margin (avg label diff) in csv
 
 # --- anti-collapse / anti-overfit (docs/endturn_collapse.md) ---
 KL_ANCHOR_GENS         = 5     # gens 1..N: hold type head near the post-gen0 policy
@@ -95,7 +105,9 @@ def main():
         n_sims=N_SIMS, c_puct=C_PUCT, temp_frac=TEMP_FRAC,
         turn_limit=TURN_LIMIT, turn_cap_start=TURN_CAP_START, turn_cap_grow=TURN_CAP_GROW,
         winner_dead_zone=WINNER_DEAD_ZONE, winner_tie_value=WINNER_TIE_VALUE,
+        winner_margin_weight=WINNER_MARGIN_WEIGHT,
         gating=GATING, gate_games=GATE_GAMES, gate_threshold=GATE_THRESHOLD,
+        gate_margin_weight=GATE_MARGIN_WEIGHT, ref_every=REF_EVERY, ref_games=REF_SEEDS,
         kl_anchor_gens=KL_ANCHOR_GENS, search_value_weight=SEARCH_VALUE_WEIGHT,
         value_symmetry=VALUE_SYMMETRY, value_samples_per_game=VALUE_SAMPLES_PER_GAME,
         val_games=VAL_GAMES,

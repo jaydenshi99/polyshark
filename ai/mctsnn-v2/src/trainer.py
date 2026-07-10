@@ -314,32 +314,44 @@ def _make_terminal_value(cfg):
     see docs/endturn_collapse.md actionable #1) or the legacy tanh margin."""
     if cfg.get("turn_cap_winner", True):
         return make_winner_terminal_value(cfg.get("winner_dead_zone", 1.0),
-                                          cfg.get("winner_tie_value", 0.0))
+                                          cfg.get("winner_tie_value", 0.0),
+                                          cfg.get("winner_margin_weight", 0.0))
     return make_heuristic_terminal_value(cfg["heuristic_scale"])
 
 
-def _play_gate_game(ev_cand, ev_inc, cfg, seed, turn_cap, cand_seat):
-    """One gating-match game: candidate vs incumbent, greedy and noise-free (honest
-    strength, AlphaGo-Zero-style evaluator). Returns (samples, stats) — the samples
-    double as the held-out validation set, so gating costs no extra games. `cand_pts`:
-    1 win / 0.5 tie / 0 loss for the candidate, by capital capture or margin sign."""
+def _play_gate_game(ev_cand, ev_opp, cfg, seed, turn_cap, cand_seat,
+                    kind="gate", collect=True):
+    """One evaluation game: candidate vs opponent, greedy and noise-free.
+
+    kind="gate": opponent = incumbent; samples double as the held-out validation set.
+      cand_pts = W/T/L (1/0.5/0) + gate_margin_weight·(v_cand − v_opp): wins remain the
+      currency, but fighting-from-behind earns a bounded margin bonus so fight-back
+      variation has selection pressure (pure W/T/L pays it nothing — see the
+      conditional-resignation entry in endturn_collapse.md).
+    kind="ref": opponent = the frozen heuristic — the ABSOLUTE yardstick. Relative
+      measures (gates) are blind to population-shared flaws; the reference never drifts,
+      so win rate AND margin vs it expose them. Raw W/T/L points (no bonus), no samples.
+    """
     def mk(name, ev):
         return Agent(name, MCTSStrategy(ev, n_sims=cfg["n_sims"], c_puct=cfg["c_puct"],
                                         temperature=0.0, temp_turns=0, add_noise=False))
-    cand, inc = mk("cand", ev_cand), mk("inc", ev_inc)
-    order = [cand, inc] if cand_seat == 0 else [inc, cand]
+    cand, opp = mk("cand", ev_cand), mk("opp", ev_opp)
+    order = [cand, opp] if cand_seat == 0 else [opp, cand]
     t0 = time.time()
     res = Arena(order, terminal_value_fn=_make_terminal_value(cfg)).play_game(
-        seed=seed, max_turns=turn_cap, collect=True)
+        seed=seed, max_turns=turn_cap, collect=collect)
     v0, v1 = res.v_finals
+    v_cand, v_opp = (v0, v1) if cand_seat == 0 else (v1, v0)
     if res.winner >= 0:
         cand_pts = 1.0 if res.winner == cand_seat else 0.0
-    elif v0 == v1:                       # dead-zone tie (contempt labels are equal)
-        cand_pts = 0.5
+    elif max(v0, v1) < 0.5:              # dead-zone tie: nobody earned a winner label
+        cand_pts = 0.5                   # (graded ties differ slightly; don't score dust)
     else:
-        cand_pts = 1.0 if (v0 > v1) == (cand_seat == 0) else 0.0
-    stats = {"seed": seed, "winner": res.winner, "turns": res.turns, "gate": True,
-             "cand_pts": cand_pts, "v_finals": res.v_finals,
+        cand_pts = 1.0 if v_cand > v_opp else 0.0
+    if kind == "gate":
+        cand_pts += cfg.get("gate_margin_weight", 0.0) * (v_cand - v_opp)
+    stats = {"seed": seed, "winner": res.winner, "turns": res.turns, "kind": kind,
+             "cand_pts": cand_pts, "v_diff": v_cand - v_opp, "v_finals": res.v_finals,
              "n_samples": len(res.samples), "time": time.time() - t0}
     return res.samples, stats
 
@@ -400,9 +412,10 @@ def _worker_play(task):
     if _WORKER["gen"] != gen:                     # (re)load this gen's weights once per worker
         _WORKER["evs"] = {}
         _WORKER["gen"] = gen
-    if kind == "gate":
+    if kind in ("gate", "ref"):
         return _play_gate_game(_worker_ev(path_a), _worker_ev(path_b),
-                               _WORKER["cfg"], seed, turn_cap, cand_seat)
+                               _WORKER["cfg"], seed, turn_cap, cand_seat,
+                               kind=kind, collect=(kind == "gate"))
     return _play_one_game(_worker_ev(path_a), _WORKER["cfg"], seed, turn_cap)
 
 
@@ -416,8 +429,9 @@ def run_training(
     turn_cap_winner=True, winner_dead_zone=1.0, gen0_search_scale=1.0,
     turn_cap_start=None, turn_cap_grow=1.0,
     search_value_weight=0.0, search_value_anneal_gens=10, lr_final=None,
-    value_symmetry=False, winner_tie_value=0.0,
-    gating=False, gate_games=15, gate_threshold=0.55,
+    value_symmetry=False, winner_tie_value=0.0, winner_margin_weight=0.0,
+    gating=False, gate_games=15, gate_threshold=0.55, gate_margin_weight=0.0,
+    ref_every=0, ref_games=5, ref_seed_base=2_000_000,
     kl_anchor_gens=0, kl_anchor_weight=0.3,
     base_seed=0, bootstrap_gen0=True, heuristic_scale=HEURISTIC_VALUE_SCALE,
     num_workers=1, ckpt_dir=None, net=None, policy=None, log=print,
@@ -481,6 +495,8 @@ def run_training(
                temp_frac=temp_frac, add_noise=add_noise, turn_limit=turn_limit,
                heuristic_scale=heuristic_scale, turn_cap_winner=turn_cap_winner,
                winner_dead_zone=winner_dead_zone, winner_tie_value=winner_tie_value,
+               winner_margin_weight=winner_margin_weight,
+               gate_margin_weight=gate_margin_weight,
                gen0_search_scale=gen0_search_scale)
 
     # Weights files the workers read: candidate (trained every gen) and, under gating,
@@ -498,9 +514,9 @@ def run_training(
         csv_file = open(os.path.join(ckpt_dir, "metrics.csv"), "w", newline="")
         writer = csv.writer(csv_file)
         writer.writerow(["gen", "eval", "turn_cap", "mix_w", "gate_score",
-                         "promoted", "value_loss", "val_value_loss", "val_sign_acc",
-                         "policy_loss", "buffer", "decisive", "selfplay_s", "train_s",
-                         "total_s"])
+                         "promoted", "ref_score", "ref_margin", "value_loss",
+                         "val_value_loss", "val_sign_acc", "policy_loss", "buffer",
+                         "decisive", "selfplay_s", "train_s", "total_s"])
 
     pool = None
     if num_workers > 1:
@@ -560,6 +576,15 @@ def run_training(
                               ("gate", vs, gen, cap, weights_path, incumbent_path, 1)]
             else:
                 tasks += [("sp", vs, gen, cap, gen_weights, None, 0) for vs in val_seeds]
+            # Absolute yardstick: candidate vs the frozen heuristic (path None), paired
+            # seats, every ref_every gens. Relative gates can't see population-shared
+            # flaws; the reference never drifts.
+            ref_this_gen = (ref_every > 0 and not use_heuristic and gen % ref_every == 0)
+            if ref_this_gen:
+                for i in range(ref_games):
+                    rs = ref_seed_base + gen * ref_games + i
+                    tasks += [("ref", rs, gen, cap, weights_path, None, 0),
+                              ("ref", rs, gen, cap, weights_path, None, 1)]
             if pool is not None:
                 result_iter = pool.imap_unordered(_worker_play, tasks)
             else:
@@ -569,20 +594,27 @@ def run_training(
                         _evs[path] = _build_evaluator(path, gen0_search_scale)
                     return _evs[path]
                 result_iter = (
-                    _play_gate_game(_ev_for(pa), _ev_for(pb), cfg, s, cp, seat)
-                    if kind == "gate" else _play_one_game(_ev_for(pa), cfg, s, cp)
+                    _play_gate_game(_ev_for(pa), _ev_for(pb), cfg, s, cp, seat,
+                                    kind=kind, collect=(kind == "gate"))
+                    if kind in ("gate", "ref") else _play_one_game(_ev_for(pa), cfg, s, cp)
                     for kind, s, _, cp, pa, pb, seat in tasks)
 
             val_seed_set = set(val_seeds)
             val_samples, decisive = [], 0
             gate_pts, n_gate = 0.0, 0
+            ref_pts, ref_diffs = [], []
             for samples, st in result_iter:
-                if st.get("gate"):
+                if st.get("kind") == "gate":
                     val_samples.extend(samples)          # gate games double as val set
                     gate_pts += st["cand_pts"]; n_gate += 1
-                    log(f"  gate seed={st['seed']:<7} cand_pts={st['cand_pts']:.1f} "
+                    log(f"  gate seed={st['seed']:<7} cand_pts={st['cand_pts']:.2f} "
                         f"v=({st['v_finals'][0]:+.2f},{st['v_finals'][1]:+.2f}) "
                         f"turns={st['turns']:<3} {st['time']:.1f}s")
+                    continue
+                if st.get("kind") == "ref":
+                    ref_pts.append(st["cand_pts"]); ref_diffs.append(st["v_diff"])
+                    log(f"  ref  seed={st['seed']:<7} cand_pts={st['cand_pts']:.1f} "
+                        f"vdiff={st['v_diff']:+.2f} turns={st['turns']:<3} {st['time']:.1f}s")
                     continue
                 is_val = st["seed"] in val_seed_set
                 if is_val:
@@ -602,6 +634,8 @@ def run_training(
             # GATE: promote the candidate to data generator only if it beats the
             # incumbent (AlphaGo-Zero evaluator). Decided before training so next gen's
             # self-play uses the freshest promoted weights.
+            ref_score = float(np.mean(ref_pts)) if ref_pts else float("nan")
+            ref_margin = float(np.mean(ref_diffs)) if ref_diffs else float("nan")
             gate_score, promoted = float("nan"), 0
             if gate_this_gen and n_gate:
                 gate_score = gate_pts / n_gate
@@ -660,6 +694,8 @@ def run_training(
             total_s = time.time() - gen_t0
             evname = "heuristic" if use_heuristic else "network"
             gate_str = f"gate={gate_score:.2f}{'^' if promoted else ' '}" if gate_this_gen else "gate=--  "
+            if ref_pts:
+                gate_str += f" ref={ref_score:.2f}/{ref_margin:+.2f}"
             log(f"gen {gen:2d} | eval={evname:<9} cap={cap:<3} mix={mix_w:.2f} lr={cur_lr:.1e} "
                 f"{gate_str} buffer={len(buffer):<6} "
                 f"decisive={decisive}/{games_per_gen} | value_loss={vloss:.4f} "
@@ -667,7 +703,8 @@ def run_training(
                 f"selfplay={selfplay_s:.0f}s train={train_s:.0f}s total={total_s:.0f}s")
             if writer:
                 writer.writerow([gen, evname, cap, f"{mix_w:.3f}", f"{gate_score:.3f}",
-                                 promoted, f"{vloss:.6f}",
+                                 promoted, f"{ref_score:.3f}", f"{ref_margin:.3f}",
+                                 f"{vloss:.6f}",
                                  f"{val_vloss:.6f}", f"{val_sign_acc:.4f}",
                                  f"{ploss:.6f}", len(buffer), decisive,
                                  f"{selfplay_s:.2f}", f"{train_s:.2f}", f"{total_s:.2f}"])
@@ -677,6 +714,7 @@ def run_training(
                 "gen": gen, "eval": evname, "turn_cap": cap, "buffer": len(buffer),
                 "decisive": decisive, "value_loss": vloss, "val_value_loss": val_vloss,
                 "val_sign_acc": val_sign_acc, "gate_score": gate_score, "promoted": promoted,
+                "ref_score": ref_score, "ref_margin": ref_margin,
                 "policy_loss": ploss, "selfplay_s": selfplay_s, "train_s": train_s,
                 "total_s": total_s, "ckpt": ckpt_path,
             })
