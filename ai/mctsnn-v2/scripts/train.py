@@ -52,7 +52,8 @@ WINNER_TIE_VALUE = -0.15     # tie contempt: ties label negative for BOTH player
 
 # --- gating (candidate must beat incumbent to generate data) ---
 GATING         = True
-GATE_GAMES     = 16          # greedy candidate-vs-incumbent games; double as the val set
+GATE_GAMES     = 16          # paired: each seed played twice, seats swapped (keep even);
+                             # map luck + seat advantage cancel per pair. Doubles as val set
 GATE_THRESHOLD = 0.55        # promote at >= this score (win=1, tie=0.5)
 
 # --- anti-collapse / anti-overfit (docs/endturn_collapse.md) ---

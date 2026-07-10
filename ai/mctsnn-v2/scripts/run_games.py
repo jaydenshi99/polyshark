@@ -98,7 +98,7 @@ AGENT_0 = {
     "name": "agent 0",
     "type": "mcts",
     "evaluator": "network",
-    "checkpoint": "ai/mctsnn-v2/data/checkpoints/run_20260709_170011_mix03/gen091.pt",
+    "checkpoint": "ai/mctsnn-v2/data/checkpoints/run_20260710_191855_gated_cap10/gen009.pt",
     "n_sims": 400,
     "c_puct": 1.5,
     "add_noise": False,
@@ -110,7 +110,7 @@ AGENT_1 = {
     "name": "agent 1",
     "type": "mcts",
     "evaluator": "network",
-    "checkpoint": "ai/mctsnn-v2/data/checkpoints/run_20260709_170011_mix03/gen091.pt",
+    "checkpoint": "ai/mctsnn-v2/data/checkpoints/run_20260710_191855_gated_cap10/gen009.pt",
     "n_sims": 400,
     "c_puct": 1.5,
     "add_noise": False,
@@ -125,7 +125,7 @@ AGENT_1 = {
 # }
 
 N_GAMES     = 1          # how many games to play
-TURN_LIMIT  = 15          # max turns before a game is called (turn cap -> heuristic outcome)
+TURN_LIMIT  = 5          # max turns before a game is called (turn cap -> heuristic outcome)
 BASE_SEED   = 696767      # game i uses map seed BASE_SEED + i
 SWAP_SIDES  = True       # alternate who is player 0 across games (fairness)
 MAX_STEPS   = 4000       # hard safety cap on actions per game

@@ -174,7 +174,10 @@ for the failure modes these answer):
 
 - **Gating** (`gating`, `gate_games`, `gate_threshold`): AlphaGo-Zero evaluator — the
   incumbent generates self-play data; the candidate must beat it to be promoted. Stops
-  degeneration from compounding across generations.
+  degeneration from compounding across generations. Gate games use a paired (duplicate)
+  design — each seed played twice with seats swapped — so map luck and first-mover
+  advantage cancel within the pair; equal nets score ~exactly 0.5 (greedy determinism)
+  and never spuriously promote.
 - **Tie contempt** (`winner_tie_value` ≈ −0.2): dead-zone games label slightly negative
   for both players — mutual passivity is strictly losing even in a perfect mirror.
 - **Early KL anchor** (`kl_anchor_gens`, `kl_anchor_weight`): for gens 1..N the type head

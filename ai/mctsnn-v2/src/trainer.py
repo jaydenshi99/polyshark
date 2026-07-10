@@ -135,7 +135,11 @@ def _policy_loss_for_sample(policy, s, cache, b, anchor=None):
                 amask = torch.tensor([fa.type_mask()], dtype=torch.bool)
                 aprobs = torch.softmax(
                     apolicy.type_logits(acache.core[b:b + 1], amask), dim=-1)
-            loss = loss + aw * -(aprobs[0] * logq[0]).sum()
+            # Zero the -inf logq at masked slots before the product: anchor prob is
+            # exactly 0 there, but 0 * -inf = nan would poison the REPORTED loss
+            # (gradients were already correct — d/dx of 0*x is 0).
+            aq = logq[0].masked_fill(~amask[0], 0.0)
+            loss = loss + aw * -(aprobs[0] * aq).sum()
     return loss, n
 
 
@@ -546,8 +550,14 @@ def run_training(
             # Task: (kind, seed, gen, cap, weights_a, weights_b, cand_seat).
             tasks = [("sp", s, gen, cap, gen_weights, None, 0) for s in seeds]
             if gate_this_gen:
-                tasks += [("gate", vs, gen, cap, weights_path, incumbent_path, i % 2)
-                          for i, vs in enumerate(val_seeds)]
+                # Paired (duplicate) design: each gate seed is played TWICE with seats
+                # swapped, so map luck and first-mover advantage cancel within the pair.
+                # Equal nets then score ~exactly 0.5 (greedy play is deterministic) and
+                # any deviation is genuine skill — far more discriminating per game than
+                # unpaired seat alternation. gate_games should be even.
+                for vs in val_seeds[:gate_games // 2]:
+                    tasks += [("gate", vs, gen, cap, weights_path, incumbent_path, 0),
+                              ("gate", vs, gen, cap, weights_path, incumbent_path, 1)]
             else:
                 tasks += [("sp", vs, gen, cap, gen_weights, None, 0) for vs in val_seeds]
             if pool is not None:
