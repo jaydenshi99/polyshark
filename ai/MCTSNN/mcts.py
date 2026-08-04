@@ -3,10 +3,8 @@ import numpy as np
 import torch
 
 from encoder import encode
-from model import ACTION_SIZE
 from action_codec import legal_action_indices, index_to_action
-
-END_TURN_ACTION = ACTION_SIZE - 1  # 7994
+from spec import AISpec, DEFAULT_SPEC
 
 C_PUCT = 0.5
 DIRICHLET_ALPHA = 0.3
@@ -47,19 +45,18 @@ class Node:
 
 
 class MCTS:
-    def __init__(self, model, device: str = 'cpu', heuristic_fn=None, heuristic_weight: float = 0.0):
-        self.model          = model
-        self.device         = device
-        self.heuristic_fn   = heuristic_fn
+    def __init__(self, model, device: str = 'cpu',
+                 heuristic_fn=None, heuristic_weight: float = 0.0,
+                 spec: AISpec = DEFAULT_SPEC):
+        self.model            = model
+        self.device           = device
+        self.heuristic_fn     = heuristic_fn
         self.heuristic_weight = heuristic_weight
+        self.spec             = spec
+        self.end_turn_action  = spec.end_turn_idx
         self.model.eval()
 
     def search(self, root_state, n_simulations: int = 800, add_noise: bool = False) -> Node:
-        """
-        Run MCTS in waves of BATCH_SIZE simulations. Within each wave all leaves
-        are evaluated in a single NN forward pass, then the tree is updated before
-        the next wave begins — so the tree grows progressively as in sequential MCTS.
-        """
         root = Node()
         self._expand_nodes([root_state], [root])
 
@@ -81,22 +78,21 @@ class MCTS:
 
             for path, v in zip(paths, values):
                 for parent, a in reversed(path):
-                    if a == END_TURN_ACTION:
+                    if a == self.end_turn_action:
                         v = -v
                     parent.w[a] += VIRTUAL_LOSS + v
-                    # n[a] already incremented during _select via virtual loss
 
             done += wave
 
         return root
 
     def get_policy(self, root: Node, temperature: float = 1.0) -> np.ndarray:
-        visits = np.zeros(ACTION_SIZE, dtype=np.float32)
+        visits = np.zeros(self.spec.action_size, dtype=np.float32)
         for a, count in root.n.items():
             visits[a] = count
 
         if temperature == 0:
-            probs = np.zeros(ACTION_SIZE, dtype=np.float32)
+            probs = np.zeros(self.spec.action_size, dtype=np.float32)
             probs[int(np.argmax(visits))] = 1.0
             return probs
 
@@ -107,7 +103,6 @@ class MCTS:
     # ------------------------------------------------------------------
 
     def _select(self, root: Node, root_state) -> tuple:
-        """Walk tree to a leaf using PUCT, applying virtual loss on each edge."""
         node = root
         state = root_state
         path: list[tuple[Node, int]] = []
@@ -118,19 +113,11 @@ class MCTS:
             node.n[a] += 1
             path.append((node, a))
             node = node.children[a]
-            state = state.apply_action(index_to_action(a, state))
+            state = state.apply_action(index_to_action(a, state, self.spec))
 
         return path, node, state
 
     def _evaluate_leaves(self, states: list, nodes: list[Node]) -> list[float]:
-        """
-        Batch-evaluate a list of leaves. Handles four cases:
-          - terminal state       → exact outcome
-          - EndTurn cached       → reuse cached value
-          - EndTurn uncached     → value-only NN, cache result
-          - unexpanded normal    → full NN (policy + value), expand node
-          - already expanded     → value-only NN (another sim in wave expanded it first)
-        """
         values = [None] * len(states)
         expand_idx: list[int] = []
         value_only_idx: list[int] = []
@@ -166,7 +153,6 @@ class MCTS:
         return (1.0 - self.heuristic_weight) * nn_val + self.heuristic_weight * h
 
     def _expand_nodes(self, states: list, nodes: list[Node]) -> list[float]:
-        """Batch NN call: populate priors, return value estimates."""
         spatial_t, global_t, legals, mask = self._encode_batch(states)
         with torch.no_grad():
             policies, vals = self.model(spatial_t, global_t, mask)
@@ -178,7 +164,6 @@ class MCTS:
         return [self._blend(float(vals_np[i]), states[i]) for i in range(len(states))]
 
     def _value_only(self, states: list) -> list[float]:
-        """Batch NN call: value head only, no expansion."""
         spatial_t, global_t, _, _ = self._encode_batch(states)
         with torch.no_grad():
             _, vals = self.model(spatial_t, global_t)
@@ -187,16 +172,16 @@ class MCTS:
     def _encode_batch(self, states: list):
         spatials, globals_, legals = [], [], []
         for state in states:
-            spatial, global_vec = encode(state)
+            spatial, global_vec = encode(state, self.spec)
             spatials.append(spatial)
             globals_.append(global_vec)
-            legals.append(legal_action_indices(state))
+            legals.append(legal_action_indices(state, self.spec))
 
         spatial_t = torch.tensor(np.stack(spatials)).to(self.device)
         global_t  = torch.tensor(np.stack(globals_)).to(self.device)
 
         B = len(states)
-        mask = torch.zeros(B, ACTION_SIZE, dtype=torch.bool, device=self.device)
+        mask = torch.zeros(B, self.spec.action_size, dtype=torch.bool, device=self.device)
         for i, legal in enumerate(legals):
             mask[i, legal] = True
 

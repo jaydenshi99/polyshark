@@ -4,6 +4,7 @@
 #include "game_state.h"
 #include "unit_def.h"
 #include "mapgen.h"
+#include "settings.h"
 
 namespace py = pybind11;
 
@@ -31,19 +32,34 @@ PYBIND11_MODULE(polyshark, m) {
         .value("Fruit",       ResourceType::Fruit)
         .value("Crop",        ResourceType::Crop)
         .value("Animal",      ResourceType::Animal)
-        .value("Metal",       ResourceType::Metal);
+        .value("Metal",       ResourceType::Metal)
+        .value("Count",       ResourceType::Count);
 
     py::enum_<UnitType>(m, "UnitType")
         .value("No_Unit",  UnitType::None)
         .value("Warrior",  UnitType::Warrior)
         .value("Archer",   UnitType::Archer)
-        .value("Rider",    UnitType::Rider);
+        .value("Rider",    UnitType::Rider)
+        .value("Defender", UnitType::Defender)
+        .value("Count",    UnitType::Count);
 
     py::enum_<BuildingType>(m, "BuildingType")
         .value("No_Building", BuildingType::None)
         .value("Mine",        BuildingType::Mine)
         .value("Farm",        BuildingType::Farm)
-        .value("Road",        BuildingType::Road);
+        .value("Road",        BuildingType::Road)
+        .value("Count",       BuildingType::Count);
+
+    py::enum_<CityUpgradeType>(m, "CityUpgradeType")
+        .value("L1_WORKSHOP",          CityUpgradeType::L1_WORKSHOP)
+        .value("L1_EXPLORER",          CityUpgradeType::L1_EXPLORER)
+        .value("L2_RESOURCES",         CityUpgradeType::L2_RESOURCES)
+        .value("L2_WALLS",             CityUpgradeType::L2_WALLS)
+        .value("L3_BORDER_GROWTH",     CityUpgradeType::L3_BORDER_GROWTH)
+        .value("L3_POPULATION_GROWTH", CityUpgradeType::L3_POPULATION_GROWTH)
+        .value("L4_PARK",              CityUpgradeType::L4_PARK)
+        .value("L4_SUPERUNIT",         CityUpgradeType::L4_SUPERUNIT)
+        .value("Count",                CityUpgradeType::Count);
 
     py::enum_<TechType>(m, "TechType")
         .value("Origin",       TechType::Origin)
@@ -53,7 +69,12 @@ PYBIND11_MODULE(polyshark, m) {
         .value("Riding",       TechType::Riding)
         .value("Climbing",     TechType::Climbing)
         .value("Archery",      TechType::Archery)
-        .value("Mining",       TechType::Mining);
+        .value("Mining",       TechType::Mining)
+        .value("Strategy",     TechType::Strategy)
+        .value("Count",        TechType::Count);
+
+    py::enum_<BiomeType>(m, "BiomeType")
+        .value("Drylands", BiomeType::Drylands);
 
     // --- Tile ---
 
@@ -141,7 +162,9 @@ PYBIND11_MODULE(polyshark, m) {
         .def("is_explored",    &GameState::is_explored)
         .def("get_stars",      &GameState::get_stars)
         .def("get_techs",      &GameState::get_techs)
-        .def("techs_mask",     &GameState::techs_mask);
+        .def("techs_mask",     &GameState::techs_mask)
+        .def("owned_cities",   &GameState::owned_cities)
+        .def("check_invariants", &GameState::check_invariants);
 
     // Base movement per unit type, indexed by UnitType int value.
     // Exposed so the encoder can normalise move_points without hardcoding.
@@ -149,9 +172,28 @@ PYBIND11_MODULE(polyshark, m) {
         return unit_def(static_cast<UnitType>(unit_type)).movement;
     });
 
+    // --- EngineSettings (the only runtime-mutable knobs exposed to AI) ---
+
+    py::class_<EngineSettings>(m, "EngineSettings")
+        .def(py::init<>())
+        .def_readwrite("map_size", &EngineSettings::map_size)
+        .def_readwrite("seed",     &EngineSettings::seed)
+        .def_readwrite("biome",    &EngineSettings::biome)
+        .def("__repr__", [](const EngineSettings& s) {
+            return "<EngineSettings map_size=" + std::to_string(s.map_size)
+                 + " seed="     + std::to_string(s.seed)
+                 + " biome="    + std::to_string((int)s.biome) + ">";
+        });
+
+    // Primary entrypoint: takes an EngineSettings (defaulted from cfg::*).
+    m.def("make_game", [](const EngineSettings& s) {
+        return MapGen(s.to_mapgen()).generate().state;
+    }, py::arg("settings") = EngineSettings{});
+
+    // Convenience: seed-only form for quick tests / shells.
     m.def("make_random_game", [](uint64_t seed) {
-        MapGenParams p = MapGen::drylands_defaults();
-        p.seed = seed;
-        return MapGen(p).generate().state;
+        EngineSettings s;
+        s.seed = seed;
+        return MapGen(s.to_mapgen()).generate().state;
     }, py::arg("seed") = 0);
 }

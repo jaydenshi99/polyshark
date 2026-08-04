@@ -11,11 +11,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../build/bindings
 import polyshark
 
 sys.path.insert(0, os.path.dirname(__file__))
-from model import PolysharkNet, ACTION_SIZE
+from spec import AISpec
+from model import PolysharkNet
 from mcts import MCTS
 from encoder import encode
 from action_codec import index_to_action
 from log_utils import format_action, log_state
+
+# Shape spec lives in one place — flip map_size / seed here and every dim
+# (encoder channels, model heads, action codec) follows.
+SETTINGS = polyshark.EngineSettings()
+SETTINGS.map_size = 9
+SPEC = AISpec(SETTINGS)
 
 # --- Hyperparameters ---
 TURN_LIMIT         = 10
@@ -105,7 +112,8 @@ def run_game(mcts, gen=0, game_idx=0) -> tuple[list, bool]:
       terminal  — True if game ended by capture, False if turn limit hit
     """
     seed       = random.randint(0, 2**32 - 1)
-    state      = polyshark.make_random_game(seed)
+    SETTINGS.seed = seed
+    state         = polyshark.make_game(SETTINGS)
     trajectory = []  # (spatial, global_vec, policy, current_player)
     history    = []  # raw actions for replay file
 
@@ -128,12 +136,12 @@ def run_game(mcts, gen=0, game_idx=0) -> tuple[list, bool]:
         temp   = 1.0 if turn < TEMPERATURE_CUTOFF else 0.0
         policy = mcts.get_policy(root, temperature=temp)
 
-        spatial, global_vec = encode(state)
+        spatial, global_vec = encode(state, SPEC)
         trajectory.append((spatial, global_vec, policy, player))
 
-        action_idx = int(np.random.choice(ACTION_SIZE, p=policy))
-        action     = index_to_action(action_idx, state)
-        print(f"    P{player}: {format_action(action)}")
+        action_idx = int(np.random.choice(SPEC.action_size, p=policy))
+        action     = index_to_action(action_idx, state, SPEC)
+        print(f"    P{player}: {format_action(action, SPEC.map_size)}")
         history.append(action)
         state      = state.apply_action(action)
 
@@ -216,10 +224,12 @@ def train(n_generations=200):
     device    = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Device: {device}")
 
-    model     = PolysharkNet().to(device)
+    print(f"Spec: {SPEC}")
+    model     = PolysharkNet(SPEC).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     buffer    = ReplayBuffer()
-    mcts      = MCTS(model, device=device, heuristic_fn=heuristic_value, heuristic_weight=1.0)
+    mcts      = MCTS(model, device=device, heuristic_fn=heuristic_value,
+                     heuristic_weight=1.0, spec=SPEC)
 
     start_gen = load_latest_checkpoint(model, buffer)
 

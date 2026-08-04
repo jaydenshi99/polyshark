@@ -17,6 +17,7 @@ enum class ResourceType {
     Crop,    // field food (requires Farming)
     Animal,  // forest food
     Metal,   // mountain ore — requires Mining tech
+    Count,
 };
 
 enum class UnitType {
