@@ -17,8 +17,14 @@ polyshark/
 │   └── docs/      # design and rules documentation
 ├── ai/            # Python ML / agent code
 ├── bindings/      # C++↔Python bridge (pybind11 or ctypes)
+├── bots/          # protocol bots (base, base-py skeletons) + C++/Python bot SDKs
+├── lab/           # Match Lab: referee, engine tool, self-play (C++) + web server/UI (Python/JS)
 └── scripts/       # build and utility scripts
 ```
+
+Match Lab: `python3 lab/lab.py serve` → http://127.0.0.1:8780. The bot protocol (how bots receive
+observations and return actions, plus the replicability guarantees) is specified in
+[lab/PROTOCOL.md](lab/PROTOCOL.md); the engine stays authoritative for all rules.
 
 ## Architecture
 

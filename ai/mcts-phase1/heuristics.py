@@ -43,7 +43,7 @@ TECH_INTRINSIC_VALUE = {
     polyshark.TechType.Hunting:      1,
     polyshark.TechType.Organisation: 1,
     polyshark.TechType.Riding:       4,
-    polyshark.TechType.Climbing:     1,
+    polyshark.TechType.Climbing:     4,
     polyshark.TechType.Farming:      1,
     polyshark.TechType.Archery:      4,
     polyshark.TechType.Mining:       1,

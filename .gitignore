@@ -7,3 +7,4 @@ __pycache__/
 ai/tdl/checkpoints/
 ai/tdl/runs/
 ai/tdl/replays/
+lab/data/
