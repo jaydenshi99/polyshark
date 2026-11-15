@@ -1,0 +1,6 @@
+{
+  "name": "base-py",
+  "description": "Skeleton Python bot: ends every turn. Copy this folder to start a new bot.",
+  "language": "python",
+  "entry": "bot.py"
+}

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="lab-token" content="__LAB_TOKEN__">
+<title>Bots &amp; Protocol · Polyshark</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+.wrapc{max-width:1500px;margin:auto;padding:26px 32px 80px}
+.grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:36px;align-items:start}
+@media(max-width:1150px){.grid{grid-template-columns:1fr}}
+.doc{color:var(--text);font-size:13.5px;line-height:1.6}
+.doc h2{font-size:20px;margin:6px 0 10px}.doc h3{font-size:16px;margin:26px 0 8px;padding-top:12px;border-top:1px solid var(--line)}.doc h4{font-size:13.5px;margin:18px 0 6px}
+.doc p,.doc li{color:#d6dbd8}.doc code{background:#232926;border-radius:3px;padding:0 4px}
+.doc table{margin:8px 0 12px}.doc td,.doc th{white-space:normal;font-size:12.5px}
+.doc ul,.doc ol{padding-left:22px}
+.toc{position:sticky;top:0;max-height:100vh;overflow:auto}
+.bots td{vertical-align:middle}.bots .acts{display:flex;gap:10px;flex-wrap:wrap}
+.result-ok{color:var(--accent)}.result-bad{color:var(--bad)}
+.steps li{margin:4px 0}
+</style>
+</head>
+<body>
+<div class="wrapc">
+<header class="page-head"><div><div class="eyebrow">Bots &amp; Protocol</div><h1>Bots</h1></div><span id="engine" class="small"></span></header>
+<div id="error" class="error hidden" role="alert"></div>
+<div class="grid">
+<div>
+<section class="band" style="border-top:0;padding-top:0">
+<div class="row between section-head"><h2>Catalogue <span id="count" class="small"></span></h2>
+<div class="row"><input id="search" type="search" placeholder="Find a bot…" style="width:220px"><label class="check" style="margin:0"><input type="checkbox" id="show-removed"><span>Show removed</span></label><button id="refresh" type="button">Refresh</button></div></div>
+<div class="scroll"><table class="bots"><thead><tr><th>Bot</th><th>Language</th><th>Source</th><th></th></tr></thead><tbody id="rows"></tbody></table></div>
+</section>
+<section class="band">
+<h2>Add a bot</h2>
+<ol class="steps small">
+<li>Copy <code>bots/base</code> (C++) or <code>bots/base-py</code> (Python) to <code>bots/&lt;name&gt;</code> and edit <code>bot.json</code>’s name.</li>
+<li>Write your strategy in <code>choose()</code> / <code>evaluate()</code>. The view you get is a real <code>GameState</code> (C++) or its JSON (Python), with fog applied.</li>
+<li>Press <strong>Refresh</strong>, then <strong>Test</strong> to play a 3-turn protocol game against itself. Bots under <code>bots/</code> appear automatically.</li>
+</ol>
+<div class="row" style="margin-top:8px"><input type="text" id="path" placeholder="Load a folder: bots/experiments or /abs/path" style="flex:1;min-width:240px"><button id="load-path" type="button">Load path</button><button id="load-zip" type="button">Upload ZIP</button><input type="file" id="zip" accept=".zip" hidden></div>
+<p id="load-status" class="small"></p>
+</section>
+<section class="band" id="test-band" hidden>
+<div class="row between section-head"><h2>Protocol test · <span id="test-name"></span></h2><span id="test-status"></span></div>
+<div id="test-body"></div>
+</section>
+<section class="band">
+<h2>Engine runtime</h2>
+<p class="small">Matches, self-play and analysis run on a snapshot of <code>engine/</code>, <code>lab/native/</code> and the bot SDKs, built once per content hash with <code>-ffp-contract=off</code>. Editing the engine creates a new runtime for new matches; existing matches keep theirs.</p>
+<dl class="kv" id="engine-kv"></dl>
+<div class="row" style="margin-top:10px"><button id="rebuild" type="button">Build current engine</button></div>
+<pre class="block hidden" id="engine-log"></pre>
+</section>
+</div>
+<div>
+<section class="band doc" style="border-top:0;padding-top:0" id="protocol"><p class="small">Loading the protocol…</p></section>
+</div>
+</div>
+</div>
+<script type="module">
+import { $, api, esc, uploadFile, fmtMs, plural, collator } from '/assets/common.js';
+import { markdown } from '/assets/markdown.js';
+
+let catalog = null;
+const fail = e => { $('error').textContent = e.message + (e.log ? '\n\n' + e.log : ''); $('error').classList.remove('hidden'); };
+const act = async fn => { try { $('error').classList.add('hidden'); await fn(); } catch (e) { fail(e); } };
+
+async function load() {
+  catalog = await api('catalog');
+  draw();
+  const e = catalog.engine;
+  $('engine').innerHTML = e.ready ? `Engine <span class="good mono">${esc(e.hash)}</span> ready` : e.building ? 'Building engine…' : e.error ? '<span class="bad">Engine build failed</span>' : 'Engine not built';
+  $('engine-kv').innerHTML = `<dt>Current hash</dt><dd class="mono">${esc(e.hash || '—')}</dd><dt>Status</dt><dd>${e.ready ? 'ready' : e.building ? 'building…' : e.error ? '<span class="bad">' + esc(e.error) + '</span>' : 'not built'}</dd><dt>Compiler</dt><dd>${esc(e.compiler)}</dd><dt>Built runtimes</dt><dd class="mono">${e.known.map(k => esc(k.hash)).join(', ') || '—'}</dd>`;
+  $('engine-log').classList.toggle('hidden', !e.log);
+  $('engine-log').textContent = e.log || '';
+  if (e.building) setTimeout(() => act(load), 2000);
+}
+function draw() {
+  const q = $('search').value.toLowerCase(), showRemoved = $('show-removed').checked;
+  const bots = catalog.bots.filter(b => (showRemoved || !b.removed) && (b.name + ' ' + b.detail + ' ' + (b.folder || '') + ' ' + b.language).toLowerCase().includes(q))
+    .sort((a, b) => collator.compare((a.folder || '') + a.name, (b.folder || '') + b.name));
+  $('count').textContent = `(${bots.length})`;
+  $('rows').innerHTML = bots.map(b => `<tr${b.removed ? ' style="opacity:.55"' : ''}><td class="wrap"><strong>${b.starred ? '★ ' : ''}${esc(b.name)}</strong>${b.folder ? ` <span class="small">📁 ${esc(b.folder)}</span>` : ''}<small>${esc(b.description || '')}</small><small class="mono">${esc(b.id)}</small></td>
+<td>${esc(b.language === 'cpp' ? 'C++' : b.language)}</td><td class="wrap"><small>${esc(b.source)}</small><small class="mono">${esc(b.detail)}</small></td>
+<td><div class="acts"><button type="button" data-test="${esc(b.id)}">Test</button><button type="button" class="subtle" data-star="${esc(b.id)}" data-on="${!b.starred}">${b.starred ? 'Unstar' : 'Star'}</button><button type="button" class="subtle" data-rename="${esc(b.id)}">Rename</button>${b.source !== 'repo' ? `<button type="button" class="subtle delete" data-delete="${esc(b.id)}">Delete</button>` : b.removed ? `<button type="button" class="subtle" data-restore="${esc(b.id)}">Restore</button>` : `<button type="button" class="subtle delete" data-remove="${esc(b.id)}">Remove</button>`}</div></td></tr>`).join('')
+    || '<tr><td colspan="4" class="empty-row">No bots match.</td></tr>';
+}
+async function test(id) {
+  const b = catalog.bots.find(x => x.id === id);
+  $('test-band').hidden = false;
+  $('test-name').textContent = b.name;
+  $('test-status').innerHTML = '<span class="badge live"><i class="dot"></i>Building and playing…</span>';
+  $('test-body').innerHTML = '';
+  $('test-band').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  try {
+    const r = await api('bots/validate', { id });
+    const res = r.result || {};
+    const verdict = r.ok ? '<span class="badge complete">Speaks the protocol</span>' : '<span class="badge failed">Failed</span>';
+    $('test-status').innerHTML = verdict;
+    const timing = (res.timing || []).map((t, p) => `P${p}: ${t.decisions} decisions · mean ${fmtMs(t.mean_ms)} · max ${fmtMs(t.max_ms)}`).join('<br>');
+    $('test-body').innerHTML = r.stage === 'build'
+      ? `<p class="result-bad">Build failed: ${esc(r.error)}</p><pre class="block">${esc(r.log)}</pre>`
+      : `<p class="${r.ok ? 'result-ok' : 'result-bad'}">${r.ok ? 'A three-turn game against itself completed.' : 'The game did not complete cleanly.'} ${res.reason ? 'Result: ' + esc(res.reason) : ''}${res.forfeit ? ` — P${res.forfeit.player} ${esc(res.forfeit.kind)}: ${esc(res.forfeit.message)}` : ''}${res.error ? ' — ' + esc(res.error) : ''}</p>
+<p class="small">${timing}${r.build_s ? `<br>Build ${r.build_s.toFixed(1)} s${r.build ? ' · ' + esc(r.build) : ''}` : ''}</p>
+<details${r.ok ? '' : ' open'}><summary>Player 0 log</summary><pre class="block">${esc(r.logs[0] || '(empty)')}</pre></details><details><summary>Player 1 log</summary><pre class="block">${esc(r.logs[1] || '(empty)')}</pre></details>${r.build_log ? `<details><summary>Build log</summary><pre class="block">${esc(r.build_log)}</pre></details>` : ''}`;
+  } catch (e) {
+    $('test-status').innerHTML = '<span class="badge failed">Error</span>';
+    $('test-body').innerHTML = `<p class="result-bad">${esc(e.message)}</p>${e.log ? `<pre class="block">${esc(e.log)}</pre>` : ''}`;
+  }
+}
+$('rows').addEventListener('click', e => {
+  const t = e.target.closest('button');
+  if (!t) return;
+  const d = t.dataset;
+  if (d.test) test(d.test);
+  if (d.star) act(async () => { await api('bots/star', { id: d.star, starred: d.on === 'true' }); await load(); });
+  if (d.rename) { const b = catalog.bots.find(x => x.id === d.rename); const n = prompt(`Display name for ${b.default_name} (blank restores it)`, b.name); if (n !== null) act(async () => { await api('bots/rename', { id: d.rename, name: n }); await load(); }); }
+  if (d.remove) act(async () => { await api('bots/remove', { id: d.remove, removed: true }); await load(); });
+  if (d.restore) act(async () => { await api('bots/remove', { id: d.restore, removed: false }); await load(); });
+  if (d.delete && confirm('Forget this bot?')) act(async () => { await api('bots/delete', { id: d.delete }); await load(); });
+});
+$('search').oninput = draw;
+$('show-removed').onchange = draw;
+$('refresh').onclick = () => act(load);
+$('load-path').onclick = () => act(async () => { const r = await api('bots/load-path', { path: $('path').value.trim() }); $('load-status').textContent = `Loaded ${plural(r.ids.length, 'bot')}.`; await load(); });
+$('load-zip').onclick = () => $('zip').click();
+$('zip').onchange = () => act(async () => { const f = $('zip').files[0]; if (!f) return; const r = await uploadFile('bots/upload', f); $('load-status').textContent = `Uploaded ${plural(r.ids.length, 'bot')}.`; $('zip').value = ''; await load(); });
+$('rebuild').onclick = () => act(async () => { await api('engine/build', {}); setTimeout(() => act(load), 500); });
+
+act(load);
+fetch('/api/protocol').then(r => r.text()).then(md => { $('protocol').innerHTML = markdown(md); });
+</script>
+</body>
+</html>

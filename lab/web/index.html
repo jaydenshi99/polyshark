@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polyshark Lab</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1l7 7-7 7-7-7z' fill='%239bdeb3'/%3E%3C/svg%3E">
+<style>
+:root{color-scheme:dark;--bg:#161819;--line:#343a37;--text:#eef0ed;--muted:#a0a6a3;--accent:#9bdeb3;font:13px system-ui,-apple-system,sans-serif}
+*{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--text)}body{display:flex;flex-direction:column}
+nav{flex:none;display:flex;align-items:stretch;gap:14px;height:38px;padding:0 14px;border-bottom:1px solid var(--line);background:#1e2220}
+.brand{align-self:center;color:var(--accent);font-size:11px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;display:flex;align-items:center;gap:7px}
+.brand svg{width:12px;height:12px}
+[role=tablist]{display:flex;align-items:stretch;min-width:0;overflow-x:auto}
+[role=tab]{background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);font:inherit;padding:2px 12px 0;cursor:pointer;white-space:nowrap}
+[role=tab]:hover{color:var(--text)}[role=tab][aria-selected=true]{color:var(--text);border-bottom-color:var(--accent)}
+[role=tab]:focus-visible{outline:2px solid var(--accent);outline-offset:-5px}
+.status{margin-left:auto;align-self:center;color:var(--muted);font-size:11px;white-space:nowrap}
+.status .ok{color:var(--accent)}.status .bad{color:#ffaaa3}
+#frames{flex:1;position:relative;min-height:0}iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:var(--bg)}
+@media(max-width:600px){.brand span,.status{display:none}nav{gap:8px;padding:0 8px}[role=tab]{padding:2px 8px 0}}
+</style>
+</head>
+<body>
+<nav>
+<span class="brand"><svg viewBox="0 0 16 16"><path d="M8 1l7 7-7 7-7-7z" fill="currentColor"/></svg><span>Polyshark</span></span>
+<div role="tablist" aria-label="Tools">
+<button role="tab" id="tab-lab" data-tab="lab" aria-controls="frames">Match Lab</button>
+<button role="tab" id="tab-position" data-tab="position" aria-controls="frames">Position Analyser</button>
+<button role="tab" id="tab-selfplay" data-tab="selfplay" aria-controls="frames">Self-play</button>
+<button role="tab" id="tab-bots" data-tab="bots" aria-controls="frames">Bots &amp; Protocol</button>
+</div>
+<span class="status" id="engine-status" title="Engine runtime used for new matches">Engine…</span>
+</nav>
+<div id="frames" role="tabpanel"></div>
+<script>
+const $ = id => document.getElementById(id);
+const TABS = { lab: 'Match Lab', position: 'Position Analyser', selfplay: 'Self-play', bots: 'Bots & Protocol' };
+const frames = {};
+let labRoute = '', selfplayRoute = '', positionSource = null;
+
+function source(tab) {
+  if (tab === 'lab') return '/lab/' + (labRoute ? '#' + labRoute : '');
+  if (tab === 'selfplay') return '/selfplay/' + (selfplayRoute ? '#' + selfplayRoute : '');
+  if (tab === 'position') return '/position/' + (positionSource ? '?src=' + encodeURIComponent(JSON.stringify(positionSource)) : '');
+  return '/bots/';
+}
+// Frames stay loaded once opened, so every tool keeps its state across tab switches.
+function show(tab) {
+  for (const b of document.querySelectorAll('[role=tab]')) {
+    const on = b.dataset.tab === tab;
+    b.setAttribute('aria-selected', on); b.tabIndex = on ? 0 : -1;
+  }
+  $('frames').setAttribute('aria-labelledby', 'tab-' + tab);
+  document.title = TABS[tab] + ' · Polyshark';
+  if (!frames[tab]) {
+    frames[tab] = document.createElement('iframe');
+    frames[tab].title = TABS[tab];
+    frames[tab].src = source(tab);
+    $('frames').append(frames[tab]);
+  }
+  for (const [name, f] of Object.entries(frames)) f.hidden = name !== tab;
+}
+function apply() {
+  const [tab, ...rest] = decodeURIComponent(location.hash.slice(1)).split('/');
+  const chosen = TABS[tab] ? tab : 'lab';
+  if (chosen === 'lab' && rest.length) labRoute = rest.join('/');
+  if (chosen === 'selfplay' && rest.length) selfplayRoute = rest.join('/');
+  show(chosen);
+}
+function go(tab) { location.hash = tab; }
+for (const b of document.querySelectorAll('[role=tab]')) b.onclick = () => go(b.dataset.tab);
+document.querySelector('[role=tablist]').addEventListener('keydown', e => {
+  const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+  if (!step) return;
+  const tabs = [...document.querySelectorAll('[role=tab]')], next = tabs[(tabs.indexOf(document.activeElement) + step + tabs.length) % tabs.length];
+  next.focus(); go(next.dataset.tab);
+});
+window.addEventListener('message', e => {
+  if (e.origin !== location.origin) return;
+  const d = e.data || {};
+  if (d.type === 'analyse') {
+    // An open analyser loads the source in place; otherwise the new frame's URL carries it.
+    positionSource = d.source;
+    frames.position?.contentWindow?.postMessage({ type: 'load', source: d.source }, location.origin);
+    go('position');
+  }
+  if (d.type === 'route' && (d.tab === 'lab' || d.tab === 'selfplay')) {
+    if (d.tab === 'lab') labRoute = d.route; else selfplayRoute = d.route;
+    history.replaceState(null, '', '#' + d.tab + (d.route ? '/' + d.route : ''));
+  }
+  if (d.type === 'open') go(d.tab);
+});
+window.addEventListener('hashchange', apply);
+apply();
+
+async function engineStatus() {
+  try {
+    const e = await (await fetch('/api/engine')).json();
+    $('engine-status').innerHTML = e.error ? `<span class="bad">Engine build failed</span>` : e.building || !e.ready ? 'Building engine…' : `Engine <span class="ok">${e.hash}</span>`;
+    $('engine-status').title = e.error || `Runtime hash ${e.hash} · ${e.compiler}`;
+    if (e.building || !e.ready) setTimeout(engineStatus, 2000);
+  } catch { setTimeout(engineStatus, 5000); }
+}
+engineStatus();
+</script>
+</body>
+</html>

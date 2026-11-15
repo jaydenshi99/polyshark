@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="lab-token" content="__LAB_TOKEN__">
+<title>Match Lab · Polyshark</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+.ref-pill{color:var(--gold);font-size:10px;border:1px solid #6f603b;border-radius:3px;padding:0 4px;margin-left:6px}
+.inline-number{width:76px!important;padding:3px 8px!important}
+.replay-settings{display:grid;grid-template-columns:minmax(0,1fr) 82px;gap:8px;align-items:center;margin:6px 0}
+.game-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.game-actions a,.game-actions button{font-size:12px}
+.game-actions button{padding:3px 8px}
+.why{font-size:11px;color:var(--muted);max-width:280px;white-space:normal}
+.mono{font:11.5px ui-monospace,Menlo,monospace}
+.histo{max-width:560px}
+.opp-card h2{margin:2px 0 0}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px}
+@media(max-width:1200px){.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="page"><div class="layout">
+<aside>
+<h2 class="sidebar-title">New match</h2>
+<div class="sidebar-fields">
+<section class="panel">
+<div class="row between"><h2>Bots</h2><button class="subtle" id="refresh-catalog" type="button">Refresh</button></div>
+<div class="field"><label for="mode">Match mode</label><select id="mode"><option value="round_robin">Everyone vs everyone</option><option value="reference">Against a reference</option><option value="self">Self-play</option></select></div>
+<div class="field hidden" id="reference-field"><label for="reference">Reference bot</label><select id="reference"></select></div>
+<div class="field"><label for="bot-search"><span id="bot-label">Bots</span> <span id="bot-count" class="num"></span></label>
+<input id="bot-search" type="search" placeholder="Find a starred bot…"><div class="list" id="bots"></div></div>
+<details id="stars-details"><summary>★ Manage starred bots <span id="star-count"></span></summary>
+<input id="star-search" type="search" placeholder="Search every bot" aria-label="Search every bot" style="margin-top:6px">
+<label class="check"><input id="show-removed" type="checkbox"><span>Show removed bots <span id="removed-count"></span></span></label>
+<div class="list" id="starred"></div></details>
+<details><summary>Load another bot</summary>
+<p class="small">A bot folder (with <code>bot.json</code>, a <code>POLYSHARK_BOT</code> .cpp, or <code>bot.py</code>) or a folder of bots. Folders stay linked: edits and new bots appear automatically. ZIP uploads are snapshots.</p>
+<input type="text" id="bot-path" placeholder="bots/my-bot or /absolute/path">
+<div class="toolbar"><button id="load-path" type="button">Load path</button><button id="load-zip" type="button">Upload ZIP</button></div>
+<input id="zip-file" type="file" accept=".zip" hidden><p id="load-status" class="small" aria-live="polite"></p></details>
+</section>
+<section class="panel">
+<h2>Maps <span class="badge" id="map-count">0 selected</span></h2>
+<input id="map-search" type="search" placeholder="Find a map or folder…" aria-label="Search maps">
+<div class="toolbar"><button id="select-visible" type="button">Select visible</button><button id="clear-maps" type="button">Clear</button></div>
+<div class="toolbar"><label><input type="checkbox" id="f-generated">Generated</label><label><input type="checkbox" id="f-positions">Saved positions</label><label><input type="checkbox" id="f-small">≤ 11²</label><label><input type="checkbox" id="f-large">≥ 13²</label></div>
+<div class="list tall" id="maps"></div>
+<p class="small">Generated maps get a fresh engine seed for every pair; both games of a pair (sides swapped) share it, and every matchup plays the same seeds. Saved positions start from the stored state.</p>
+</section>
+<section class="panel">
+<h2>Settings</h2>
+<div class="settings">
+<div class="field"><label for="pairs">Pairs per map, per matchup</label><input id="pairs" type="number" min="1" step="1" value="2"></div>
+<div class="field"><label for="workers">Simultaneous games</label><select id="workers"></select></div>
+<div class="field"><label for="turn-limit">Turn limit (draw)</label><input id="turn-limit" type="number" min="1" max="5000" value="50"></div>
+<div class="field"><label for="observation">Observation</label><select id="observation"><option value="fog">Fog of war</option><option value="full">Full information</option></select></div>
+<div class="field"><label for="move-ms">Move timeout (ms)</label><input id="move-ms" type="number" min="10" value="10000"></div>
+<div class="field"><label for="init-ms">Start-up timeout (ms)</label><input id="init-ms" type="number" min="100" value="10000"></div>
+<div class="field"><label for="budget-nodes">Search budget · nodes</label><input id="budget-nodes" type="number" min="1" placeholder="unset"></div>
+<div class="field"><label for="budget-ms">Search budget · ms</label><input id="budget-ms" type="number" min="1" placeholder="unset"></div>
+</div>
+<div class="replay-settings"><label class="check" style="margin:0"><input type="checkbox" id="replays" checked><span>Save replays</span></label><input id="replay-limit" type="number" min="1" placeholder="all" title="Only the first N games" aria-label="Replays to save"></div>
+<details><summary>More settings</summary>
+<div class="field" style="margin-top:8px"><label for="seed">Match seed (blank = random)</label><input id="seed" type="text" inputmode="numeric" placeholder="random"></div>
+<div class="field"><label for="match-name">Name (optional)</label><input id="match-name" type="text" placeholder="e.g. tuning depth"></div>
+<div class="field"><label for="bot-args">Bot arguments (JSON, by bot id)</label><textarea id="bot-args" rows="3" placeholder='{"bots/base": {"depth": 3}}'></textarea></div>
+</details>
+<p class="small" id="budget-help">Budgets are hints passed to bots in <code>hello.match.budget</code>; node budgets keep games reproducible. Timeouts forfeit.</p>
+</section>
+</div>
+<div class="sidebar-footer"><p id="estimate" class="small"></p>
+<div class="actions"><button class="primary" id="start" type="button">Start match</button></div><div id="notice" class="notice" aria-live="polite"></div></div>
+</aside>
+
+<div class="workspace">
+<div id="error" class="error hidden" role="alert"></div>
+<div id="overview">
+<header class="page-head"><div><div class="eyebrow">Match Lab</div><h1>Overview</h1></div><span id="overview-updated" class="small" aria-live="polite">Connecting…</span></header>
+<div class="queue-stats" aria-label="Queue statistics">
+<div class="queue-stat queued"><strong id="stat-queued">0</strong><span>Queued games</span></div>
+<div class="queue-stat running"><strong id="stat-running">0</strong><span>Running games</span><small id="stat-workers"></small></div>
+<div class="queue-stat completed"><strong id="stat-completed">0</strong><span>Completed games</span><small>in current matches</small></div>
+<div class="queue-stat failed"><strong id="stat-failed">0</strong><span>Failed games</span><small>referee errors, not forfeits</small></div>
+<div class="queue-stat clear"><strong id="stat-clear">—</strong><span>Queue clears in</span></div>
+</div>
+<section class="band"><div class="row between section-head"><h2>Current matches <span id="current-count" class="small"></span></h2></div>
+<div class="scroll"><table><thead><tr><th>Match</th><th>Status</th><th>Games</th><th>Elapsed</th><th>Est. remaining</th><th>Created</th><th></th></tr></thead><tbody id="current"><tr><td colspan="7" class="empty-row">Loading matches…</td></tr></tbody></table></div></section>
+<section class="band"><div class="row between section-head"><h2>Historical matches <span id="historical-count" class="small"></span></h2>
+<div class="row"><input id="history-search" type="search" placeholder="Find a match…" style="width:220px" aria-label="Search historical matches"><select id="history-status" style="width:150px" aria-label="Status"><option value="">All statuses</option><option value="complete">Completed</option><option value="errors">With failures</option><option value="cancelled">Cancelled</option><option value="error">Build failed</option></select></div></div>
+<div class="scroll"><table><thead><tr><th>Match</th><th>Status</th><th>Games</th><th>Elapsed</th><th>Finished</th><th>Created</th></tr></thead><tbody id="historical"><tr><td colspan="6" class="empty-row">Loading history…</td></tr></tbody></table></div></section>
+</div>
+
+<div id="detail" class="hidden">
+<header class="page-head"><button id="back" class="subtle" type="button">← Overview</button><span id="detail-id" class="small"></span></header>
+<div id="detail-loading" class="small">Loading match…</div>
+<section id="detail-body" class="hidden">
+<div class="row between"><div class="grow"><div class="eyebrow" id="detail-mode"></div><h2 id="detail-title" style="font-size:20px;margin:2px 0 0"></h2></div><span id="detail-status"></span></div>
+<p id="detail-info" class="small"></p>
+<div id="detail-error" class="error hidden"></div>
+<div class="run-timing"><div><span>Elapsed</span><strong id="d-elapsed">—</strong></div><div><span>Est. remaining</span><strong id="d-remaining">—</strong><small id="d-finish"></small></div><div><span>Seed</span><strong id="d-seed" class="mono" style="font-size:13px">—</strong></div><div><span>Engine</span><strong id="d-engine" class="mono" style="font-size:13px">—</strong></div></div>
+<div class="metrics"><div class="metric"><strong id="d-finished">0 / 0</strong><span>Games finished</span></div><div class="metric"><strong id="d-pairs">0</strong><span>Complete pairs scored</span></div><div class="metric"><strong id="d-failed">0</strong><span>Failed / cancelled games</span></div></div>
+<progress id="d-progress" max="1" value="0"></progress>
+<div class="row between" style="margin-top:10px"><p class="small" id="d-updated"></p><div class="row"><button id="d-cancel" class="danger" type="button">Cancel match</button><button id="d-requeue" type="button">Requeue unfinished</button><button id="d-rename" type="button">Rename</button><button id="d-delete" class="danger" type="button">Delete</button></div></div>
+<div class="detail-tabs" role="tablist" aria-label="Match details"><button role="tab" data-dtab="results" aria-selected="true">Results</button><button role="tab" data-dtab="games" aria-selected="false">Games</button><button role="tab" data-dtab="inputs" aria-selected="false">Frozen inputs</button></div>
+<div id="tab-results"></div>
+<div id="tab-games" class="hidden">
+<div class="filters"><label>Search<input id="g-search" type="search" placeholder="Bot, map, game, reason…"></label><label>Map<select id="g-map"><option value="">All maps</option></select></label><label>Bot<select id="g-bot"><option value="">All bots</option></select></label></div>
+<label class="check"><input id="g-unfinished" type="checkbox"><span>Show unfinished games</span></label>
+<div class="row between"><p id="g-count" class="small"></p><div class="row"><button id="g-prev" type="button">Newer</button><button id="g-next" type="button">Older</button></div></div>
+<div class="scroll"><table><thead><tr><th>Game · Pair · Map</th><th>P0 / P1</th><th>Status</th><th>Result</th><th>Length</th><th>Time</th><th>Replay &amp; logs</th></tr></thead><tbody id="g-rows"></tbody></table></div>
+</div>
+<div id="tab-inputs" class="hidden"></div>
+</section>
+</div>
+</div>
+</div></main>
+<div id="tip" class="tip" hidden></div>
+
+<script type="module">
+import { $, api, esc, uploadFile, fmtDuration, fmtTime, fmtClock, fmtMs, pct, fmtNum, fmtElo, plural, collator, recordCell, heatCell, scoreOf, stateBadge, svgBars, store, restore, openInAnalyser } from '/assets/common.js';
+import { ReplayViewer } from '/assets/replay.js';
+
+let catalog = { bots: [], maps: [], max_workers: 8 };
+const picked = new Set(restore('lab.bots', ['bots/base', 'bots/base-py']));
+const pickedMaps = new Set(restore('lab.maps', ['gen:drylands:9']));
+const collapsed = new Set(restore('lab.collapsed', []));
+let selected = location.hash.slice(1).split('/')[0] || '';
+let detailTab = location.hash.slice(1).split('/')[1] || 'results';
+let detail = null, overview = null, gamesOffset = 0, sortKey = restore('lab.sort', 'score'), breakdown = {};
+let pollTimer = null, pollSerial = 0, viewer = null;
+const ACTIVE = ['building', 'queued', 'running'];
+
+function fail(e) { $('error').textContent = e.message + (e.log ? '\n\n' + e.log : ''); $('error').classList.remove('hidden'); }
+function clearError() { $('error').classList.add('hidden'); }
+function notice(msg) { $('notice').textContent = msg; if (msg) setTimeout(() => { if ($('notice').textContent === msg) $('notice').textContent = ''; }, 6000); }
+
+// ---------------------------------------------------------------- catalog --
+async function loadCatalog() {
+  catalog = await api('catalog');
+  const w = $('workers'), keep = +w.value || restore('lab.workers', Math.min(4, catalog.max_workers));
+  w.innerHTML = Array.from({ length: catalog.max_workers }, (_, i) => `<option value="${i + 1}">${plural(i + 1, 'worker')}</option>`).join('');
+  w.value = Math.min(keep, catalog.max_workers);
+  drawBots(); drawStars(); drawMaps(); drawReference(); estimate();
+}
+const starredBots = () => catalog.bots.filter(b => b.starred && !b.removed);
+const botById = id => catalog.bots.find(b => b.id === id);
+const matches = (b, q) => (b.name + ' ' + (b.folder || '') + ' ' + b.default_name + ' ' + b.detail + ' ' + (b.description || '') + ' ' + b.language).toLowerCase().includes(q.toLowerCase());
+function groups(bots) {
+  const loose = [], g = new Map();
+  for (const b of bots) { if (!b.folder) { loose.push(b); continue; } if (!g.has(b.folder)) g.set(b.folder, []); g.get(b.folder).push(b); }
+  return [...[...g].sort((a, b) => collator.compare(a[0], b[0])), [null, loose]];
+}
+const sortBots = list => list.slice().sort((a, b) => collator.compare(a.name, b.name));
+const shortPath = p => p.startsWith('/') && p.length > 42 ? '…/' + p.split('/').slice(-2).join('/') : p;
+const lang = b => `<span class="lang">${esc(b.language === 'cpp' ? 'C++' : b.language)}</span>`;
+function folderHead(folder, bots, lead = '', trail = '', query = '') {
+  const shut = collapsed.has(folder) && !query;
+  return `<div class="choice folder-head">${lead}<button type="button" class="subtle folder-toggle" data-toggle="${esc(folder)}" aria-expanded="${!shut}">${shut ? '▸' : '▾'} <strong>📁 ${esc(folder)}</strong> <span class="small">${plural(bots.length, 'bot')}</span></button>${trail}</div>`;
+}
+function drawBots() {
+  const mode = $('mode').value, q = $('bot-search').value;
+  $('bot-label').textContent = mode === 'reference' ? 'Challengers' : 'Bots';
+  const ref = $('reference').value;
+  const visible = sortBots(starredBots().filter(b => matches(b, q) && !(mode === 'reference' && b.id === ref)));
+  const row = (b, inner) => `<label class="choice${inner ? ' in-folder' : ''}"><input type="checkbox" data-bot="${esc(b.id)}" ${picked.has(b.id) ? 'checked' : ''}><span><strong>${esc(b.name)}</strong>${lang(b)}<small title="${esc(b.detail)}">${esc(shortPath(b.detail))}</small>${b.description ? `<small>${esc(b.description)}</small>` : ''}</span></label>`;
+  $('bots').innerHTML = groups(visible).map(([folder, bots]) => {
+    if (folder === null) return bots.map(b => row(b, false)).join('');
+    const n = bots.filter(b => picked.has(b.id)).length;
+    const box = `<input type="checkbox" data-folder-pick="${esc(folder)}" ${n === bots.length ? 'checked' : ''} data-partial="${n > 0 && n < bots.length}" aria-label="Select every bot in ${esc(folder)}">`;
+    return folderHead(folder, bots, box, '', q) + (collapsed.has(folder) && !q ? '' : bots.map(b => row(b, true)).join(''));
+  }).join('') || '<p class="small" style="padding:10px">No starred bots match. Star more under “Manage starred bots”.</p>';
+  for (const el of $('bots').querySelectorAll('[data-partial=true]')) el.indeterminate = true;
+  const n = [...picked].filter(id => starredBots().some(b => b.id === id) && !(mode === 'reference' && id === ref)).length;
+  $('bot-count').textContent = n ? `(${n} selected)` : '';
+  estimate();
+}
+function drawReference() {
+  const sel = $('reference'), keep = sel.value || restore('lab.reference', '');
+  sel.innerHTML = sortBots(starredBots()).map(b => `<option value="${esc(b.id)}">${esc(b.name)}${b.folder ? ' · ' + esc(b.folder) : ''}</option>`).join('');
+  if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+  $('reference-field').classList.toggle('hidden', $('mode').value !== 'reference');
+}
+function drawStars() {
+  const q = $('star-search').value, showRemoved = $('show-removed').checked;
+  $('star-count').textContent = `(${starredBots().length})`;
+  const removed = catalog.bots.filter(b => b.removed).length;
+  $('removed-count').textContent = removed ? `(${removed})` : '';
+  const row = (b, inner) => {
+    const act = b.source !== 'repo' ? `<button type="button" class="subtle delete" data-delete="${esc(b.id)}">Delete</button>`
+      : b.removed ? `<button type="button" class="subtle" data-restore="${esc(b.id)}">Restore</button>` : `<button type="button" class="subtle delete" data-remove="${esc(b.id)}">Remove</button>`;
+    return `<div class="choice${inner ? ' in-folder' : ''}"${b.removed ? ' style="opacity:.55"' : ''}><label style="display:flex;gap:9px;flex:1;min-width:0;cursor:pointer"><input type="checkbox" data-star="${esc(b.id)}" ${b.starred ? 'checked' : ''}${b.removed ? ' disabled' : ''}><span><strong>${b.removed ? 'removed · ' : b.starred ? '★ ' : '☆ '}${esc(b.name)}</strong>${lang(b)}<small title="${esc(b.detail)}">${esc(shortPath(b.detail))}${b.name !== b.default_name ? ' · originally ' + esc(b.default_name) : ''}</small></span></label><span class="row" style="gap:10px;flex:none"><button type="button" class="subtle" data-rename="${esc(b.id)}">Rename</button>${act}</span></div>`;
+  };
+  const bots = sortBots(catalog.bots.filter(b => matches(b, q) && (showRemoved || !b.removed)));
+  $('starred').innerHTML = groups(bots).map(([folder, list]) => {
+    if (folder === null) return list.map(b => row(b, false)).join('');
+    const trail = `<span class="row" style="gap:10px;flex:none"><button type="button" class="subtle" data-folder-star="${esc(folder)}">Star all</button><button type="button" class="subtle" data-folder-unstar="${esc(folder)}">Unstar all</button><button type="button" class="subtle delete" data-folder-delete="${esc(folder)}">Delete folder</button></span>`;
+    return folderHead(folder, list, '', trail, q) + (collapsed.has(folder) && !q ? '' : list.map(b => row(b, true)).join(''));
+  }).join('') || '<p class="small" style="padding:10px">No bots match.</p>';
+}
+function visibleMaps() {
+  const q = $('map-search').value.toLowerCase();
+  const gen = $('f-generated').checked, pos = $('f-positions').checked, small = $('f-small').checked, large = $('f-large').checked;
+  return catalog.maps.filter(m => (m.name + ' ' + m.folder + ' ' + m.detail).toLowerCase().includes(q)
+    && (!gen || m.kind === 'generated') && (!pos || m.kind === 'state') && (!small || m.size <= 11) && (!large || m.size >= 13));
+}
+function drawMaps() {
+  const list = visibleMaps(), byFolder = new Map();
+  for (const m of list) { if (!byFolder.has(m.folder)) byFolder.set(m.folder, []); byFolder.get(m.folder).push(m); }
+  $('maps').innerHTML = [...byFolder].map(([folder, maps]) => `<div class="choice folder-head"><strong style="font-size:12px">📁 ${esc(folder)}</strong></div>` +
+    maps.map(m => `<label class="choice in-folder"><input type="checkbox" data-map="${esc(m.id)}" ${pickedMaps.has(m.id) ? 'checked' : ''}><span><strong>${esc(m.name)}</strong><small>${esc(m.detail)}</small></span><span class="dim">${esc(m.dims)}</span></label>`).join('')).join('')
+    || '<p class="small" style="padding:10px">No maps match.</p>';
+  const n = [...pickedMaps].filter(id => catalog.maps.some(m => m.id === id)).length;
+  $('map-count').textContent = `${n} selected`;
+  estimate();
+}
+function plan() {
+  const mode = $('mode').value, ref = $('reference').value;
+  const bots = [...picked].filter(id => starredBots().some(b => b.id === id) && !(mode === 'reference' && id === ref));
+  const maps = [...pickedMaps].filter(id => catalog.maps.some(m => m.id === id));
+  const k = bots.length;
+  const matchups = mode === 'round_robin' ? k * (k - 1) / 2 : k;
+  const pairs = Math.max(1, +$('pairs').value || 1);
+  return { mode, ref, bots, maps, matchups, pairs, games: matchups * maps.length * pairs * 2 };
+}
+function estimate() {
+  const p = plan();
+  let msg;
+  if (p.mode === 'round_robin' && p.bots.length < 2) msg = 'Pick at least two bots.';
+  else if (p.mode === 'reference' && (!p.ref || !p.bots.length)) msg = 'Pick a reference and at least one challenger.';
+  else if (!p.bots.length) msg = 'Pick at least one bot.';
+  else if (!p.maps.length) msg = 'Pick at least one map.';
+  else msg = `${plural(p.games, 'game')} · ${plural(p.matchups, 'matchup')} × ${plural(p.maps.length, 'map')} × ${plural(p.pairs, 'pair')} × 2 sides`;
+  $('estimate').textContent = msg;
+  $('start').disabled = !p.games;
+}
+
+async function startMatch() {
+  const p = plan();
+  let args = {};
+  try { args = $('bot-args').value.trim() ? JSON.parse($('bot-args').value) : {}; } catch { return fail(new Error('Bot arguments must be JSON, e.g. {"bots/base": {"depth": 3}}')); }
+  const body = {
+    mode: p.mode, bots: p.bots, reference: p.mode === 'reference' ? p.ref : null, maps: p.maps, pairs: p.pairs,
+    workers: +$('workers').value, turn_limit: +$('turn-limit').value, observation: $('observation').value,
+    move_ms: +$('move-ms').value, init_ms: +$('init-ms').value, budget_nodes: $('budget-nodes').value || null, budget_ms: $('budget-ms').value || null,
+    save_replays: $('replays').checked, replay_limit: $('replay-limit').value || null, seed: $('seed').value.trim() || null,
+    name: $('match-name').value, args,
+  };
+  $('start').disabled = true;
+  try {
+    clearError();
+    const r = await api('matches', body);
+    notice(`Match ${r.id} created — freezing and building bots.`);
+    openMatch(r.id);
+  } catch (e) { fail(e); } finally { estimate(); }
+}
+
+// --------------------------------------------------------------- overview --
+function matchRow(s, historical) {
+  const progress = s.total ? `<progress class="progress-mini" max="${s.total}" value="${s.completed + s.failed}"></progress>` : '';
+  const name = `<button class="match-name" data-open="${esc(s.id)}">${s.name ? esc(s.name) + ' · ' : ''}${esc(s.title)}</button>`;
+  const sub = `<small>Match ${s.number} · ${esc(s.mode_label)} · ${esc(s.maps.join(', '))}</small>${s.note ? `<small>${esc(s.note)}</small>` : ''}${s.error ? `<small class="bad">${esc(s.error.slice(0, 140))}</small>` : ''}`;
+  const games = `${fmtNum(s.completed)} / ${fmtNum(s.total)}${s.failed ? ` <small class="bad">${s.failed} failed</small>` : ''}${s.cancelled && !historical ? ` <small>${s.cancelled} cancelled</small>` : ''}${progress}`;
+  const status = stateBadge(s.state) + (s.running ? `<small>${s.running} running · ${s.queued} queued</small>` : '');
+  if (historical) return `<tr class="click" data-open="${esc(s.id)}"><td class="wrap">${name}${sub}</td><td>${status}</td><td>${games}</td><td class="num">${fmtDuration(s.elapsed_s)}</td><td>${fmtTime(s.finished_at)}</td><td>${fmtTime(s.created_at)}</td></tr>`;
+  const cancel = ACTIVE.includes(s.state) ? `<button type="button" class="danger" data-cancel="${esc(s.id)}">Cancel</button>` : s.state === 'paused' ? `<button type="button" data-requeue="${esc(s.id)}">Resume</button>` : '';
+  return `<tr class="click" data-open="${esc(s.id)}"><td class="wrap">${name}${sub}</td><td>${status}</td><td>${games}</td><td class="num">${fmtDuration(s.elapsed_s)}</td><td class="num">${s.eta_s != null ? fmtDuration(s.eta_s) : s.state === 'paused' ? 'Paused' : '—'}</td><td>${fmtTime(s.created_at)}</td><td>${cancel}</td></tr>`;
+}
+function renderOverview(o) {
+  overview = o;
+  const st = o.stats;
+  $('stat-queued').textContent = fmtNum(st.queued);
+  $('stat-running').textContent = fmtNum(st.running);
+  $('stat-workers').textContent = `${st.busy} of ${st.workers} worker slots busy`;
+  $('stat-completed').textContent = fmtNum(st.completed);
+  $('stat-failed').textContent = fmtNum(st.failed);
+  $('stat-clear').textContent = !st.queued && !st.running ? 'Idle' : st.clear_s != null ? fmtDuration(st.clear_s) : 'Estimating…';
+  $('overview-updated').textContent = 'Updated ' + fmtClock(o.updated_at);
+  $('current-count').textContent = o.current.length ? `(${o.current.length})` : '';
+  $('current').innerHTML = o.current.map(s => matchRow(s, false)).join('') || '<tr><td colspan="7" class="empty-row">No matches running. Pick bots and maps, then <strong>Start match</strong>.</td></tr>';
+  const q = $('history-search').value.toLowerCase(), status = $('history-status').value;
+  const hist = o.historical.filter(s => (!status || s.state === status) && (`${s.number} ${s.name} ${s.title} ${s.maps.join(' ')} ${s.mode_label}`).toLowerCase().includes(q));
+  $('historical-count').textContent = `(${hist.length})`;
+  $('historical').innerHTML = hist.map(s => matchRow(s, true)).join('') || '<tr><td colspan="6" class="empty-row">No finished matches.</td></tr>';
+}
+
+// ----------------------------------------------------------------- detail --
+function route() {
+  const r = selected ? selected + (detailTab !== 'results' ? '/' + detailTab : '') : '';
+  if (location.hash.slice(1) !== r) history.replaceState(null, '', r ? '#' + r : location.pathname);
+  if (window.parent !== window) window.parent.postMessage({ type: 'route', tab: 'lab', route: r }, location.origin);
+}
+function openMatch(id) {
+  selected = String(id); detailTab = 'results'; detail = null; gamesOffset = 0; breakdown = {};
+  $('g-map').dataset.match = '';
+  route(); syncView(); poll();
+}
+function syncView() {
+  $('overview').classList.toggle('hidden', !!selected);
+  $('detail').classList.toggle('hidden', !selected);
+  $('detail-loading').classList.toggle('hidden', !!detail);
+  $('detail-body').classList.toggle('hidden', !detail);
+  for (const b of document.querySelectorAll('[data-dtab]')) b.setAttribute('aria-selected', String(b.dataset.dtab === detailTab));
+  for (const t of ['results', 'games', 'inputs']) $('tab-' + t).classList.toggle('hidden', t !== detailTab);
+}
+const name = (d, k) => d.bots[k]?.name || k;
+function renderDetail(d) {
+  detail = d;
+  syncView();
+  $('detail-id').textContent = `Match ${d.number}`;
+  $('detail-mode').textContent = `Match ${d.number} · ${d.mode_label}`;
+  $('detail-title').textContent = (d.name ? d.name + ' · ' : '') + d.title;
+  $('detail-status').innerHTML = stateBadge(d.stopping ? 'cancelled' : d.state, d.stopping ? ' (stopping)' : '');
+  const s = d.settings;
+  const budget = Object.entries(s.budget || {}).map(([k, v]) => `${fmtNum(v)} ${k}`).join(', ');
+  $('detail-info').textContent = `${plural(s.pairs, 'pair')} per map, per matchup · ${d.maps.map(m => m.name).join(', ')} · turn limit ${s.turn_limit} · ${s.observation === 'full' ? 'full information' : 'fog of war'} · move timeout ${fmtNum(s.timeouts.move_ms)} ms${budget ? ' · budget ' + budget : ''} · ${plural(d.workers, 'worker')} · replays ${s.save_replays ? (s.replay_limit ? 'first ' + s.replay_limit : 'all') : 'off'}${d.note ? ' · ' + d.note : ''}`;
+  $('detail-error').classList.toggle('hidden', !d.error);
+  $('detail-error').textContent = d.error ? d.error + (d.error_log ? '\n\n' + d.error_log : '') : '';
+  $('d-elapsed').textContent = fmtDuration(d.elapsed_s);
+  $('d-remaining').textContent = ACTIVE.includes(d.state) ? (d.eta_s != null ? fmtDuration(d.eta_s) : 'Estimating…') : d.state === 'paused' ? 'Paused' : 'Done';
+  $('d-finish').textContent = ACTIVE.includes(d.state) && d.eta_s != null ? 'around ' + fmtClock(Date.now() / 1000 + d.eta_s) : '';
+  $('d-seed').textContent = s.seed;
+  $('d-engine').textContent = d.engine || '—';
+  $('d-finished').textContent = `${fmtNum(d.completed)} / ${fmtNum(d.total)}`;
+  $('d-failed').textContent = `${d.failed} / ${d.cancelled}`;
+  $('d-progress').max = d.total || 1; $('d-progress').value = d.completed + d.failed;
+  $('d-updated').textContent = 'Updated ' + fmtClock(d.updated_at) + (d.state === 'paused' ? ' · paused after a server restart — Requeue unfinished to continue' : '');
+  $('d-cancel').disabled = !ACTIVE.includes(d.state) || d.stopping;
+  $('d-requeue').disabled = ACTIVE.includes(d.state) || d.state === 'error' || (d.completed === d.total);
+  $('d-delete').disabled = ACTIVE.includes(d.state);
+  if (d.view === 'results' && d.results) { $('d-pairs').textContent = `${d.results.rated_pairs} / ${d.results.total_pairs}`; renderResults(d); }
+  if (d.view === 'games') renderGames(d);
+  if (d.view === 'inputs') renderInputs(d);
+}
+
+function sortRows(d, rows) {
+  if (d.mode === 'self') return rows;
+  const v = r => sortKey === 'wins' ? r.win_rate : sortKey === 'elo' ? r.elo : r.score;
+  return rows.slice().sort((a, b) => (Number(!!b.games) - Number(!!a.games)) || ((v(b) ?? -1e9) - (v(a) ?? -1e9)) || collator.compare(name(d, a.id), name(d, b.id)));
+}
+const sortHead = (label, key) => `<button class="sort" data-sort="${key}">${label}${sortKey === key ? ' ↓' : ''}</button>`;
+function renderResults(d) {
+  const r = d.results, self = d.mode === 'self', rr = d.mode === 'round_robin', ref = d.reference;
+  const rows = sortRows(d, r.rows);
+  const help = self ? 'Each bot plays an identical copy. Counts are seat 0 wins / draws / seat 1 wins, so the score measures first-move advantage, not strength.'
+    : rr ? 'Each bot’s results include every other selected bot.' : `Challengers’ results against ${esc(name(d, ref))}; the reference row combines all challengers.`;
+  const summary = rows.map(row => `<tr><td>${esc(name(d, row.id))}${row.is_reference ? '<span class="ref-pill">reference</span>' : ''}</td><td class="num">${row.wins} / ${row.draws} / ${row.losses}</td><td class="num">${pct(row.win_rate)}</td><td class="num">${row.score == null ? '—' : `<strong class="${row.significant ? (row.score > .5 ? 'good' : 'bad') : ''}">${pct(row.score)}</strong>`}</td><td class="num">${row.ci_low == null ? '—' : pct(row.ci_low) + ' – ' + pct(row.ci_high)}<small>${row.games ? (row.significant ? 'differs from 50%' : 'consistent with 50%') : ''}</small></td><td class="num">${self ? '—' : fmtElo(row.elo, row.elo_low, row.elo_high)}</td></tr>`).join('') || '<tr><td colspan="6" class="empty-row">No complete pairs yet.</td></tr>';
+  let html = `<h2 style="margin-top:24px">${self ? 'Self-play outcomes' : rr ? 'All opponents combined' : 'Against the reference'}</h2><p class="small">${help} Only complete side-swapped pairs are scored (${r.rated_pairs} of ${r.total_pairs}).</p>
+<div class="scroll"><table><thead><tr><th>Bot</th><th>${self ? 'Seat 0 / Draws / Seat 1' : 'Wins / Draws / Losses'}</th><th>${self ? 'Seat 0 win rate' : sortHead('Win rate', 'wins')}</th><th>${self ? 'Seat 0 score' : sortHead('Score rate', 'score')}</th><th>95% interval</th><th>${self ? 'Elo' : sortHead('Elo vs field', 'elo')}</th></tr></thead><tbody>${summary}</tbody></table></div>
+<p class="small">Score gives a win 1 point and a draw ½. The Wilson 95% interval is around the score; Elo converts score to a rating difference against the opponents faced. Seeds and maps are shared across games, so treat intervals as approximate.</p>`;
+
+  // Endings
+  const fk = e => Object.entries(e.forfeit_kinds).map(([k, v]) => `${v} ${k}`).join(', ');
+  const ends = sortRows(d, r.rows).map(row => r.endings.find(e => e.id === row.id)).filter(Boolean);
+  html += `<h2 style="margin-top:28px">How games ended</h2><p class="small">Every completed game from each bot’s side${self ? ' (seat 0)' : ''}, including games whose pair is unfinished. ${fmtNum(r.overall.capital || 0)} capital captures · ${fmtNum(r.overall.turn_limit || 0)} turn-limit draws · ${fmtNum(r.overall.forfeit || 0)} forfeits${r.overall.failed ? ` · <span class="bad">${r.overall.failed} failed</span>` : ''}.</p>
+<div class="scroll"><table><thead><tr><th>Bot</th><th>Games</th><th>Captured enemy capital</th><th>Lost capital</th><th>Turn-limit draws</th><th>Won by forfeit</th><th>Forfeited</th><th>Avg. length</th></tr></thead><tbody>${ends.map(e => `<tr><td>${esc(name(d, e.id))}</td><td class="num">${e.games}</td><td class="num">${e.capital_won}${e.turns_won_mean != null ? `<small>on turn ${e.turns_won_mean.toFixed(1)} on average</small>` : ''}</td><td class="num">${e.capital_lost}${e.turns_lost_mean != null ? `<small>on turn ${e.turns_lost_mean.toFixed(1)} on average</small>` : ''}</td><td class="num">${e.turn_limit}</td><td class="num">${e.forfeit_won}</td><td class="num${e.forfeit_lost ? ' bad' : ''}">${e.forfeit_lost}${e.forfeit_lost ? `<small>${esc(fk(e))}</small>` : ''}</td><td class="num">${e.turns_mean != null ? e.turns_mean.toFixed(1) + ' turns' : '—'}</td></tr>`).join('') || '<tr><td colspan="8" class="empty-row">No finished games yet.</td></tr>'}</tbody></table></div>`;
+
+  // Head to head
+  if (rr) {
+    const ids = rows.map(x => x.id);
+    html += `<h2 style="margin-top:28px">Head-to-head score</h2><p class="small">Rows are the bot being scored, columns its opponent (complete pairs, all maps).</p>
+<div class="scroll"><table class="heatmap"><thead><tr><th>Bot</th>${ids.map(id => `<th>vs ${esc(name(d, id))}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr><td>${esc(name(d, row.id))}</td>${ids.map(o => o === row.id ? '<td class="diagonal">—</td>' : heatCell(row.opponents[o])).join('')}</tr>`).join('')}</tbody></table></div>`;
+  }
+
+  // By map
+  const mapHead = `<tr><th>Bot</th>${d.maps.map(m => `<th>${esc(m.name)}<br><span class="small">${esc(m.dims)}${self ? ' · seat 0' : ''}</span></th>`).join('')}</tr>`;
+  const mapRows = rows.map(row => `<tr><td>${esc(name(d, row.id))}</td>${d.maps.map((m, i) => {
+    const rec = row.maps[i];
+    const opp = Object.values(row.map_opponents?.[i] || {}).map(scoreOf).filter(x => x != null);
+    const flag = opp.length > 1 && Math.max(...opp) - Math.min(...opp) >= 0.3 ? '<span class="flag" title="Opponent scores differ by at least 30 points">matchup-dependent</span>' : '';
+    return rr ? `<td class="map-result-cell"><button class="map-result" data-breakdown="${esc(row.id)}" data-map="${i}">${recordCell(rec, flag)}</button></td>` : `<td>${recordCell(rec)}</td>`;
+  }).join('')}</tr>`);
+  if (d.mode === 'reference') mapRows.push(`<tr><td>${esc(name(d, ref))}<small>Reference · all challengers</small></td>${d.maps.map((m, i) => `<td>${recordCell(r.reference_maps[i])}</td>`).join('')}</tr>`);
+  html += `<h2 style="margin-top:28px">By map</h2><p class="small">${rr ? 'Click a result for that bot’s score against each opponent on the map.' : 'Score per map (complete pairs).'}</p><div class="scroll"><table>${mapHead}<tbody>${mapRows.join('')}</tbody></table></div>`;
+  if (rr && rows.length) {
+    const b = breakdown.bot && rows.some(x => x.id === breakdown.bot) ? breakdown.bot : rows[0].id;
+    const mi = breakdown.map != null && breakdown.map < d.maps.length ? breakdown.map : 0;
+    const per = rows.find(x => x.id === b).map_opponents?.[mi] || {};
+    const opps = rows.map(x => x.id).filter(x => x !== b);
+    html += `<div class="card opp-card"><div class="eyebrow">Opponent breakdown</div><h2>${esc(name(d, b))} · ${esc(d.maps[mi]?.name || '')}</h2>
+<div class="filters" style="grid-template-columns:repeat(2,minmax(140px,240px))"><label>Bot<select data-bd="bot">${rows.map(x => `<option value="${esc(x.id)}"${x.id === b ? ' selected' : ''}>${esc(name(d, x.id))}</option>`).join('')}</select></label><label>Map<select data-bd="map">${d.maps.map((m, i) => `<option value="${i}"${i === mi ? ' selected' : ''}>${esc(m.name)} · ${esc(m.dims)}</option>`).join('')}</select></label></div>
+<div class="scroll"><table class="heatmap"><thead><tr><th>Bot</th>${opps.map(o => `<th>vs ${esc(name(d, o))}</th>`).join('')}</tr></thead><tbody><tr><td>${esc(name(d, b))}</td>${opps.map(o => heatCell(per[o])).join('')}</tr></tbody></table></div></div>`;
+  }
+
+  // Seats and timing
+  const seatRows = sortRows(d, r.rows).map(row => r.seats.find(s => s.id === row.id)).filter(Boolean);
+  html += `<div class="two"><div><h2 style="margin-top:28px">Seat advantage</h2><p class="small">Results as player 0 (moves first) and player 1, every completed game.</p>
+<div class="scroll"><table><thead><tr><th>Bot</th><th>As P0</th><th>As P1</th></tr></thead><tbody>${seatRows.map(s => `<tr><td>${esc(name(d, s.id))}</td><td>${recordCell(s.p0)}</td><td>${self ? '<span class="small">—</span>' : recordCell(s.p1)}</td></tr>`).join('')}</tbody></table></div></div>
+<div><h2 style="margin-top:28px">Decision time</h2><p class="small">Wall time per decision measured by the referee (includes process I/O).</p>
+<div class="scroll"><table><thead><tr><th>Bot</th><th>Mean</th><th>Max</th><th>Decisions / game</th></tr></thead><tbody>${r.timing.map(t => `<tr><td>${esc(name(d, t.id))}</td><td class="num">${fmtMs(t.mean_ms)}</td><td class="num">${fmtMs(t.max_ms)}</td><td class="num">${t.decisions_per_game != null ? t.decisions_per_game.toFixed(1) : '—'}</td></tr>`).join('')}</tbody></table></div></div></div>`;
+  html += `<details style="margin-top:22px"${r.maps.some(x => x.running || x.queued) ? ' open' : ''}><summary>Map game statistics</summary><div class="scroll"><table><thead><tr><th>Map</th><th>Finished</th><th>Running / queued</th><th>Capital</th><th>Turn limit</th><th>Forfeit</th><th>Failed</th><th>Avg. length</th><th>Avg. game time</th></tr></thead><tbody>${r.maps.map((x, i) => `<tr><td>${esc(d.maps[i].name)}<small>${esc(d.maps[i].dims)}</small></td><td class="num">${x.games}</td><td class="num">${x.running} / ${x.queued}</td><td class="num">${x.capital}</td><td class="num">${x.turn_limit}</td><td class="num">${x.forfeit}</td><td class="num${x.failed ? ' bad' : ''}">${x.failed}</td><td class="num">${x.turns_mean != null ? x.turns_mean.toFixed(1) + ' turns' : '—'}</td><td class="num">${fmtMs(x.wall_ms_mean)}</td></tr>`).join('')}</tbody></table></div></details>`;
+  html += `<h2 style="margin-top:28px">Game length</h2><p class="small">Turns played per completed game${r.lengths.mean != null ? ` · mean ${r.lengths.mean.toFixed(1)}` : ''}.</p><div class="histo">${svgBars(r.lengths.hist, { label: v => 'turn ' + v })}</div>`;
+  if ($('tab-results').dataset.html !== html) { $('tab-results').innerHTML = html; $('tab-results').dataset.html = html; }
+}
+
+function syncGameFilters(d) {
+  if ($('g-map').dataset.match === d.id) return;
+  const keepMap = $('g-map').value, keepBot = $('g-bot').value;
+  $('g-map').innerHTML = '<option value="">All maps</option>' + d.maps.map((m, i) => `<option value="${i}">${esc(m.name)}</option>`).join('');
+  $('g-bot').innerHTML = '<option value="">All bots</option>' + Object.entries(d.bots).map(([k, b]) => `<option value="${k}">${esc(b.name)}</option>`).join('');
+  $('g-map').value = keepMap; $('g-bot').value = keepBot;
+  $('g-map').dataset.match = d.id;
+}
+function renderGames(d) {
+  syncGameFilters(d);
+  const first = d.game_total ? d.game_offset + 1 : 0, last = d.game_offset + d.games.length;
+  $('g-count').textContent = `Showing ${first}–${last} of ${fmtNum(d.game_total)} games`;
+  $('g-prev').disabled = d.game_offset === 0;
+  $('g-next').disabled = last >= d.game_total;
+  const active = ACTIVE.includes(d.state);
+  $('g-rows').innerHTML = d.games.map(g => {
+    const result = g.status !== 'completed' ? '—' : g.winner == null ? `Draw<small>${esc(g.reason)}</small>` : `<span class="p${g.winner_seat}">${esc(g.winner)}</span><small>${esc(g.reason)}${g.forfeit ? ` · P${g.forfeit.player} ${esc(g.forfeit.kind)}` : ''}</small>`;
+    const why = g.forfeit?.message || g.error;
+    const label = `${g.map} · ${g.names[0]} vs ${g.names[1]} · pair ${g.pair + 1}`;
+    const replay = g.replay ? `<button type="button" data-watch="${g.n}" data-label="${esc(label)}">Watch</button><button type="button" data-analyse="${g.n}">Analyse</button><a href="/api/matches/${encodeURIComponent(d.id)}/games/${g.n}/replay?download=1">JSON</a>` : g.status === 'completed' ? '<span class="small">No replay saved</span>' : '';
+    const logs = g.status === 'completed' || g.status === 'failed' ? `<a href="/api/matches/${encodeURIComponent(d.id)}/games/${g.n}/log/0" target="_blank">P0 log</a><a href="/api/matches/${encodeURIComponent(d.id)}/games/${g.n}/log/1" target="_blank">P1 log</a>` : '';
+    const cancel = active && ['queued', 'running'].includes(g.status) ? `<button type="button" data-cancel-game="${g.n}" title="Cancel game">×</button>` : '';
+    const ms = g.timing?.length ? `<small>${fmtMs(g.timing[0].mean_ms)} / ${fmtMs(g.timing[1].mean_ms)} per move</small>` : '';
+    return `<tr><td>Game ${g.n} · Pair ${g.pair + 1}<small>${esc(g.map)} · ${esc(g.dims)}${g.map_seed ? ' · seed ' + esc(g.map_seed) : ''}</small></td>
+<td><span class="p0">${esc(g.names[0])}</span><small>vs <span class="p1">${esc(g.names[1])}</span></small></td><td>${esc(g.status)} ${cancel}${why ? `<div class="why">${esc(why)}</div>` : ''}</td><td>${result}</td>
+<td class="num">${g.turns != null ? g.turns + ' turns' : '—'}<small>${g.actions != null ? fmtNum(g.actions) + ' actions' : ''}</small></td><td class="num">${g.wall_ms != null ? fmtMs(g.wall_ms) : '—'}${ms}</td><td><div class="game-actions">${replay}${logs}</div></td></tr>`;
+  }).join('') || '<tr><td colspan="7" class="empty-row">No games match these filters.</td></tr>';
+}
+function renderInputs(d) {
+  const i = d.inputs, s = i.settings;
+  const bots = i.bots.map(b => `<tr><td>${esc(b.name)}<small>${esc(b.catalog_id)} · ${esc(b.key)}</small></td><td>${esc(b.language)}</td><td class="mono">${esc(b.hash || '—')}<small>${b.files ?? '?'} files · ${fmtNum(b.bytes)} bytes</small></td><td class="mono">${esc(b.build || '—')}</td><td class="wrap mono" style="max-width:360px">${esc((b.cmd || []).join(' '))}<small>${esc(b.frozen || '')}</small></td><td class="mono">${esc(JSON.stringify(b.args || {}))}</td></tr>`).join('');
+  const maps = i.maps.map(m => `<tr><td>${esc(m.name)}<small>${esc(m.id)}</small></td><td>${esc(m.dims)}</td><td class="mono">${esc(JSON.stringify(m.start))}</td></tr>`).join('');
+  const html = `<h2 style="margin-top:24px">Frozen bots</h2><p class="small">Each bot’s source was copied into the match when it was created; edits made since do not affect this match or its requeued games.</p>
+<div class="scroll"><table><thead><tr><th>Bot</th><th>Language</th><th>Source hash</th><th>Build</th><th>Command · frozen copy</th><th>Arguments</th></tr></thead><tbody>${bots}</tbody></table></div>
+<h2 style="margin-top:24px">Maps</h2><div class="scroll"><table><thead><tr><th>Map</th><th>Size</th><th>Start</th></tr></thead><tbody>${maps}</tbody></table></div>
+<p class="small">${plural(i.map_seed_count, 'generated map seed')}${i.map_seeds.length ? ': ' + i.map_seeds.slice(0, 12).map(esc).join(', ') + (i.map_seed_count > 12 ? ', …' : '') : ''}</p>
+<h2 style="margin-top:24px">Engine and settings</h2><dl class="kv"><dt>Engine runtime</dt><dd class="mono">${esc(i.engine || '—')}</dd><dt>Match seed</dt><dd class="mono">${esc(s.seed)}</dd><dt>Games</dt><dd>${fmtNum(i.games)}</dd><dt>Created</dt><dd>${fmtTime(i.created_at)}</dd></dl>
+<pre class="block">${esc(JSON.stringify(s, null, 2))}</pre>
+<p class="small">The engine runtime hash covers engine/, lab/native/ and the bot SDKs; the referee for this match was built from that snapshot with <code>-ffp-contract=off</code>. Bot seeds are <code>derive_seed(match_seed, game, seat)</code>; see lab/PROTOCOL.md.</p>`;
+  if ($('tab-inputs').dataset.html !== html) { $('tab-inputs').innerHTML = html; $('tab-inputs').dataset.html = html; }
+}
+
+// ----------------------------------------------------------------- polling --
+async function poll() {
+  clearTimeout(pollTimer);
+  const serial = ++pollSerial;
+  try {
+    if (selected) {
+      const q = new URLSearchParams({ view: detailTab });
+      if (detailTab === 'games') {
+        q.set('offset', gamesOffset); q.set('search', $('g-search').value); q.set('map', $('g-map').value); q.set('bot', $('g-bot').value);
+        if ($('g-unfinished').checked) q.set('unfinished', '1');
+      }
+      const d = await api(`matches/${encodeURIComponent(selected)}?${q}`);
+      if (serial !== pollSerial) return;
+      clearError();
+      renderDetail(d);
+      pollTimer = setTimeout(poll, ACTIVE.includes(d.state) ? 1500 : 8000);
+    } else {
+      const o = await api('overview');
+      if (serial !== pollSerial) return;
+      clearError();
+      renderOverview(o);
+      pollTimer = setTimeout(poll, o.current.some(s => ACTIVE.includes(s.state)) ? 1500 : 5000);
+    }
+  } catch (e) {
+    if (serial !== pollSerial) return;
+    if (selected && /no match/.test(e.message)) { selected = ''; route(); syncView(); return poll(); }
+    fail(e);
+    pollTimer = setTimeout(poll, 5000);
+  }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+
+// ------------------------------------------------------------------ events --
+async function act(fn) { try { clearError(); await fn(); } catch (e) { fail(e); } }
+function persistPicks() { store('lab.bots', [...picked]); store('lab.maps', [...pickedMaps]); store('lab.collapsed', [...collapsed]); }
+$('mode').value = restore('lab.mode', 'round_robin');
+$('mode').onchange = () => { store('lab.mode', $('mode').value); drawReference(); drawBots(); };
+$('reference').onchange = () => { store('lab.reference', $('reference').value); drawBots(); };
+$('bot-search').oninput = drawBots;
+$('star-search').oninput = drawStars;
+$('show-removed').onchange = drawStars;
+$('map-search').oninput = drawMaps;
+for (const id of ['f-generated', 'f-positions', 'f-small', 'f-large']) $(id).onchange = drawMaps;
+$('pairs').oninput = estimate;
+$('workers').onchange = () => store('lab.workers', +$('workers').value);
+$('start').onclick = startMatch;
+$('refresh-catalog').onclick = () => act(loadCatalog);
+$('bots').addEventListener('change', e => {
+  const b = e.target.dataset.bot, f = e.target.dataset.folderPick;
+  if (b) e.target.checked ? picked.add(b) : picked.delete(b);
+  if (f) for (const x of starredBots().filter(x => x.folder === f)) e.target.checked ? picked.add(x.id) : picked.delete(x.id);
+  persistPicks(); drawBots();
+});
+for (const list of ['bots', 'starred']) $(list).addEventListener('click', e => {
+  const t = e.target.closest('[data-toggle]');
+  if (!t) return;
+  e.preventDefault();
+  const f = t.dataset.toggle;
+  collapsed.has(f) ? collapsed.delete(f) : collapsed.add(f);
+  persistPicks(); drawBots(); drawStars();
+});
+$('starred').addEventListener('change', e => {
+  const id = e.target.dataset.star;
+  if (id) act(async () => { await api('bots/star', { id, starred: e.target.checked }); if (e.target.checked) picked.add(id); await loadCatalog(); });
+});
+$('starred').addEventListener('click', e => {
+  const el = e.target.closest('button');
+  if (!el || el.dataset.toggle) return;
+  const d = el.dataset;
+  if (d.rename) {
+    const b = botById(d.rename), n = prompt(`Display name for ${b.default_name} (blank restores it)`, b.name);
+    if (n !== null) act(async () => { await api('bots/rename', { id: d.rename, name: n }); await loadCatalog(); });
+  }
+  if (d.remove) act(async () => { await api('bots/remove', { id: d.remove, removed: true }); await loadCatalog(); });
+  if (d.restore) act(async () => { await api('bots/remove', { id: d.restore, removed: false }); await loadCatalog(); });
+  if (d.delete && confirm('Forget this loaded bot? Its files are not touched (uploads are removed).')) act(async () => { await api('bots/delete', { id: d.delete }); await loadCatalog(); });
+  if (d.folderStar || d.folderUnstar) act(async () => {
+    const on = !!d.folderStar, f = d.folderStar || d.folderUnstar;
+    for (const b of catalog.bots.filter(b => b.folder === f && !b.removed)) await api('bots/star', { id: b.id, starred: on });
+    await loadCatalog();
+  });
+  if (d.folderDelete && confirm(`Remove every bot in ${d.folderDelete} from the lab?`)) act(async () => { await api('bots/delete-folder', { folder: d.folderDelete }); await loadCatalog(); });
+});
+$('load-path').onclick = () => act(async () => {
+  $('load-status').textContent = 'Loading…';
+  const r = await api('bots/load-path', { path: $('bot-path').value.trim() });
+  r.ids.forEach(id => picked.add(id)); persistPicks();
+  $('load-status').textContent = `Loaded ${plural(r.ids.length, 'bot')}.`;
+  await loadCatalog();
+}).catch(() => { $('load-status').textContent = ''; });
+$('load-zip').onclick = () => $('zip-file').click();
+$('zip-file').onchange = () => act(async () => {
+  const f = $('zip-file').files[0];
+  if (!f) return;
+  $('load-status').textContent = `Uploading ${f.name}…`;
+  try {
+    const r = await uploadFile('bots/upload', f);
+    r.ids.forEach(id => picked.add(id)); persistPicks();
+    $('load-status').textContent = `Uploaded ${plural(r.ids.length, 'bot')}.`;
+    await loadCatalog();
+  } finally { $('zip-file').value = ''; }
+});
+$('maps').addEventListener('change', e => { const m = e.target.dataset.map; if (m) { e.target.checked ? pickedMaps.add(m) : pickedMaps.delete(m); persistPicks(); drawMaps(); } });
+$('select-visible').onclick = () => { visibleMaps().forEach(m => pickedMaps.add(m.id)); persistPicks(); drawMaps(); };
+$('clear-maps').onclick = () => { pickedMaps.clear(); persistPicks(); drawMaps(); };
+
+$('history-search').oninput = () => overview && renderOverview(overview);
+$('history-status').onchange = () => overview && renderOverview(overview);
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-open],[data-cancel],[data-requeue]');
+  if (!t) return;
+  if (t.dataset.cancel) { e.stopPropagation(); if (confirm('Cancel this match? Completed games are kept.')) act(async () => { await api(`matches/${t.dataset.cancel}/cancel`, {}); poll(); }); return; }
+  if (t.dataset.requeue) { e.stopPropagation(); act(async () => { await api(`matches/${t.dataset.requeue}/requeue`, {}); poll(); }); return; }
+  if (t.dataset.open && !e.target.closest('button:not([data-open])')) openMatch(t.dataset.open);
+});
+$('back').onclick = () => { selected = ''; detail = null; route(); syncView(); poll(); };
+for (const b of document.querySelectorAll('[data-dtab]')) b.onclick = () => { detailTab = b.dataset.dtab; route(); syncView(); poll(); };
+$('d-cancel').onclick = () => confirm('Cancel this match? Completed games are kept.') && act(async () => { await api(`matches/${selected}/cancel`, {}); poll(); });
+$('d-requeue').onclick = () => act(async () => { await api(`matches/${selected}/requeue`, {}); poll(); });
+$('d-delete').onclick = () => confirm('Delete this match and all its games, replays and logs?') && act(async () => { await api(`matches/${selected}/delete`, {}); selected = ''; detail = null; route(); syncView(); poll(); });
+$('d-rename').onclick = () => { const n = prompt('Match name', detail?.name || ''); if (n !== null) act(async () => { await api(`matches/${selected}/rename`, { name: n }); poll(); }); };
+$('tab-results').addEventListener('click', e => {
+  const s = e.target.closest('[data-sort]');
+  if (s) { sortKey = s.dataset.sort; store('lab.sort', sortKey); renderResults(detail); }
+  const b = e.target.closest('[data-breakdown]');
+  if (b) { breakdown = { bot: b.dataset.breakdown, map: +b.dataset.map }; renderResults(detail); document.querySelector('.opp-card')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+});
+$('tab-results').addEventListener('change', e => {
+  const k = e.target.dataset.bd;
+  if (k) { breakdown[k] = k === 'map' ? +e.target.value : e.target.value; renderResults(detail); }
+});
+let searchTimer;
+$('g-search').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { gamesOffset = 0; poll(); }, 250); };
+for (const id of ['g-map', 'g-bot', 'g-unfinished']) $(id).onchange = () => { gamesOffset = 0; poll(); };
+$('g-prev').onclick = () => { gamesOffset = Math.max(0, gamesOffset - 100); poll(); };
+$('g-next').onclick = () => { gamesOffset += 100; poll(); };
+$('g-rows').addEventListener('click', e => {
+  const w = e.target.closest('[data-watch]'), a = e.target.closest('[data-analyse]'), c = e.target.closest('[data-cancel-game]');
+  if (w) { viewer ||= new ReplayViewer(); viewer.open({ kind: 'matches', id: selected, game: +w.dataset.watch }, { title: `Match ${detail.number} · game ${w.dataset.watch}` + ' · ' + w.dataset.label }); }
+  if (a) openInAnalyser({ kind: 'matches', id: selected, game: +a.dataset.analyse, step: 0 });
+  if (c) act(async () => { await api(`matches/${selected}/games/${c.dataset.cancelGame}/cancel`, {}); poll(); });
+});
+window.addEventListener('hashchange', () => {
+  const [m, t] = location.hash.slice(1).split('/');
+  if ((m || '') !== selected) { selected = m || ''; detailTab = t || 'results'; detail = null; syncView(); poll(); }
+});
+
+syncView();
+act(loadCatalog);
+poll();
+</script>
+</body>
+</html>

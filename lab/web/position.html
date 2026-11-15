@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="lab-token" content="__LAB_TOKEN__">
+<title>Position Analyser · Polyshark</title>
+<link rel="stylesheet" href="/assets/lab.css">
+<style>
+html,body{height:100%}body{display:flex;flex-direction:column;font-size:13px}
+.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid var(--line)}
+.bar select,.bar input{width:auto;padding:4px 8px}.bar input[type=number]{width:96px}.bar button{padding:4px 10px}
+.bar label{display:flex;align-items:center;gap:6px;color:var(--muted)}
+.status{flex:1;min-width:160px;color:var(--muted);font-size:12px;text-align:right}
+.pa{flex:1;min-height:0;display:grid;grid-template-columns:290px minmax(0,1fr) 430px}
+.col{min-height:0;overflow-y:auto;scrollbar-width:thin}
+.left{border-right:1px solid var(--line);padding:12px}
+.right{border-left:1px solid var(--line);display:flex;flex-direction:column}
+.centre{display:flex;flex-direction:column;min-width:0;padding:8px 12px}
+.board-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap}
+.board-head select{width:auto;padding:3px 8px}
+.seg{display:inline-flex;border:1px solid var(--line2);border-radius:5px;overflow:hidden}.seg button{border:0;border-radius:0;padding:3px 10px;background:transparent;color:var(--muted)}
+.seg button[aria-pressed=true]{background:#2a3a31;color:var(--text)}
+#board-wrap{flex:1;min-height:0;position:relative}#board{position:absolute;inset:0;width:100%;height:100%;cursor:pointer}
+.hint{font-size:11.5px;color:var(--muted);padding-top:6px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.sec{margin-bottom:16px}.sec h3{display:flex;justify-content:space-between;align-items:center;font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);margin:0 0 6px}
+.pcard{border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin-bottom:8px}
+.pcard.to-move{box-shadow:inset 3px 0 0 var(--pc)}
+.pcard h4{margin:0 0 4px;font-size:13px;display:flex;justify-content:space-between}
+.pcard dl{display:grid;grid-template-columns:1fr auto 1fr auto;gap:1px 8px;margin:0;font-size:12px}.pcard dt{color:var(--muted)}.pcard dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}.chip{font-size:10.5px;border:1px solid var(--line2);border-radius:10px;padding:0 7px;color:var(--muted)}
+.hist{border:1px solid var(--line);border-radius:6px;max-height:220px;overflow:auto;font-size:12px}
+.hist button{display:block;width:100%;text-align:left;border:0;border-radius:0;background:transparent;padding:4px 8px;color:var(--text);white-space:normal}
+.hist button:hover{background:#232a26}.hist button.cur{background:#2a3a31}
+.events{font-size:12px;color:var(--muted);margin:0;padding-left:16px}
+.panel{padding:12px 14px;border-bottom:1px solid var(--line)}
+.panel h2{font-size:14px;margin:0 0 8px;display:flex;justify-content:space-between;align-items:center}
+.an-form{display:grid;grid-template-columns:1fr 1fr;gap:8px}.an-form label{font-size:11px;color:var(--muted)}.an-form select,.an-form input{padding:5px 8px;margin-top:3px}
+.evalbar{position:relative;height:22px;border-radius:4px;overflow:hidden;background:var(--p1-bg,#5a2d2a);margin:10px 0 4px}
+.evalbar i{position:absolute;left:0;top:0;bottom:0;background:#3c6fb7;transition:width .25s}
+.evalbar span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;text-shadow:0 1px 2px #000}
+.moves{width:100%;font-size:12px}.moves td,.moves th{padding:5px 6px}.moves tr{cursor:pointer}.moves tr:hover td{background:#232a26}
+.moves td.rank{color:var(--muted);width:20px}.moves .bar-cell{width:70px}
+.mini{height:5px;border-radius:3px;background:#2c322e;overflow:hidden}.mini i{display:block;height:100%;background:var(--accent)}
+.legal{flex:1;min-height:200px;overflow:auto;padding:8px 14px 14px;scrollbar-width:thin}
+.lgroup{margin-bottom:10px}.lgroup h4{margin:6px 0 4px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;display:flex;justify-content:space-between}
+.lmove{display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;border:1px solid transparent;border-radius:4px;background:transparent;padding:3px 7px;font-size:12.5px;color:var(--text);white-space:normal}
+.lmove:hover{background:#232a26;border-color:var(--line2)}.lmove.focus{border-color:#6f603b}
+.lmove small{color:var(--muted);white-space:nowrap}
+.prev-kill{color:var(--accent)}.prev-die{color:var(--bad)}
+.analysis-card{border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin-top:10px}
+.analysis-card header{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px}
+.empty{padding:40px 20px;text-align:center;color:var(--muted)}
+.src-fields{display:contents}
+dialog.paste{width:min(720px,92vw);background:var(--panel);color:var(--text);border:1px solid var(--line2);border-radius:8px}
+dialog.paste::backdrop{background:rgba(0,0,0,.6)}
+@media(max-width:1250px){.pa{grid-template-columns:250px minmax(0,1fr) 370px}}
+@media(max-width:980px){.pa{grid-template-columns:1fr;grid-template-rows:auto 60vh auto}.left,.right{border:0}.centre{order:-1}}
+</style>
+</head>
+<body>
+<header class="bar">
+<label>Load <select id="src-kind">
+<option value="map">Generated map</option><option value="file">Saved position</option><option value="starred">Starred position</option>
+<option value="matches">Match game</option><option value="selfplay">Self-play game</option><option value="json">Paste JSON…</option></select></label>
+<span id="src-fields" class="row" style="gap:8px"></span>
+<button id="load" class="primary" type="button">Load</button>
+<span class="status" id="status" role="status" aria-live="polite"></span>
+<button id="star" type="button" title="Keep this position in the Starred list">☆ Star</button>
+<button id="save" type="button" title="Write to data/saved_gamestates (loads in the raylib visualizer and as a Match Lab start position)">Save as…</button>
+<button id="copy" type="button" title="Copy the position JSON">Copy JSON</button>
+</header>
+<main class="pa">
+<section class="col left" aria-label="Position">
+<div class="sec" id="context-sec" hidden><h3>From game <span id="ctx-label" class="small"></span></h3>
+<div class="row" style="gap:6px"><button id="ctx-prev" type="button" title="Previous step ([)">‹</button><input id="ctx-step" type="range" min="0" value="0" style="flex:1;accent-color:var(--accent)"><button id="ctx-next" type="button" title="Next step as played (])">›</button></div>
+<div class="small" id="ctx-info" style="margin-top:4px"></div></div>
+<div class="sec"><h3>Position <span id="pos-hash" class="small mono"></span></h3><div id="pos-line" class="small">Nothing loaded.</div></div>
+<div class="sec" id="players"></div>
+<div class="sec"><h3>Moves played here <span class="row" style="gap:6px"><button class="subtle" id="undo" type="button" title="Undo (←)">Undo</button><button class="subtle" id="redo" type="button" title="Redo (→)">Redo</button></span></h3><div class="hist" id="history"><div class="small" style="padding:6px 8px">Play moves from the board or the list — this is a what-if branch.</div></div></div>
+<div class="sec"><h3>Last move</h3><ul class="events" id="events"><li>—</li></ul></div>
+</section>
+<section class="centre" aria-label="Board">
+<div class="board-head"><div class="row"><label class="small">View <select id="persp"><option value="-1">Everything</option><option value="0">Player 0's fog</option><option value="1">Player 1's fog</option><option value="mover">Side to move</option></select></label>
+<div class="seg" id="modes"><button data-mode="iso">Iso</button><button data-mode="flat">Flat</button></div><button id="fit" class="subtle" type="button" title="Reset zoom (double-click the board)">Fit</button></div>
+<div class="small" id="turn-pill"></div></div>
+<div id="board-wrap"><canvas id="board"></canvas></div>
+<div class="hint"><span>Click a unit of the side to move to see its moves (<span style="color:#50dcff">●</span> move, <span style="color:#f05a5a">●</span> attack) and click a target to play. Scroll to zoom, drag to pan.</span><span id="hover-coords"></span></div>
+</section>
+<section class="col right" aria-label="Analysis">
+<div class="panel"><h2>Bot analysis <button class="subtle" id="clear-analyses" type="button">Clear</button></h2>
+<div class="an-form"><label style="grid-column:1/-1">Bot<select id="an-bot"></select></label>
+<label>Budget · nodes<input id="an-nodes" type="number" min="1" placeholder="unset"></label><label>Budget · ms<input id="an-ms" type="number" min="1" placeholder="unset"></label>
+<label>Observation<select id="an-obs"><option value="fog">Fog of war (as in games)</option><option value="full">Full information</option></select></label><label>Timeout (s)<input id="an-timeout" type="number" min="1" value="60"></label></div>
+<div class="row" style="margin-top:10px"><button id="analyse" class="primary" type="button" style="flex:1">Analyse position</button></div>
+<div id="analyses"></div></div>
+<div class="legal"><h2 style="font-size:14px;margin:4px 0 8px;display:flex;justify-content:space-between">Legal moves <span id="legal-count" class="small"></span></h2><div id="legal"><p class="small">Load a position.</p></div></div>
+</section>
+</main>
+<div id="tip" class="tip" hidden></div>
+<dialog class="paste" id="paste-dialog"><form method="dialog"><h2>Paste a position</h2><p class="small">A serialised GameState (the visualizer's saved JSON, a replay frame, or an observation).</p>
+<textarea id="paste-text" rows="14"></textarea><div class="row" style="justify-content:flex-end;margin-top:10px"><button value="cancel">Cancel</button><button value="ok" class="primary">Load</button></div></form></dialog>
+
+<script type="module">
+import { $, api, esc, fmtMs, fmtNum, store, restore, tipFollow, plural } from '/assets/common.js';
+import { Board, PLAYER_COLORS, actionArrow } from '/assets/board.js';
+
+const board = new Board($('board'), { mode: restore('pa.mode', 'iso') });
+let rules = null, catalog = null, positions = { files: [], starred: [] };
+let pos = null, context = null, history = [], cursor = -1, selectedTile = -1, focusAction = null;
+const analyses = new Map();  // position hash → [analysis results]
+let busy = false;
+
+function status(msg, bad) { $('status').innerHTML = bad ? `<span class="bad">${esc(msg)}</span>` : esc(msg); }
+
+// ------------------------------------------------------------- sources --
+function drawSourceFields() {
+  const k = $('src-kind').value, f = $('src-fields');
+  const gen = (catalog?.maps || []).filter(m => m.kind === 'generated');
+  if (k === 'map') f.innerHTML = `<select id="sf-map">${gen.map(m => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('')}</select><label>Seed <input id="sf-seed" type="text" inputmode="numeric" value="${esc(restore('pa.seed', '1'))}" style="width:150px"></label><button id="sf-random" type="button" title="Random seed">🎲</button>`;
+  else if (k === 'file') f.innerHTML = `<select id="sf-file">${positions.files.map(m => `<option value="${esc(m.id)}">${esc(m.folder)}/${esc(m.name)} · ${esc(m.dims)}</option>`).join('') || '<option value="">No saved positions</option>'}</select>`;
+  else if (k === 'starred') f.innerHTML = `<select id="sf-star">${positions.starred.map(s => `<option value="${esc(s.id)}">${esc(s.name)} · turn ${s.turn} · P${s.player}</option>`).join('') || '<option value="">Nothing starred yet</option>'}</select>${positions.starred.length ? '<button id="sf-unstar" type="button" class="subtle delete">Unstar</button>' : ''}`;
+  else if (k === 'matches' || k === 'selfplay') f.innerHTML = `<label>${k === 'matches' ? 'Match' : 'Run'} <input id="sf-id" type="number" min="1" value="${esc(context?.kind === k ? context.id : '1')}"></label><label>Game <input id="sf-game" type="number" min="0" value="${esc(context?.kind === k ? context.game : '0')}"></label><label>Step <input id="sf-step" type="number" min="0" value="${esc(context?.kind === k ? context.step : '0')}"></label>`;
+  else f.innerHTML = '';
+  if (k === 'map') {
+    if (restore('pa.map', null)) $('sf-map').value = restore('pa.map', null);
+    $('sf-random').onclick = () => { $('sf-seed').value = String(Math.floor(Math.random() * 2 ** 31) + 1); };
+  }
+  $('sf-unstar')?.addEventListener('click', async () => { await api('position/unstar', { id: $('sf-star').value }); positions = await api('positions'); drawSourceFields(); });
+}
+function sourceFromForm() {
+  const k = $('src-kind').value;
+  if (k === 'map') { store('pa.seed', $('sf-seed').value); store('pa.map', $('sf-map').value); return { kind: 'map', map: $('sf-map').value, seed: $('sf-seed').value || '1' }; }
+  if (k === 'file') return { kind: 'map', map: $('sf-file').value };
+  if (k === 'starred') return { kind: 'starred', id: $('sf-star').value };
+  if (k === 'matches' || k === 'selfplay') return { kind: k, id: $('sf-id').value, game: +$('sf-game').value, step: +$('sf-step').value };
+  return null;
+}
+async function load(source, { keepContext = false } = {}) {
+  if (!source) return;
+  status('Loading…');
+  try {
+    const r = await api('position/load', { source });
+    context = r.context || (keepContext ? context : null);
+    history = [{ pos: r, label: describeSource(source, r), events: [] }];
+    cursor = 0;
+    setPos(r);
+    status('');
+    if (window.parent !== window && source.kind !== 'json') store('pa.last', source);
+  } catch (e) { status(e.message, true); }
+}
+function describeSource(src, r) {
+  if (src.kind === 'map') return src.seed ? `${src.map.split(':').pop()}×${src.map.split(':').pop()} seed ${src.seed}` : src.map.replace('file:', '');
+  if (src.kind === 'starred') return 'Starred position';
+  if (src.kind === 'json') return 'Pasted position';
+  return `${src.kind === 'matches' ? 'Match' : 'Self-play'} ${src.id} · game ${src.game} · step ${r.context?.step ?? src.step}`;
+}
+
+// ------------------------------------------------------------- display --
+function setPos(r) {
+  pos = r;
+  selectedTile = -1;
+  focusAction = null;
+  render();
+}
+function perspective() {
+  const v = $('persp').value;
+  return v === 'mover' ? pos.player : +v;
+}
+function render() {
+  if (!pos) return;
+  board.setState(pos.state, perspective());
+  overlay();
+  const s = pos.state, sum = pos.summary, o = pos.outcome;
+  $('pos-hash').textContent = pos.hash;
+  $('turn-pill').innerHTML = `Turn ${pos.turn} · <span style="color:${PLAYER_COLORS[pos.player]}">P${pos.player}</span> to move${pos.phase === 'upgrading_city' ? ' · <span class="warn">choosing a city upgrade</span>' : ''}`;
+  $('pos-line').innerHTML = `Turn ${pos.turn}, <span style="color:${PLAYER_COLORS[pos.player]}">player ${pos.player}</span> to move · ${s.map_size}×${s.map_size}${o?.over ? ` · <strong class="${o.winner == null ? '' : 'good'}">${o.winner == null ? 'draw' : 'P' + o.winner + ' won'} (${esc(o.reason)})</strong>` : ''}`;
+  $('players').innerHTML = [0, 1].map(p => {
+    const x = sum[p];
+    const types = Object.entries(x.unit_types).map(([k, v]) => `${v} ${k}`).join(', ');
+    return `<div class="pcard${pos.player === p ? ' to-move' : ''}" style="--pc:${PLAYER_COLORS[p]}"><h4><span style="color:${PLAYER_COLORS[p]}">Player ${p}</span><span class="small">${pos.player === p ? 'to move' : ''}</span></h4>
+<dl><dt>Stars</dt><dd>${x.stars}★</dd><dt>Income</dt><dd>+${x.income}</dd><dt>Cities</dt><dd>${x.cities}</dd><dt>Levels</dt><dd>${x.levels}</dd><dt>Units</dt><dd>${x.units}</dd><dt>HP</dt><dd>${x.hp}</dd><dt>Explored</dt><dd>${x.explored}</dd><dt></dt><dd></dd></dl>
+<div class="chips">${x.techs.map(t => `<span class="chip">${esc(t)}</span>`).join('') || '<span class="small">No techs</span>'}</div>${types ? `<div class="small" style="margin-top:4px">${esc(types)}</div>` : ''}</div>`;
+  }).join('');
+  renderHistory();
+  renderLegal();
+  renderAnalyses();
+  renderContext();
+  const last = history[cursor];
+  $('events').innerHTML = last?.events?.length ? last.events.map(e => `<li>${esc(e.text)}</li>`).join('') : '<li>—</li>';
+}
+function overlay() {
+  if (!pos) return;
+  const o = { moves: [], attacks: [], targets: [], selected: selectedTile, arrows: [] };
+  for (const a of pos.legal || []) {
+    if (a.from !== selectedTile) continue;
+    if (a.type === 'Move') o.moves.push(a.to);
+    if (a.type === 'Attack') o.attacks.push(a.to);
+    if (a.type === 'HarvestResource' || a.type === 'CaptureCity') o.targets.push(a.to);
+  }
+  for (const a of pos.legal || []) if (selectedTile >= 0 && a.type === 'HarvestResource' && a.to === selectedTile) o.targets.push(a.to);
+  const list = analyses.get(pos.hash) || [];
+  if (list.length) {
+    const top = list[0];
+    const shown = top.mode === 'choice' ? [top.choice] : top.moves.slice(0, 3);
+    const colors = ['#ffd84f', '#d6dde6', '#d39a6a'];
+    shown.forEach((m, k) => { const a = actionArrow(m.action, colors[k], top.mode === 'choice' ? 'bot' : String(k + 1)); if (a) o.arrows.push({ ...a, alpha: 0.9 - k * 0.15 }); });
+  }
+  if (focusAction) { const a = actionArrow(focusAction, '#7ef0b9'); if (a) o.arrows.push({ ...a, width: 5 }); }
+  const prev = history[cursor]?.applied;
+  if (prev) { const a = actionArrow(prev, 'rgba(255,255,255,.5)'); if (a) o.arrows.push({ ...a, dash: true, alpha: 0.6 }); }
+  board.setOverlay(o);
+}
+const GROUPS = [['UpgradeCity', 'City upgrade'], ['Attack', 'Attacks'], ['CaptureCity', 'Captures'], ['Move', 'Moves'], ['TrainUnit', 'Train'], ['HarvestResource', 'Harvest'], ['ResearchTech', 'Research'], ['Recover', 'Recover'], ['EndTurn', 'Turn']];
+function renderLegal() {
+  const legal = pos.legal || [];
+  $('legal-count').textContent = plural(legal.length, 'action');
+  if (pos.outcome?.over) { $('legal').innerHTML = '<p class="small">The game is over.</p>'; return; }
+  const focus = selectedTile >= 0 ? legal.filter(a => a.from === selectedTile || a.to === selectedTile) : [];
+  const row = a => {
+    const i = legal.indexOf(a);
+    let extra = '';
+    if (a.preview) {
+      const p = a.preview;
+      extra = `<small>hp ${p.attacker_hp[0]}→<span class="${p.dies ? 'prev-die' : ''}">${p.attacker_hp[1]}</span> · target ${p.defender_hp[0]}→<span class="${p.kills ? 'prev-kill' : ''}">${p.defender_hp[1]}</span>${p.kills ? ' · kill' : ''}</small>`;
+    } else if (a.type === 'Move') extra = `<small>${a.path.length - 1} step${a.path.length > 2 ? 's' : ''}</small>`;
+    return `<button class="lmove${focus.includes(a) ? ' focus' : ''}" data-i="${i}" type="button"><span>${esc(a.label)}</span>${extra}</button>`;
+  };
+  let html = focus.length ? `<div class="lgroup"><h4>At the selected tile <span>${focus.length}</span></h4>${focus.map(row).join('')}</div>` : '';
+  for (const [type, title] of GROUPS) {
+    const xs = legal.filter(a => a.type === type);
+    if (!xs.length) continue;
+    const open = xs.length <= 12 || type !== 'Move';
+    html += `<div class="lgroup"><h4>${title} <span>${xs.length}</span></h4>${(open ? xs : xs.slice(0, 12)).map(row).join('')}${open ? '' : `<details><summary class="small">${xs.length - 12} more moves</summary>${xs.slice(12).map(row).join('')}</details>`}</div>`;
+  }
+  $('legal').innerHTML = html || '<p class="small">No legal actions.</p>';
+}
+function renderHistory() {
+  $('history').innerHTML = history.map((h, k) => `<button type="button" data-h="${k}" class="${k === cursor ? 'cur' : ''}">${k === 0 ? '◆ ' : `${k}. `}${esc(h.label)}</button>`).join('');
+  $('undo').disabled = cursor <= 0;
+  $('redo').disabled = cursor >= history.length - 1;
+}
+function renderContext() {
+  $('context-sec').hidden = !context;
+  if (!context) return;
+  $('ctx-label').textContent = `${context.kind === 'matches' ? 'Match' : 'Run'} ${context.id} · game ${context.game}`;
+  $('ctx-step').max = context.steps;
+  $('ctx-step').value = context.step;
+  const names = (context.players || []).map((p, i) => `<span style="color:${PLAYER_COLORS[i]}">P${i} ${esc(p.name)}</span>`).join(' vs ');
+  $('ctx-info').innerHTML = `Step ${context.step} of ${context.steps}${context.map ? ' · ' + esc(context.map) : ''}<br>${names}${cursor > 0 ? '<br><span class="warn">Showing a what-if branch</span>' : ''}`;
+}
+function renderAnalyses() {
+  const list = pos ? analyses.get(pos.hash) || [] : [];
+  $('analyses').innerHTML = list.map((a, k) => {
+    const p0 = a.eval == null ? null : (a.player === 0 ? a.eval : -a.eval);
+    const bar = p0 == null ? '' : `<div class="evalbar"><i style="width:${(50 + 50 * Math.max(-1, Math.min(1, p0))).toFixed(1)}%"></i><span>${a.eval >= 0 ? '+' : ''}${(+a.eval).toFixed(3)} for P${a.player}</span></div>`;
+    const scores = a.moves.map(m => m.score).filter(s => typeof s === 'number');
+    const lo = Math.min(...scores), hi = Math.max(...scores);
+    const moves = a.mode === 'choice'
+      ? `<p class="small" style="margin:6px 0">${esc(a.bot_name)} does not implement <code>analyse</code>; it would play:</p><table class="moves"><tr data-act="${k}:choice"><td class="rank">→</td><td>${esc(a.choice.label)}</td><td><button class="subtle" type="button">Play</button></td></tr></table>`
+      : a.moves.length ? `<table class="moves"><thead><tr><th></th><th>Move</th><th>Score</th><th>Visits</th><th></th></tr></thead><tbody>${a.moves.slice(0, 40).map((m, i) => `<tr data-act="${k}:${i}" title="${esc(m.note || '')}"><td class="rank">${i + 1}</td><td>${esc(m.label)}${m.note ? `<small class="muted" style="display:block">${esc(m.note)}</small>` : ''}</td><td class="num">${typeof m.score === 'number' ? m.score.toFixed(3) : '—'}${typeof m.score === 'number' && hi > lo ? `<div class="mini"><i style="width:${(100 * (m.score - lo) / (hi - lo)).toFixed(0)}%"></i></div>` : ''}</td><td class="num">${m.visits >= 0 && m.visits != null ? fmtNum(m.visits) : ''}</td><td><button class="subtle" type="button">Play</button></td></tr>`).join('')}</tbody></table>${a.moves.length > 40 ? `<p class="small">${a.moves.length - 40} more scored moves</p>` : ''}`
+      : '<p class="small">No move scores returned.</p>';
+    const pv = a.pv?.length ? `<div class="small" style="margin-top:6px">PV: ${a.pv.map(x => esc(x.label || `${x.type} ${x.from ?? ''}→${x.to ?? ''}`)).join(' → ')}</div>` : '';
+    const info = a.info ? `<details><summary>Bot info</summary><pre class="block">${esc(JSON.stringify(a.info, null, 2))}</pre></details>` : '';
+    const log = a.log ? `<details><summary>Bot log (stderr)</summary><pre class="block">${esc(a.log)}</pre></details>` : '';
+    return `<div class="analysis-card"><header><strong>${esc(a.bot_name)}</strong><span class="small">${fmtMs(a.elapsed_ms)} · ${esc(a.observation)} · ${esc(a.budgetLabel)}${k === 0 ? ' · arrows' : ''}</span></header>${bar}${moves}${pv}${info}${log}</div>`;
+  }).join('');
+}
+
+// ------------------------------------------------------------- actions --
+async function play(action) {
+  if (!pos || busy) return;
+  busy = true;
+  try {
+    const r = await api('position/apply', { state: pos.state, action });
+    history = history.slice(0, cursor + 1);
+    history.push({ pos: r, label: r.applied.label, applied: r.applied, events: r.events });
+    cursor = history.length - 1;
+    setPos(r);
+  } catch (e) { status(e.message, true); } finally { busy = false; }
+}
+function goHistory(k) {
+  if (k < 0 || k >= history.length) return;
+  cursor = k;
+  setPos(history[k].pos);
+}
+async function analyse() {
+  const bot = $('an-bot').value;
+  if (!pos || !bot) return;
+  const budget = {};
+  if ($('an-nodes').value) budget.nodes = +$('an-nodes').value;
+  if ($('an-ms').value) budget.ms = +$('an-ms').value;
+  store('pa.bot', bot);
+  $('analyse').disabled = true;
+  $('analyse').textContent = 'Analysing…';
+  const hash = pos.hash, state = pos.state;
+  try {
+    const r = await api('position/analyse', { bot, state, budget, observation: $('an-obs').value, timeout_s: +$('an-timeout').value || 60 });
+    r.observation = $('an-obs').value;
+    r.budgetLabel = Object.entries(budget).map(([k, v]) => `${fmtNum(v)} ${k}`).join(', ') || 'no budget';
+    analyses.set(hash, [r, ...(analyses.get(hash) || [])].slice(0, 6));
+    if (pos.hash === hash) { renderAnalyses(); overlay(); }
+    status('');
+  } catch (e) { status(e.message, true); }
+  finally { $('analyse').disabled = false; $('analyse').textContent = 'Analyse position'; }
+}
+
+// -------------------------------------------------------------- events --
+board.onClick = t => {
+  if (!pos || t < 0) return;
+  const legal = pos.legal || [];
+  if (selectedTile >= 0 && t !== selectedTile) {
+    const a = legal.find(a => a.from === selectedTile && a.to === t && (a.type === 'Move' || a.type === 'Attack' || a.type === 'CaptureCity'))
+      || legal.find(a => a.type === 'HarvestResource' && a.to === t);
+    if (a) return play(a);
+  }
+  if (selectedTile === t) {
+    const cap = legal.find(a => a.type === 'CaptureCity' && a.to === t);
+    if (cap) return play(cap);
+  }
+  selectedTile = t === selectedTile ? -1 : t;
+  overlay(); renderLegal();
+};
+board.onHover = (t, e) => {
+  tipFollow($('tip'), t >= 0 ? board.describeTile(t) : '', e);
+  $('hover-coords').textContent = t >= 0 ? `(${t % pos.state.map_size},${Math.floor(t / pos.state.map_size)}) · tile ${t}` : '';
+};
+$('legal').addEventListener('click', e => { const b = e.target.closest('[data-i]'); if (b) play(pos.legal[+b.dataset.i]); });
+$('legal').addEventListener('mouseover', e => { const b = e.target.closest('[data-i]'); const a = b ? pos.legal[+b.dataset.i] : null; if (a !== focusAction) { focusAction = a; overlay(); } });
+$('legal').addEventListener('mouseleave', () => { focusAction = null; overlay(); });
+$('analyses').addEventListener('click', e => {
+  const tr = e.target.closest('[data-act]');
+  if (!tr) return;
+  const [k, i] = tr.dataset.act.split(':');
+  const a = (analyses.get(pos.hash) || [])[+k];
+  const m = i === 'choice' ? a.choice : a.moves[+i];
+  if (e.target.closest('button')) play(m.action);
+  else { focusAction = m.action; overlay(); }
+});
+$('history').addEventListener('click', e => { const b = e.target.closest('[data-h]'); if (b) goHistory(+b.dataset.h); });
+$('undo').onclick = () => goHistory(cursor - 1);
+$('redo').onclick = () => goHistory(cursor + 1);
+$('analyse').onclick = analyse;
+$('clear-analyses').onclick = () => { if (pos) { analyses.delete(pos.hash); renderAnalyses(); overlay(); } };
+$('persp').value = restore('pa.persp', '-1');
+$('persp').onchange = () => { store('pa.persp', $('persp').value); render(); };
+for (const b of $('modes').querySelectorAll('button')) b.onclick = () => { board.setMode(b.dataset.mode); store('pa.mode', b.dataset.mode); modes(); };
+const modes = () => { for (const b of $('modes').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === board.mode)); };
+modes();
+$('fit').onclick = () => board.fit();
+$('src-kind').onchange = () => { store('pa.kind', $('src-kind').value); drawSourceFields(); };
+$('load').onclick = () => {
+  if ($('src-kind').value === 'json') { $('paste-dialog').showModal(); return; }
+  load(sourceFromForm());
+};
+$('paste-dialog').addEventListener('close', () => {
+  if ($('paste-dialog').returnValue !== 'ok') return;
+  try { load({ kind: 'json', state: JSON.parse($('paste-text').value) }); } catch { status('That is not valid JSON.', true); }
+});
+const ctxGo = step => context && load({ kind: context.kind, id: context.id, game: context.game, step: Math.max(0, Math.min(context.steps, step)) }, { keepContext: true });
+$('ctx-prev').onclick = () => ctxGo(context.step - 1);
+$('ctx-next').onclick = () => ctxGo(context.step + 1);
+$('ctx-step').onchange = () => ctxGo(+$('ctx-step').value);
+$('star').onclick = async () => {
+  if (!pos) return;
+  const name = prompt('Name this position', history[0]?.label || '');
+  if (name === null) return;
+  try { await api('position/star', { name, state: pos.state, source: context }); positions = await api('positions'); drawSourceFields(); status('Starred.'); } catch (e) { status(e.message, true); }
+};
+$('save').onclick = async () => {
+  if (!pos) return;
+  const name = prompt('File name in data/saved_gamestates/ (also usable as a Match Lab start position)', '');
+  if (!name) return;
+  try { const r = await api('position/save', { name, state: pos.state }); status(`Saved ${r.path}`); positions = await api('positions'); } catch (e) { status(e.message, true); }
+};
+$('copy').onclick = async () => { if (pos) { await navigator.clipboard.writeText(JSON.stringify(pos.state, null, 2)); status('Copied the position JSON.'); } };
+document.addEventListener('keydown', e => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  if (e.key === 'ArrowLeft') goHistory(cursor - 1);
+  else if (e.key === 'ArrowRight') goHistory(cursor + 1);
+  else if (e.key === '[' && context) ctxGo(context.step - 1);
+  else if (e.key === ']' && context) ctxGo(context.step + 1);
+  else if (e.key === 'Escape') { selectedTile = -1; overlay(); renderLegal(); }
+  else return;
+  e.preventDefault();
+});
+window.addEventListener('message', e => {
+  if (e.origin === location.origin && e.data?.type === 'load') load(e.data.source);
+});
+
+async function init() {
+  [rules, catalog, positions] = await Promise.all([api('rules'), api('catalog'), api('positions')]);
+  board.setRules(rules);
+  const bots = catalog.bots.filter(b => b.starred && !b.removed);
+  $('an-bot').innerHTML = bots.map(b => `<option value="${esc(b.id)}">${esc(b.name)}${b.folder ? ' · ' + esc(b.folder) : ''} (${esc(b.language)})</option>`).join('') || '<option value="">No starred bots</option>';
+  const keep = restore('pa.bot', '');
+  if (bots.some(b => b.id === keep)) $('an-bot').value = keep;
+  $('src-kind').value = restore('pa.kind', 'map');
+  drawSourceFields();
+  const src = new URLSearchParams(location.search).get('src');
+  if (src) {
+    const s = JSON.parse(src);
+    if (s.kind === 'matches' || s.kind === 'selfplay') { $('src-kind').value = s.kind; context = { ...s }; drawSourceFields(); }
+    load(s);
+  } else load(sourceFromForm());
+}
+init().catch(e => status(e.message, true));
+</script>
+</body>
+</html>

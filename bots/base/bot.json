@@ -1,0 +1,6 @@
+{
+  "name": "base",
+  "description": "Skeleton C++ bot: ends every turn. Copy this folder to start a new bot.",
+  "language": "cpp",
+  "sources": ["bot.cpp"]
+}

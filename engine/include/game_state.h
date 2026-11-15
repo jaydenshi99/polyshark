@@ -48,6 +48,9 @@ enum class GameStateType {
 };
 
 class GameState {
+    // Match Lab builds fog-of-war views by direct copy (lab/native/lab_core.cpp).
+    friend struct LabAccess;
+
 public:
     bool is_terminal()    const;
     int  winner()         const;
