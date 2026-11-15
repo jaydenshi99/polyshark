@@ -1206,6 +1206,19 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Map side length for interactive games (`--size <n>`). Defaults to the
+    // engine default. Clamped to [2, MAX_MAP_SIZE] — the board arrays are fixed
+    // at MAX_MAP_TILES, so a larger size overflows them and aborts.
+    int map_sz = cfg::map::DEFAULT_SIZE;
+    for (int i = 1; i < argc - 1; i++) {
+        if (std::string(argv[i]) == "--size") {
+            map_sz = std::atoi(argv[i + 1]);
+            if (map_sz < 2)            map_sz = 2;
+            if (map_sz > MAX_MAP_SIZE) map_sz = MAX_MAP_SIZE;
+            break;
+        }
+    }
+
     // ----- Embedded Python interpreter (for calling heuristics.py from UI) -----
     // The scoped_interpreter MUST outlive every py:: object below, so it lives
     // in main()'s scope. JSON is used to ferry the GameState across the
@@ -1248,7 +1261,7 @@ int main(int argc, char** argv) {
     uint64_t gen_seed = 1;
     int climate[MAX_MAP_TILES] = {};
     auto new_map = [&]() {
-        MapGenParams p = MapGen::drylands_defaults();
+        MapGenParams p = MapGenParams::for_biome(BiomeType::Drylands, map_sz);
         p.seed = gen_seed++;
         MapGenResult r = MapGen(p).generate();
         int mtsz = r.state.map_tiles();
